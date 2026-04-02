@@ -1,7 +1,7 @@
 {
-  "name": "AI Hub",
-  "short_name": "AI Hub",
-  "description": "Local AI platform — chat, research, photos, voice, knowledge graph",
+  "name": "LocalForge",
+  "short_name": "LocalForge",
+  "description": "Local AI coding station — MCP server, agents, RAG, knowledge graph",
   "start_url": "/",
   "display": "standalone",
   "orientation": "any",
