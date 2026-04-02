@@ -1,0 +1,72 @@
+id: onboard-project
+name: Project Onboarding
+description: Index a project, detect language, summarize entry files, and create a knowledge graph entry
+variables:
+  directory: ""
+  name: ""
+
+nodes:
+  - id: detect-lang
+    type: prompt
+    config:
+      prompt: |
+        Based on the directory name "{variables.directory}", detect the primary programming language.
+        Respond with ONLY the language name (e.g., rust, python, typescript).
+
+  - id: index
+    type: tool
+    config:
+      tool: index_directory
+      args:
+        name: "{variables.name}"
+        directory: "{variables.directory}"
+        glob_pattern: "**/*.*"
+        embed: true
+
+  - id: find-entry
+    type: tool
+    config:
+      tool: search_index
+      args:
+        index_name: "{variables.name}"
+        query: "main entry point initialization setup"
+
+  - id: summarize
+    type: prompt
+    config:
+      prompt: |
+        Summarize this project based on the entry points and structure found:
+
+        ## Language
+        {node.detect-lang}
+
+        ## Index Info
+        {node.index}
+
+        ## Entry Points
+        {node.find-entry}
+
+        Provide: project purpose, key modules, architecture pattern, and tech stack.
+
+  - id: save-kg
+    type: tool
+    config:
+      tool: kg_add
+      args:
+        name: "{variables.name}"
+        entity_type: "project"
+        content: "{node.summarize}"
+
+edges:
+  - from_id: detect-lang
+    to_id: index
+  - from_id: index
+    to_id: find-entry
+  - from_id: detect-lang
+    to_id: summarize
+  - from_id: index
+    to_id: summarize
+  - from_id: find-entry
+    to_id: summarize
+  - from_id: summarize
+    to_id: save-kg

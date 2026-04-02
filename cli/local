@@ -1,0 +1,421 @@
+#!/usr/bin/env python3
+"""CLI client for the local-model MCP gateway.
+
+Calls any MCP tool from any terminal on any device on the Tailscale mesh.
+
+Usage (local — on the hub):
+    local health                          # gateway + model status
+    local chat "explain monads"           # one-shot chat
+    local review "$(git diff)"            # review a diff
+    local review -                        # read diff from stdin
+    local search "error handling" -i idx  # hybrid search
+    local rag "how are orders routed?"    # RAG query
+    local swap code                       # swap to code model
+    local tools                           # list all tools
+    local status                          # session stats + model info
+    local note save topic "content"       # save a note
+    local note recall topic               # recall a note
+    local benchmark                       # benchmark tok/s
+    local call <tool> --arg val           # generic tool dispatch
+
+Usage (remote — any device on Tailscale):
+    local --endpoint http://ai-hub:8100 health
+    local setup                           # generate ~/.config/local-ai/config.yaml
+
+Config file: ~/.config/local-ai/config.yaml
+  endpoint: http://localhost:8100   (hub) or http://ai-hub:8100 (remote)
+  api_key: "your-key-here"
+
+Environment overrides: LOCAL_AI_ENDPOINT, LOCAL_AI_KEY
+"""
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+try:
+    import httpx
+except ImportError:
+    print("Error: httpx not installed. Run: pip install httpx", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
+CONFIG_PATHS = [
+    Path.home() / ".config" / "local-ai" / "config.yaml",
+    Path.home() / ".config" / "local-ai" / "config.yml",
+]
+
+DEFAULT_ENDPOINT = "http://localhost:8100"
+
+
+def load_config() -> dict:
+    for p in CONFIG_PATHS:
+        if p.exists():
+            if yaml:
+                with open(p) as f:
+                    return yaml.safe_load(f) or {}
+            else:
+                # Minimal YAML parsing for just endpoint and api_key
+                cfg = {}
+                with open(p) as f:
+                    for line in f:
+                        line = line.strip()
+                        if ":" in line and not line.startswith("#"):
+                            k, v = line.split(":", 1)
+                            cfg[k.strip()] = v.strip().strip('"').strip("'")
+                return cfg
+    return {}
+
+
+def get_endpoint_and_key(args) -> tuple[str, str]:
+    cfg = load_config()
+    endpoint = getattr(args, "endpoint", None) or os.environ.get("LOCAL_AI_ENDPOINT") or cfg.get("endpoint", DEFAULT_ENDPOINT)
+    api_key = getattr(args, "api_key", None) or os.environ.get("LOCAL_AI_KEY") or cfg.get("api_key", "")
+    return endpoint.rstrip("/"), api_key
+
+
+def call_mcp_tool(endpoint: str, api_key: str, tool_name: str, arguments: dict, timeout: float = 120) -> dict:
+    """Call an MCP tool via the HTTP gateway and return the result."""
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    # MCP JSON-RPC: initialize first, then call tool
+    url = f"{endpoint}/mcp/"
+
+    with httpx.Client(timeout=timeout) as client:
+        # Initialize
+        init_payload = {
+            "jsonrpc": "2.0",
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "local-cli", "version": "1.0"},
+            },
+            "id": 1,
+        }
+        resp = client.post(url, json=init_payload, headers=headers)
+        if resp.status_code == 401:
+            print("Error: Unauthorized. Check your API key.", file=sys.stderr)
+            sys.exit(1)
+
+        # Call tool
+        tool_payload = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": arguments},
+            "id": 2,
+        }
+        resp = client.post(url, json=tool_payload, headers=headers)
+
+    # Parse SSE response
+    return parse_sse_response(resp.text)
+
+
+def parse_sse_response(text: str) -> dict:
+    """Parse SSE event stream and extract JSON-RPC result."""
+    for line in text.splitlines():
+        if line.startswith("data: "):
+            try:
+                data = json.loads(line[6:])
+                if "result" in data:
+                    return data["result"]
+                if "error" in data:
+                    return data["error"]
+            except json.JSONDecodeError:
+                continue
+    return {"error": f"Could not parse response: {text[:200]}"}
+
+
+def extract_text(result: dict) -> str:
+    """Extract text content from MCP tool result."""
+    content = result.get("content", [])
+    parts = []
+    for item in content:
+        if isinstance(item, dict) and item.get("type") == "text":
+            parts.append(item["text"])
+    return "\n".join(parts) if parts else json.dumps(result, indent=2)
+
+
+def read_stdin_if_dash(value: str) -> str:
+    """If value is '-', read from stdin."""
+    if value == "-":
+        return sys.stdin.read()
+    return value
+
+
+# --- Subcommand handlers ---
+
+def cmd_health(args):
+    endpoint, api_key = get_endpoint_and_key(args)
+    resp = httpx.get(f"{endpoint}/health", timeout=10)
+    data = resp.json()
+    print(json.dumps(data, indent=2))
+
+
+def cmd_chat(args):
+    endpoint, api_key = get_endpoint_and_key(args)
+    prompt = read_stdin_if_dash(args.prompt)
+    result = call_mcp_tool(endpoint, api_key, "local_chat", {"prompt": prompt})
+    print(extract_text(result))
+
+
+def cmd_review(args):
+    endpoint, api_key = get_endpoint_and_key(args)
+    diff = read_stdin_if_dash(args.diff)
+    arguments = {"diff": diff}
+    if args.focus:
+        arguments["focus"] = args.focus
+    result = call_mcp_tool(endpoint, api_key, "review_diff", arguments)
+    print(extract_text(result))
+
+
+def cmd_search(args):
+    endpoint, api_key = get_endpoint_and_key(args)
+    arguments = {"query": args.query, "index_name": args.index}
+    result = call_mcp_tool(endpoint, api_key, "hybrid_search", arguments)
+    print(extract_text(result))
+
+
+def cmd_rag(args):
+    endpoint, api_key = get_endpoint_and_key(args)
+    arguments = {"question": args.question, "index_name": args.index}
+    if args.rerank:
+        arguments["rerank"] = True
+    result = call_mcp_tool(endpoint, api_key, "rag_query", arguments)
+    print(extract_text(result))
+
+
+def cmd_swap(args):
+    endpoint, api_key = get_endpoint_and_key(args)
+    if args.model:
+        result = call_mcp_tool(endpoint, api_key, "swap_model", {"model_name": args.model}, timeout=200)
+    else:
+        result = call_mcp_tool(endpoint, api_key, "swap_model", {})
+    print(extract_text(result))
+
+
+def cmd_tools(args):
+    endpoint, api_key = get_endpoint_and_key(args)
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    url = f"{endpoint}/mcp/"
+    with httpx.Client(timeout=30) as client:
+        # Initialize
+        resp = client.post(url, json={
+            "jsonrpc": "2.0", "method": "initialize",
+            "params": {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "local-cli", "version": "1.0"}},
+            "id": 1,
+        }, headers=headers)
+        # List tools
+        resp = client.post(url, json={"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2}, headers=headers)
+
+    result = parse_sse_response(resp.text)
+    tools = result.get("tools", [])
+    for t in tools:
+        print(f"  {t['name']:30s} {t.get('description', '')[:70]}")
+    print(f"\n  {len(tools)} tools available")
+
+
+def cmd_status(args):
+    endpoint, api_key = get_endpoint_and_key(args)
+    # Health + session stats + model check
+    try:
+        health = httpx.get(f"{endpoint}/health", timeout=10).json()
+        print(f"Gateway: {health['status']} (uptime: {health['uptime_seconds']}s)")
+        model = health.get("model", {})
+        print(f"Model:   {model.get('model_name', 'unknown')} ({model.get('status', '?')})")
+    except Exception as e:
+        print(f"Gateway unreachable: {e}")
+        return
+
+    try:
+        result = call_mcp_tool(endpoint, api_key, "session_stats", {}, timeout=15)
+        print(f"\n{extract_text(result)}")
+    except Exception:
+        pass
+
+
+def cmd_note(args):
+    endpoint, api_key = get_endpoint_and_key(args)
+    if args.action == "save":
+        if not args.content:
+            print("Error: content required for save", file=sys.stderr)
+            sys.exit(1)
+        result = call_mcp_tool(endpoint, api_key, "save_note", {"topic": args.topic, "content": " ".join(args.content)})
+    elif args.action == "recall":
+        result = call_mcp_tool(endpoint, api_key, "recall_note", {"topic": args.topic})
+    elif args.action == "list":
+        result = call_mcp_tool(endpoint, api_key, "list_notes", {})
+    elif args.action == "delete":
+        result = call_mcp_tool(endpoint, api_key, "delete_note", {"topic": args.topic})
+    else:
+        print(f"Unknown action: {args.action}", file=sys.stderr)
+        sys.exit(1)
+    print(extract_text(result))
+
+
+def cmd_benchmark(args):
+    endpoint, api_key = get_endpoint_and_key(args)
+    result = call_mcp_tool(endpoint, api_key, "benchmark", {"prompt_length": args.length}, timeout=120)
+    print(extract_text(result))
+
+
+def cmd_setup(args):
+    """Generate config file for this device."""
+    config_dir = Path.home() / ".config" / "local-ai"
+    config_file = config_dir / "config.yaml"
+
+    if config_file.exists() and not args.force:
+        print(f"Config already exists: {config_file}")
+        print("Use --force to overwrite.")
+        return
+
+    # Detect if we're on the hub (gateway running locally)
+    is_hub = False
+    try:
+        httpx.get("http://localhost:8100/health", timeout=3)
+        is_hub = True
+    except Exception:
+        pass
+
+    endpoint = "http://localhost:8100" if is_hub else "http://ai-hub:8100"
+    api_key = args.key or ""
+
+    config_dir.mkdir(parents=True, exist_ok=True)
+    content = f"""# local CLI configuration
+# Hub endpoint (Tailscale MagicDNS: ai-hub resolves to the GPU laptop)
+endpoint: {endpoint}
+api_key: "{api_key}"
+"""
+    config_file.write_text(content)
+    print(f"Config written to {config_file}")
+    print(f"  endpoint: {endpoint} ({'hub detected locally' if is_hub else 'remote via Tailscale'})")
+    if not api_key:
+        print("  api_key: (empty — set this to your gateway API key)")
+
+
+def cmd_call(args):
+    endpoint, api_key = get_endpoint_and_key(args)
+    # Parse --key value pairs into arguments dict
+    arguments = {}
+    i = 0
+    while i < len(args.tool_args):
+        arg = args.tool_args[i]
+        if arg.startswith("--"):
+            key = arg[2:]
+            if i + 1 < len(args.tool_args) and not args.tool_args[i + 1].startswith("--"):
+                val = args.tool_args[i + 1]
+                # Try to parse as JSON (for booleans, numbers, arrays)
+                try:
+                    val = json.loads(val)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+                arguments[key] = val
+                i += 2
+            else:
+                arguments[key] = True
+                i += 1
+        else:
+            i += 1
+
+    result = call_mcp_tool(endpoint, api_key, args.tool_name, arguments, timeout=args.timeout)
+    print(extract_text(result))
+
+
+def main():
+    parser = argparse.ArgumentParser(description="CLI for the local-model MCP gateway", prog="local")
+    parser.add_argument("--endpoint", help="Gateway URL (default: from config or localhost:8100)")
+    parser.add_argument("--api-key", dest="api_key", help="API key (default: from config)")
+
+    sub = parser.add_subparsers(dest="command")
+
+    # health
+    sub.add_parser("health", help="Gateway and model health")
+
+    # chat
+    p = sub.add_parser("chat", help="One-shot chat with local model")
+    p.add_argument("prompt", help="Prompt text (use - for stdin)")
+
+    # review
+    p = sub.add_parser("review", help="Review a git diff")
+    p.add_argument("diff", help="Diff text (use - for stdin)")
+    p.add_argument("-f", "--focus", help="Review focus (e.g. security, bugs)")
+
+    # search
+    p = sub.add_parser("search", help="Hybrid search across an index")
+    p.add_argument("query", help="Search query")
+    p.add_argument("-i", "--index", default=None, help="Index name (required)")
+
+    # rag
+    p = sub.add_parser("rag", help="RAG query against an index")
+    p.add_argument("question", help="Question to answer")
+    p.add_argument("-i", "--index", default=None, help="Index name (required)")
+    p.add_argument("--rerank", action="store_true", help="Enable cross-encoder reranking")
+
+    # swap
+    p = sub.add_parser("swap", help="List or swap models")
+    p.add_argument("model", nargs="?", help="Model name or shortcut (code, think, vision, fast, dense)")
+
+    # tools
+    sub.add_parser("tools", help="List all available MCP tools")
+
+    # status
+    sub.add_parser("status", help="System status overview")
+
+    # note
+    p = sub.add_parser("note", help="Persistent notes (save/recall/list/delete)")
+    p.add_argument("action", choices=["save", "recall", "list", "delete"])
+    p.add_argument("topic", nargs="?", default="general")
+    p.add_argument("content", nargs="*")
+
+    # benchmark
+    p = sub.add_parser("benchmark", help="Benchmark model throughput")
+    p.add_argument("-l", "--length", default="short", choices=["short", "medium", "long"])
+
+    # setup
+    p = sub.add_parser("setup", help="Generate config file for this device")
+    p.add_argument("--key", help="API key for the gateway")
+    p.add_argument("--force", action="store_true", help="Overwrite existing config")
+
+    # call (generic)
+    p = sub.add_parser("call", help="Call any MCP tool by name")
+    p.add_argument("tool_name", help="Tool name (e.g. health_check, local_chat)")
+    p.add_argument("-t", "--timeout", type=float, default=120, help="Timeout in seconds")
+    p.add_argument("tool_args", nargs=argparse.REMAINDER, help="Arguments as --key value pairs")
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
+    # Dispatch
+    handlers = {
+        "health": cmd_health,
+        "chat": cmd_chat,
+        "review": cmd_review,
+        "search": cmd_search,
+        "rag": cmd_rag,
+        "swap": cmd_swap,
+        "tools": cmd_tools,
+        "status": cmd_status,
+        "note": cmd_note,
+        "benchmark": cmd_benchmark,
+        "setup": cmd_setup,
+        "call": cmd_call,
+    }
+    handlers[args.command](args)
+
+
+if __name__ == "__main__":
+    main()

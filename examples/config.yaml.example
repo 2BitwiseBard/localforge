@@ -1,0 +1,243 @@
+# LocalForge Configuration
+# ========================
+#
+# Copy this file to src/localforge/config.yaml (or set LOCALFORGE_CONFIG env var)
+# and fill in your values.
+#
+# Environment variable overrides:
+#   LOCALFORGE_API_KEY        — primary gateway API key
+#   LOCALFORGE_BACKEND_URL    — primary backend URL (default: http://localhost:5000/v1)
+#   LOCALFORGE_GATEWAY_HOST   — gateway bind host (default: 0.0.0.0)
+#   LOCALFORGE_GATEWAY_PORT   — gateway bind port (default: 8100)
+#   LOCALFORGE_DATA_DIR       — data directory for notes, indexes, etc.
+#   LOCALFORGE_WEBUI_ROOT     — path to text-generation-webui installation
+#
+# Generation params are read in this order (later overrides earlier):
+#   1. webui_settings (your text-gen-webui settings.yaml — source of truth)
+#   2. defaults below (override webui for MCP-specific behavior)
+#   3. per-model overrides (matched by substring against loaded model name)
+#   4. runtime overrides (via set_generation_params tool, not persisted)
+#
+# Changes take effect after `reload_config` tool or server restart.
+
+# Backend configuration — supports multiple text-gen-webui instances
+# The server tries backends in priority order (lower = higher priority).
+# Set optional: true for backends that may not always be available.
+backends:
+  local:
+    url: http://localhost:5000/v1
+    priority: 1
+  # Add more backends for multi-device mesh:
+  # remote:
+  #   url: http://second-laptop:5000/v1
+  #   priority: 2
+  #   optional: true
+
+# Root directory of text-generation-webui installation
+# Used to locate presets, grammars, and other user_data files
+webui_root: ~/text-generation-webui
+
+# Path to text-generation-webui settings.yaml
+webui_settings: ~/text-generation-webui/user_data/settings.yaml
+
+# MCP-specific defaults — these OVERRIDE webui settings for tool calls only.
+# Remove a key to fall back to whatever the webui has set.
+defaults:
+  max_tokens: 4096
+  enable_thinking: false
+  system_suffix: "Be concise and direct. Output only the final answer."
+
+# Per-model overrides — matched by substring against loaded model name.
+# First match wins. Only keys listed here override; everything else
+# falls through to defaults -> webui settings.
+#
+# Generation params: temperature, max_tokens, top_p, top_k, min_p,
+#   repetition_penalty, enable_thinking, mode, do_sample
+# Behavior: system_suffix
+# Loading (used by swap_model): ctx_size, gpu_layers
+models:
+  # Thinking model — enable reasoning
+  Qwen3-30B-A3B-Thinking:
+    enable_thinking: true
+    system_suffix: ""
+    ctx_size: 32768
+    gpu_layers: -1
+
+  # Coder models — higher max_tokens for code output
+  Qwen3-Coder:
+    max_tokens: 8192
+    system_suffix: "Output code directly. Be concise. No explanations unless asked."
+    ctx_size: 32768
+    gpu_layers: -1
+
+  Devstral:
+    max_tokens: 8192
+    system_suffix: "Output code directly. Be concise."
+    ctx_size: 32768
+    gpu_layers: -1
+
+  # Vision models — reduced context for VRAM headroom
+  Qwen3-VL-30B:
+    ctx_size: 16384
+    gpu_layers: -1
+
+  Qwen3-VL-8B:
+    ctx_size: 32768
+    gpu_layers: -1
+
+  # Small/fast model
+  gemma-3n:
+    max_tokens: 2048
+    ctx_size: 32768
+    gpu_layers: -1
+
+# HTTP gateway configuration
+gateway:
+  host: "0.0.0.0"
+  port: 8100
+  # Generate keys with: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+  api_keys:
+    - "${LOCALFORGE_API_KEY}"
+
+# Multi-user profiles — each user gets their own namespace for notes, photos, chats
+# The api_key maps to this user profile on every request
+users:
+  admin:
+    name: "Admin"
+    api_key: "${LOCALFORGE_API_KEY}"
+    role: admin
+    default_mode: development
+    default_character: default
+    preferences:
+      response_style: concise
+      code_language: rust
+      notification_level: warning
+
+# News & research topics for the scheduled news agent
+news:
+  topics:
+    - "artificial intelligence breakthroughs"
+    - "local AI models"
+  max_articles_per_topic: 3
+  schedule: "0 7 * * *"
+
+# Telegram bot (optional — set bot_token from @BotFather)
+telegram:
+  bot_token: ""
+  allowed_chat_ids: []
+
+# GPU pool configuration
+gpu_pool:
+  discovery_interval: 60
+  health_check_interval: 30
+  auto_discover: true
+  model_routing:
+    code: ["Qwen3-Coder", "Devstral"]
+    vision: ["Qwen3-VL"]
+    reasoning: ["Qwen3.5-27B", "Qwen3-Thinking"]
+    fast: ["gemma-3n"]
+    default: ["Qwen3.5-35B"]
+
+# Hub modes — switch the entire hub's behavior with one command
+# Use: set_mode("development") or set_mode("research")
+modes:
+  development:
+    temperature: 0.3
+    prefer_model: ["Qwen3-Coder", "Devstral"]
+    system_suffix: "Output code directly. Be concise. No explanations unless asked."
+    max_tokens: 8192
+    auto_swap: true
+  research:
+    temperature: 0.5
+    prefer_model: ["Qwen3.5-27B"]
+    system_suffix: "Be thorough. Cite sources. Consider multiple perspectives."
+    max_tokens: 4096
+    auto_swap: true
+  creative:
+    temperature: 0.8
+    prefer_model: ["Qwen3.5-35B"]
+    system_suffix: ""
+    max_tokens: 4096
+    auto_swap: false
+  review:
+    temperature: 0.2
+    prefer_model: ["Qwen3-Coder", "Qwen3.5-27B"]
+    system_suffix: "Be strict and analytical. Flag all issues by severity."
+    max_tokens: 4096
+    auto_swap: false
+  ops:
+    temperature: 0.3
+    prefer_model: ["gemma-3n"]
+    system_suffix: "Be terse. Status only."
+    max_tokens: 2048
+    auto_swap: true
+  learning:
+    temperature: 0.5
+    prefer_model: ["Qwen3.5-27B", "Qwen3.5-35B"]
+    system_suffix: "Explain clearly with examples. Build on existing knowledge."
+    max_tokens: 4096
+    auto_swap: false
+
+# Agent characters / personas — system prompt templates
+characters:
+  default:
+    name: "Assistant"
+    system_prompt: ""
+  code-reviewer:
+    name: "Code Reviewer"
+    system_prompt: >
+      You are a senior code reviewer. Be thorough but constructive.
+      Focus on: correctness, security, performance, readability.
+      Rate each issue: critical / warning / nit.
+      If the code is clean, say so briefly.
+    temperature_override: 0.2
+  architect:
+    name: "Systems Architect"
+    system_prompt: >
+      You are a systems architect. Think about scalability, maintainability,
+      and separation of concerns. Consider trade-offs explicitly.
+      When proposing solutions, give 2-3 options with pros/cons.
+    temperature_override: 0.4
+  brainstorm:
+    name: "Brainstorm Partner"
+    system_prompt: >
+      You are a creative brainstorming partner. Generate many ideas,
+      build on suggestions, think laterally. No idea is too wild.
+      After brainstorming, help narrow down to the best options.
+    temperature_override: 0.9
+  teacher:
+    name: "Patient Teacher"
+    system_prompt: >
+      You are a patient, thorough teacher. Explain concepts from first
+      principles. Use analogies and examples. Check understanding.
+      Adapt your explanations to the student's level.
+    temperature_override: 0.5
+  devops:
+    name: "DevOps Engineer"
+    system_prompt: >
+      You are a DevOps engineer. Focus on reliability, observability,
+      and automation. Prefer declarative configs, infrastructure as code,
+      and idempotent operations. Always consider failure modes.
+    temperature_override: 0.3
+  security:
+    name: "Security Analyst"
+    system_prompt: >
+      You are a security analyst. Review everything through a security lens.
+      Check for: injection, auth bypass, data leaks, SSRF, path traversal,
+      insecure defaults. Reference OWASP where applicable.
+    temperature_override: 0.2
+
+# Compute pool — heterogeneous device mesh
+compute_pool:
+  discovery_interval: 60
+  health_check_interval: 30
+  auto_discover: true
+  worker_port: 8200
+  task_routing:
+    inference: {prefer_tier: [gpu-primary, gpu-secondary], min_vram: 4000}
+    embeddings: {prefer_tier: [cpu-capable, lightweight]}
+    tts: {prefer_tier: [cpu-capable, lightweight]}
+    stt: {prefer_tier: [cpu-capable, gpu-secondary]}
+    reranking: {prefer_tier: [cpu-capable]}
+    classification: {prefer_tier: [lightweight, cpu-capable]}
+    autocomplete: {prefer_tier: [lightweight, gpu-secondary]}

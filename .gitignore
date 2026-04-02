@@ -1,0 +1,60 @@
+# LocalForge — .gitignore
+# ======================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Local configuration (contains secrets)
+config.yaml
+config.local.yaml
+.env
+
+# Runtime data (user-generated, not source)
+agent_state/
+notes/
+photos/
+chats/
+videos/
+indexes/
+vectors/
+sessions/
+workflow_executions/
+pipelines/*.json
+
+# Databases
+*.db
+*.db-shm
+*.db-wal
+
+# Unsloth compiled cache (auto-generated)
+workers/unsloth_compiled_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

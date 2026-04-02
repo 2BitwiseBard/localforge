@@ -1,0 +1,86 @@
+# LocalForge Agent Configuration
+# ===============================
+# Copy to src/localforge/agents.yaml and customize.
+#
+# Trust levels:
+#   monitor — read-only (health checks, status queries)
+#   safe    — can index, save notes, review diffs
+#   full    — all tools (use with caution)
+#
+# Triggers:
+#   schedule   — cron expression (e.g., "*/5 * * * *" = every 5 min)
+#   file_watch — inotify on directories/patterns (debounce in seconds)
+#   chain      — triggered when another agent completes
+#   webhook    — triggered via HTTP POST to /api/agents/{name}/trigger
+#   manual     — triggered via dashboard or agent_list tool
+
+agents:
+  health-monitor:
+    type: health-monitor
+    trust: monitor
+    schedule: "*/5 * * * *"
+    enabled: true
+
+  index-maintainer:
+    type: index-maintainer
+    trust: safe
+    schedule: "*/30 * * * *"
+    config:
+      directories:
+        - name: my-project
+          directory: ~/my-project/src
+
+  code-watcher:
+    type: code-watcher
+    trust: safe
+    schedule: "*/60 * * * *"
+    enabled: true
+    config:
+      directories:
+        - ~/my-project
+      focus: bugs,security
+    triggers:
+      - type: file_watch
+        paths:
+          - ~/my-project/src
+        patterns:
+          - "*.py"
+          - "*.rs"
+          - "*.ts"
+        debounce: 10
+      - type: chain
+        target: index-maintainer
+
+  research-agent:
+    type: research-agent
+    trust: safe
+    schedule: "*/15 * * * *"
+    enabled: true
+    triggers:
+      - type: webhook
+
+  news-agent:
+    type: news-agent
+    trust: safe
+    schedule: "*/360 * * * *"
+    enabled: true
+    config:
+      topics:
+        - "artificial intelligence"
+        - "local AI models"
+      max_articles_per_topic: 3
+      rss_feeds: []
+    triggers:
+      - type: webhook
+      - type: manual
+
+  daily-digest:
+    type: daily-digest
+    trust: safe
+    schedule: "0 20 * * *"
+    enabled: true
+    config:
+      projects:
+        - ~/my-project
+    triggers:
+      - type: manual

@@ -1,0 +1,57 @@
+id: deep-analyze
+name: Deep Code Analysis
+description: Analyze code file with RAG context, architecture review, and improvement suggestions
+variables:
+  file_path: ""
+  index_name: ""
+
+nodes:
+  - id: read-file
+    type: tool
+    config:
+      tool: file_qa
+      args:
+        file_path: "{variables.file_path}"
+        question: "Summarize the structure, key functions, and responsibilities of this file"
+
+  - id: rag-context
+    type: tool
+    config:
+      tool: rag_query
+      args:
+        index_name: "{variables.index_name}"
+        question: "Code related to {variables.file_path}"
+
+  - id: architecture
+    type: prompt
+    config:
+      prompt: |
+        Analyze the architecture of this code. How does it fit into the broader codebase?
+
+        ## File Summary
+        {node.read-file}
+
+        ## Related Code
+        {node.rag-context}
+
+  - id: improvements
+    type: prompt
+    config:
+      prompt: |
+        Suggest concrete improvements for this code based on the analysis:
+
+        ## File Summary
+        {node.read-file}
+
+        ## Architecture Analysis
+        {node.architecture}
+
+edges:
+  - from_id: read-file
+    to_id: architecture
+  - from_id: rag-context
+    to_id: architecture
+  - from_id: read-file
+    to_id: improvements
+  - from_id: architecture
+    to_id: improvements

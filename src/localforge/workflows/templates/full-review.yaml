@@ -1,0 +1,65 @@
+id: full-review
+name: Full Code Review
+description: Review current git diff for bugs, security, and quality
+variables:
+  focus: "bugs, security, quality"
+
+nodes:
+  - id: get-diff
+    type: tool
+    config:
+      tool: git_context
+      args: {}
+
+  - id: review-bugs
+    type: prompt
+    config:
+      prompt: |
+        Review this diff for bugs and logic errors. Focus on: {variables.focus}
+
+        {node.get-diff}
+
+  - id: review-security
+    type: prompt
+    config:
+      prompt: |
+        Review this diff for security vulnerabilities (injection, XSS, auth issues, etc):
+
+        {node.get-diff}
+
+  - id: review-quality
+    type: prompt
+    config:
+      prompt: |
+        Review this diff for code quality (naming, complexity, DRY, error handling):
+
+        {node.get-diff}
+
+  - id: synthesize
+    type: prompt
+    config:
+      prompt: |
+        Synthesize these three review perspectives into a final report with prioritized findings:
+
+        ## Bug Review
+        {node.review-bugs}
+
+        ## Security Review
+        {node.review-security}
+
+        ## Quality Review
+        {node.review-quality}
+
+edges:
+  - from_id: get-diff
+    to_id: review-bugs
+  - from_id: get-diff
+    to_id: review-security
+  - from_id: get-diff
+    to_id: review-quality
+  - from_id: review-bugs
+    to_id: synthesize
+  - from_id: review-security
+    to_id: synthesize
+  - from_id: review-quality
+    to_id: synthesize
