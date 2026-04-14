@@ -151,7 +151,7 @@ class NewsAgent(BaseAgent):
                 categorized.setdefault(f"RSS: {feed_name}", []).extend(new_items)
 
         if not categorized:
-            self.state.log(f"No new articles found (dedup filtered all)")
+            self.state.log("No new articles found (dedup filtered all)")
             return
 
         # --- Build structured digest ---

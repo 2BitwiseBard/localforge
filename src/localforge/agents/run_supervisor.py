@@ -1,33 +1,36 @@
 #!/usr/bin/env python3
-"""Entry point for the agent supervisor service."""
+"""Entry point for the agent supervisor service (standalone mode).
+
+When the gateway is running, agents start inside the gateway process.
+This entry point is for running the supervisor as a separate service.
+"""
 
 import asyncio
 import logging
+import os
 import signal
-import sys
-from pathlib import Path
 
 import yaml
 
-# Ensure parent package is importable
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-# Import all agent types so they register themselves
-from agents.supervisor import AgentSupervisor  # noqa: E402
-from agents.health_monitor import *  # noqa: E402,F401,F403
-from agents.index_maintainer import *  # noqa: E402,F401,F403
-from agents.code_watcher import *  # noqa: E402,F401,F403
-from agents.research_agent import *  # noqa: E402,F401,F403
-from agents.news_agent import *  # noqa: E402,F401,F403
-
-CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
+# Import from the localforge package (installed or editable)
+import localforge.agents.code_watcher  # noqa: F401
+import localforge.agents.daily_digest  # noqa: F401
+import localforge.agents.health_monitor  # noqa: F401
+import localforge.agents.index_maintainer  # noqa: F401
+import localforge.agents.news_agent  # noqa: F401
+import localforge.agents.research_agent  # noqa: F401
+from localforge.agents.supervisor import AgentSupervisor
+from localforge.paths import config_path
 
 
 def load_api_key() -> str:
-    with open(CONFIG_PATH) as f:
-        cfg = yaml.safe_load(f) or {}
-    keys = cfg.get("gateway", {}).get("api_keys", [])
-    return keys[0] if keys else ""
+    cfg_file = config_path()
+    if cfg_file.exists():
+        with open(cfg_file) as f:
+            cfg = yaml.safe_load(f) or {}
+        keys = cfg.get("gateway", {}).get("api_keys", [])
+        return keys[0] if keys else ""
+    return ""
 
 
 async def main():
@@ -37,7 +40,8 @@ async def main():
     )
 
     api_key = load_api_key()
-    supervisor = AgentSupervisor("http://localhost:8100", api_key)
+    gateway_url = os.environ.get("LOCALFORGE_GATEWAY_URL", "http://localhost:8100")
+    supervisor = AgentSupervisor(gateway_url, api_key)
     await supervisor.start()
 
     # Run until signaled

@@ -12,9 +12,11 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from localforge.paths import task_queue_db_path
+
 log = logging.getLogger("task-queue")
 
-DB_PATH = Path(__file__).parent.parent / "task_queue.db"
+DB_PATH = task_queue_db_path()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
@@ -58,6 +60,8 @@ class TaskQueue:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.executescript(SCHEMA)
+            from ..migrations import run_migrations
+            run_migrations(self._conn, "task_queue")
         return self._conn
 
     def close(self):
@@ -156,12 +160,12 @@ class TaskQueue:
     def cancel(self, task_id: str) -> bool:
         """Cancel a pending or running task."""
         conn = self._get_conn()
-        conn.execute(
+        cur = conn.execute(
             "UPDATE tasks SET status = 'cancelled', completed_at = ? WHERE id = ? AND status IN ('pending', 'running')",
             (time.time(), task_id),
         )
         conn.commit()
-        return conn.total_changes > 0
+        return cur.rowcount > 0
 
     def get_task(self, task_id: str) -> Optional[dict]:
         conn = self._get_conn()
