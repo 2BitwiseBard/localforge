@@ -30,6 +30,20 @@ except ImportError:
     DATA_ROOT = Path(__file__).parent.parent
 
 from localforge.config import load_config_cached
+from localforge.tools import _tool_handlers
+
+
+async def _call_tool(name: str, args: dict | None = None) -> str:
+    """Invoke a registered MCP tool handler by name and return its string result.
+
+    Raises KeyError if the tool isn't registered. Raises whatever the handler raises.
+    Centralizes the dashboard's tool-delegation pattern so routes stay thin.
+    """
+    handler = _tool_handlers.get(name)
+    if handler is None:
+        raise KeyError(f"tool not registered: {name}")
+    return await handler(args or {})
+
 
 # Set by gateway.py during lifespan
 _supervisor = None
@@ -466,24 +480,18 @@ async def api_search(request: Request) -> JSONResponse:
     if not query or not index_name:
         return JSONResponse({"error": "query and index_name required"}, status_code=400)
 
+    tool_name = "rag_query" if mode == "rag" else "hybrid_search"
+    args = (
+        {"index_name": index_name, "question": query}
+        if mode == "rag"
+        else {"index_name": index_name, "query": query}
+    )
     try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from server import _tool_handlers
-
-        if mode == "rag":
-            handler = _tool_handlers.get("rag_query")
-            if handler:
-                result = await handler({"index_name": index_name, "question": query})
-                return JSONResponse({"mode": "rag", "result": result})
-        else:
-            handler = _tool_handlers.get("hybrid_search")
-            if handler:
-                result = await handler({"index_name": index_name, "query": query})
-                return JSONResponse({"mode": "hybrid", "result": result})
-
+        result = await _call_tool(tool_name, args)
+        return JSONResponse({"mode": mode, "result": result})
+    except KeyError:
         return JSONResponse({"error": "Search tools not available"}, status_code=500)
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -772,9 +780,7 @@ _kg = None
 def _get_kg():
     global _kg
     if _kg is None:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from knowledge.graph import KnowledgeGraph
+        from localforge.knowledge.graph import KnowledgeGraph
         _kg = KnowledgeGraph()
     return _kg
 
@@ -1211,16 +1217,12 @@ async def api_benchmark(request: Request) -> JSONResponse:
     body = await request.json() if request.method == "POST" else {}
     prompt_length = body.get("prompt_length", "short")
     try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from server import _tool_handlers
-        handler = _tool_handlers.get("benchmark")
-        if handler:
-            result = await handler({"prompt_length": prompt_length})
-            return JSONResponse({"result": result})
-    except Exception as e:
+        result = await _call_tool("benchmark", {"prompt_length": prompt_length})
+        return JSONResponse({"result": result})
+    except KeyError:
+        return JSONResponse({"error": "benchmark not available"}, status_code=500)
+    except (httpx.HTTPError, OSError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-    return JSONResponse({"error": "benchmark not available"}, status_code=500)
 
 
 # ---------------------------------------------------------------------------
@@ -1254,35 +1256,27 @@ async def api_lora_load(request: Request) -> JSONResponse:
     names = body.get("lora_names", [])
     if not names:
         return JSONResponse({"error": "lora_names required"}, status_code=400)
+    weights = body.get("lora_weights", [1.0] * len(names))
     try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from server import _tool_handlers
-        handler = _tool_handlers.get("load_lora")
-        if handler:
-            weights = body.get("lora_weights", [1.0] * len(names))
-            result = await handler({"lora_names": names, "lora_weights": weights})
-            await notify_all("LoRA Loaded", ", ".join(names), "config")
-            return JSONResponse({"result": result})
-    except Exception as e:
+        result = await _call_tool("load_lora", {"lora_names": names, "lora_weights": weights})
+        await notify_all("LoRA Loaded", ", ".join(names), "config")
+        return JSONResponse({"result": result})
+    except KeyError:
+        return JSONResponse({"error": "load_lora not available"}, status_code=500)
+    except (httpx.HTTPError, OSError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-    return JSONResponse({"error": "load_lora not available"}, status_code=500)
 
 
 async def api_lora_unload(request: Request) -> JSONResponse:
     """Unload all LoRA adapters."""
     try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from server import _tool_handlers
-        handler = _tool_handlers.get("unload_loras")
-        if handler:
-            result = await handler({})
-            await notify_all("LoRAs Unloaded", "All adapters removed", "config")
-            return JSONResponse({"result": result})
-    except Exception as e:
+        result = await _call_tool("unload_loras")
+        await notify_all("LoRAs Unloaded", "All adapters removed", "config")
+        return JSONResponse({"result": result})
+    except KeyError:
+        return JSONResponse({"error": "unload_loras not available"}, status_code=500)
+    except (httpx.HTTPError, OSError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-    return JSONResponse({"error": "unload_loras not available"}, status_code=500)
 
 
 # ---------------------------------------------------------------------------
@@ -1298,25 +1292,21 @@ async def api_index_create(request: Request) -> JSONResponse:
         return JSONResponse({"error": "name and directory required"}, status_code=400)
     if "/" in name or ".." in name:
         return JSONResponse({"error": "invalid index name"}, status_code=400)
+    params = {
+        "name": name,
+        "directory": directory,
+        "glob_pattern": body.get("glob_pattern", "**/*.*"),
+    }
+    if body.get("embed"):
+        params["embed"] = True
     try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from server import _tool_handlers
-        handler = _tool_handlers.get("index_directory")
-        if handler:
-            params = {
-                "name": name,
-                "directory": directory,
-                "glob_pattern": body.get("glob_pattern", "**/*.*"),
-            }
-            if body.get("embed"):
-                params["embed"] = True
-            result = await handler(params)
-            await notify_all("Index Created", name, "search")
-            return JSONResponse({"result": result})
-    except Exception as e:
+        result = await _call_tool("index_directory", params)
+        await notify_all("Index Created", name, "search")
+        return JSONResponse({"result": result})
+    except KeyError:
+        return JSONResponse({"error": "index_directory not available"}, status_code=500)
+    except (httpx.HTTPError, OSError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-    return JSONResponse({"error": "index_directory not available"}, status_code=500)
 
 
 async def api_index_delete(request: Request) -> JSONResponse:
@@ -1325,17 +1315,13 @@ async def api_index_delete(request: Request) -> JSONResponse:
     if not name or "/" in name or ".." in name:
         return JSONResponse({"error": "invalid index name"}, status_code=400)
     try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from server import _tool_handlers
-        handler = _tool_handlers.get("delete_index")
-        if handler:
-            result = await handler({"index_name": name})
-            await notify_all("Index Deleted", name, "search")
-            return JSONResponse({"result": result})
-    except Exception as e:
+        result = await _call_tool("delete_index", {"index_name": name})
+        await notify_all("Index Deleted", name, "search")
+        return JSONResponse({"result": result})
+    except KeyError:
+        return JSONResponse({"error": "delete_index not available"}, status_code=500)
+    except (httpx.HTTPError, OSError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-    return JSONResponse({"error": "delete_index not available"}, status_code=500)
 
 
 async def api_index_stats(request: Request) -> JSONResponse:
@@ -1369,17 +1355,13 @@ async def api_index_refresh(request: Request) -> JSONResponse:
     if not name or "/" in name or ".." in name:
         return JSONResponse({"error": "invalid index name"}, status_code=400)
     try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from server import _tool_handlers
-        handler = _tool_handlers.get("incremental_index")
-        if handler:
-            result = await handler({"index_name": name})
-            await notify_all("Index Refreshed", name, "search")
-            return JSONResponse({"result": result})
-    except Exception as e:
+        result = await _call_tool("incremental_index", {"index_name": name})
+        await notify_all("Index Refreshed", name, "search")
+        return JSONResponse({"result": result})
+    except KeyError:
+        return JSONResponse({"error": "incremental_index not available"}, status_code=500)
+    except (httpx.HTTPError, OSError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-    return JSONResponse({"error": "incremental_index not available"}, status_code=500)
 
 
 # Set by gateway.py during lifespan
@@ -1606,28 +1588,22 @@ async def api_research_start(request: Request) -> JSONResponse:
     # Run deep_research in background
     async def _run():
         try:
-            import sys
-            sys.path.insert(0, str(Path(__file__).parent.parent))
-            from server import _tool_handlers
-            handler = _tool_handlers.get("deep_research")
-            if handler:
-                result = await handler({
-                    "question": question,
-                    "max_sources": 5,
-                    "save_to_kg": True,
-                })
-                # Extract synthesis from result
-                if isinstance(result, list):
-                    text = " ".join(
-                        item.get("text", "") for item in result
-                        if isinstance(item, dict) and item.get("type") == "text"
-                    )
-                else:
-                    text = str(result)
-                rs.update_synthesis(session_id, text)
-                rs.complete(session_id)
-                await notify_all("Research Complete", question[:50], "research")
-        except Exception as e:
+            result = await _call_tool("deep_research", {
+                "question": question,
+                "max_sources": 5,
+                "save_to_kg": True,
+            })
+            if isinstance(result, list):
+                text = " ".join(
+                    item.get("text", "") for item in result
+                    if isinstance(item, dict) and item.get("type") == "text"
+                )
+            else:
+                text = str(result)
+            rs.update_synthesis(session_id, text)
+            rs.complete(session_id)
+            await notify_all("Research Complete", question[:50], "research")
+        except (KeyError, httpx.HTTPError, OSError, ValueError) as e:
             rs.update_synthesis(session_id, f"Error: {e}")
             rs.complete(session_id)
 
@@ -1702,42 +1678,36 @@ async def api_workflow_run(request: Request) -> JSONResponse:
     wf_data = body.get("workflow", {})
     initial_input = body.get("initial_input", "")
 
-    try:
-        from workflows.schema import WorkflowDef
-        from workflows.engine import WorkflowEngine
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from server import chat as _chat_fn
+    from localforge.workflows.schema import WorkflowDef
+    from localforge.workflows.engine import WorkflowEngine
+    from localforge.client import chat as _chat_fn
 
+    try:
         wf = WorkflowDef.from_dict(wf_data)
 
         async def chat_fn(prompt, system=""):
             return await _chat_fn(prompt, system=system)
 
         engine = WorkflowEngine(chat_fn=chat_fn)
-
-        async def _run():
-            return await engine.execute(wf, initial_input)
-
-        ctx = await asyncio.wait_for(_run(), timeout=300)
+        ctx = await asyncio.wait_for(engine.execute(wf, initial_input), timeout=300)
         return JSONResponse({
             "execution_id": ctx.execution_id,
             "status": ctx.status,
         })
     except asyncio.TimeoutError:
         return JSONResponse({"error": "Workflow timed out"}, status_code=504)
-    except Exception as e:
+    except (ValueError, KeyError, httpx.HTTPError, OSError) as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
 async def api_workflow_executions(request: Request) -> JSONResponse:
-    from workflows.engine import list_executions
+    from localforge.workflows.engine import list_executions
     return JSONResponse({"executions": list_executions()})
 
 
 async def api_workflow_execution_get(request: Request) -> JSONResponse:
     exec_id = request.path_params.get("execution_id", "")
-    from workflows.engine import WorkflowContext
+    from localforge.workflows.engine import WorkflowContext
     ctx = WorkflowContext.load(exec_id)
     if not ctx:
         return JSONResponse({"error": "Execution not found"}, status_code=404)
@@ -1750,14 +1720,12 @@ async def api_workflow_execution_get(request: Request) -> JSONResponse:
 async def api_kg_graph(request: Request) -> JSONResponse:
     center = request.query_params.get("center", "")
     depth = int(request.query_params.get("depth", "2"))
+    from localforge.knowledge.graph import KnowledgeGraph
     try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from knowledge.graph import KnowledgeGraph
         kg = KnowledgeGraph()
         data = kg.get_graph(center=center or None, depth=depth)
         return JSONResponse(data)
-    except Exception as e:
+    except (OSError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
