@@ -12,9 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from localforge.paths import knowledge_db_path
+
 log = logging.getLogger("knowledge-graph")
 
-DB_PATH = Path(__file__).parent.parent / "knowledge.db"
+DB_PATH = knowledge_db_path()
 
 DEFAULT_ENTITY_TYPES = {
     "concept", "code_module", "decision", "learning",
@@ -56,6 +58,8 @@ CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
 CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
 CREATE INDEX IF NOT EXISTS idx_relations_from ON relations(from_id);
 CREATE INDEX IF NOT EXISTS idx_relations_to ON relations(to_id);
+CREATE INDEX IF NOT EXISTS idx_entities_updated_at ON entities(updated_at);
+CREATE INDEX IF NOT EXISTS idx_relations_to_type ON relations(to_id, relation_type);
 """
 
 FTS_SCHEMA = """
@@ -129,6 +133,8 @@ class KnowledgeGraph:
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.executescript(SCHEMA)
             self._conn.executescript(FTS_SCHEMA)
+            from .migrations import run_migrations
+            run_migrations(self._conn, "knowledge")
         return self._conn
 
     def close(self):
@@ -337,7 +343,8 @@ class KnowledgeGraph:
 
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT id, name, type, content, embedding, updated_at FROM entities WHERE embedding IS NOT NULL"
+            "SELECT id, name, type, content, embedding, updated_at FROM entities "
+            "WHERE embedding IS NOT NULL LIMIT 10000"
         ).fetchall()
 
         if not rows:
@@ -577,3 +584,27 @@ class KnowledgeGraph:
             "total_relations": relation_count,
             "entities_by_type": type_counts,
         }
+
+    def rebuild_fts_index(self) -> int:
+        """Rebuild the FTS5 index from scratch.
+
+        Use this if the FTS index gets out of sync with the entities table
+        (e.g., after a crash during a write). Returns the number of entities
+        re-indexed.
+        """
+        conn = self._get_conn()
+        # Drop and recreate the FTS table + triggers
+        conn.execute("DROP TABLE IF EXISTS entities_fts")
+        conn.execute("DROP TRIGGER IF EXISTS entities_ai")
+        conn.execute("DROP TRIGGER IF EXISTS entities_ad")
+        conn.execute("DROP TRIGGER IF EXISTS entities_au")
+        conn.executescript(FTS_SCHEMA)
+        # Repopulate from entities table
+        conn.execute(
+            "INSERT INTO entities_fts(rowid, name, content, type) "
+            "SELECT id, name, content, type FROM entities"
+        )
+        conn.commit()
+        count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+        log.info("FTS5 index rebuilt: %d entities re-indexed", count)
+        return count

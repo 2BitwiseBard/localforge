@@ -15,12 +15,9 @@ Usage:
 """
 
 import asyncio
-import base64
 import json
 import logging
-import os
 import sys
-import tempfile
 from pathlib import Path
 
 import httpx
@@ -151,10 +148,13 @@ class TelegramBot:
             file_resp = await client.get(f"{self.tg_api}/getFile", params={"file_id": file_id})
             file_path = file_resp.json()["result"]["file_path"]
 
-            # Download audio
+            # Download audio (with size limit)
             audio_resp = await client.get(
                 f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
             )
+            if len(audio_resp.content) > 20 * 1024 * 1024:  # 20 MB
+                await self.send_message(chat_id, "Audio file too large (max 20MB).", client)
+                return
             audio_bytes = audio_resp.content
 
             # Transcribe via gateway
@@ -183,10 +183,13 @@ class TelegramBot:
             file_resp = await client.get(f"{self.tg_api}/getFile", params={"file_id": file_id})
             file_path = file_resp.json()["result"]["file_path"]
 
-            # Download photo
+            # Download photo (with size limit)
             photo_resp = await client.get(
                 f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
             )
+            if len(photo_resp.content) > 20 * 1024 * 1024:  # 20 MB
+                await self.send_message(chat_id, "Photo too large (max 20MB).", client)
+                return
             photo_bytes = photo_resp.content
 
             # Upload to gateway for analysis
