@@ -8,6 +8,7 @@ import asyncio
 import base64
 import io
 import json
+import os
 import time
 import uuid
 from pathlib import Path
@@ -18,9 +19,17 @@ from starlette.routing import Route
 import httpx
 import yaml
 
-CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
-NOTES_DIR = Path(__file__).parent.parent / "notes"
-DATA_ROOT = Path(__file__).parent.parent
+try:
+    from localforge.paths import config_path as _config_path, data_dir as _data_dir, notes_dir as _notes_dir
+    CONFIG_PATH = _config_path()
+    NOTES_DIR = _notes_dir()
+    DATA_ROOT = _data_dir()
+except ImportError:
+    CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
+    NOTES_DIR = Path(__file__).parent.parent / "notes"
+    DATA_ROOT = Path(__file__).parent.parent
+
+from localforge.config import load_config_cached
 
 # Set by gateway.py during lifespan
 _supervisor = None
@@ -35,13 +44,18 @@ _sse_clients: dict[str, list[asyncio.Queue]] = {}
 # Runtime generation parameter overrides (applied to all chat requests)
 _gen_param_overrides: dict = {}
 
+# Current hub mode and character (dashboard-side state)
+_current_mode: dict = {}
+_current_character: dict = {}
+
+# TTL caches for expensive subprocess calls (nvidia-smi, ps aux)
+_gpu_metrics_cache: tuple[float, dict | None] = (0.0, None)
+_status_cache: tuple[float, dict | None] = (0.0, None)
+_METRICS_CACHE_TTL = 15.0  # seconds
+
 
 def _load_config() -> dict:
-    try:
-        with open(CONFIG_PATH) as f:
-            return yaml.safe_load(f) or {}
-    except Exception:
-        return {}
+    return load_config_cached()
 
 
 def _backend_url() -> str:
@@ -54,9 +68,22 @@ def _get_user(request: Request) -> dict:
     return getattr(request.state, "user", {"id": "admin", "name": "Admin", "role": "admin"})
 
 
+import re as _re
+
+_SAFE_USER_ID = _re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
 def _user_dir(base: str, user_id: str) -> Path:
-    """Get user-scoped directory, creating if needed."""
+    """Get user-scoped directory, creating if needed.
+
+    Validates user_id to prevent path traversal attacks.
+    """
+    if not _SAFE_USER_ID.match(user_id):
+        raise ValueError(f"Invalid user_id: {user_id!r}")
     d = DATA_ROOT / base / user_id
+    # Belt-and-suspenders: ensure resolved path stays under DATA_ROOT
+    if not str(d.resolve()).startswith(str(DATA_ROOT.resolve())):
+        raise ValueError(f"Path traversal detected: {user_id!r}")
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -134,32 +161,39 @@ async def api_status(request: Request) -> JSONResponse:
                     continue
 
             # Get llama-server process flags for gpu_layers, batch_size, etc.
-            try:
-                import re
-                proc = await asyncio.create_subprocess_exec(
-                    "ps", "aux",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-                for line in stdout.decode().splitlines():
-                    if "llama-server" in line and "--model" in line:
-                        server_config = {}
-                        for flag, key in [
-                            (r"--gpu-layers\s+(\S+)", "gpu_layers"),
-                            (r"--ctx-size\s+(\S+)", "ctx_size"),
-                            (r"--parallel\s+(\S+)", "parallel"),
-                            (r"--batch-size\s+(\S+)", "batch_size"),
-                            (r"--flash-attn\s+(\S+)", "flash_attn"),
-                        ]:
-                            m = re.search(flag, line)
-                            if m:
-                                server_config[key] = m.group(1)
-                        if server_config:
-                            status["server_config"] = server_config
-                        break
-            except Exception:
-                pass
+            # Cached for 15s since process flags don't change between model swaps
+            global _status_cache
+            now = time.time()
+            if now - _status_cache[0] < _METRICS_CACHE_TTL and _status_cache[1] is not None:
+                status["server_config"] = _status_cache[1]
+            else:
+                try:
+                    import re
+                    proc = await asyncio.create_subprocess_exec(
+                        "ps", "aux",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                    for line in stdout.decode().splitlines():
+                        if "llama-server" in line and "--model" in line:
+                            server_config = {}
+                            for flag, key in [
+                                (r"--gpu-layers\s+(\S+)", "gpu_layers"),
+                                (r"--ctx-size\s+(\S+)", "ctx_size"),
+                                (r"--parallel\s+(\S+)", "parallel"),
+                                (r"--batch-size\s+(\S+)", "batch_size"),
+                                (r"--flash-attn\s+(\S+)", "flash_attn"),
+                            ]:
+                                m = re.search(flag, line)
+                                if m:
+                                    server_config[key] = m.group(1)
+                            if server_config:
+                                status["server_config"] = server_config
+                                _status_cache = (now, server_config)
+                            break
+                except Exception:
+                    pass
 
     except Exception:
         status["model"] = {"status": "unreachable"}
@@ -171,7 +205,15 @@ async def api_status(request: Request) -> JSONResponse:
 # Chat (streaming)
 # ---------------------------------------------------------------------------
 
+MAX_CHAT_BODY_BYTES = 1_000_000  # 1 MB max request body
+
+
 async def api_chat(request: Request) -> StreamingResponse:
+    # Reject oversized requests to prevent memory exhaustion
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_CHAT_BODY_BYTES:
+        return JSONResponse({"error": "Request body too large"}, status_code=413)
+
     body = await request.json()
 
     # Support full conversation history or single prompt (backward compat)
@@ -242,11 +284,16 @@ async def api_chat(request: Request) -> StreamingResponse:
 # ---------------------------------------------------------------------------
 
 async def api_chat_list(request: Request) -> JSONResponse:
-    """List saved chat conversations for the user."""
+    """List saved chat conversations for the user (paginated)."""
     user = _get_user(request)
     chat_dir = _user_dir("chats", user["id"])
+    page = int(request.query_params.get("page", "1"))
+    limit = min(int(request.query_params.get("limit", "30")), 100)
+    offset = (page - 1) * limit
+    all_files = sorted(chat_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    total = len(all_files)
     chats = []
-    for f in sorted(chat_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+    for f in all_files[offset:offset + limit]:
         try:
             data = json.loads(f.read_text())
             chats.append({
@@ -258,7 +305,7 @@ async def api_chat_list(request: Request) -> JSONResponse:
             })
         except Exception:
             continue
-    return JSONResponse({"chats": chats})
+    return JSONResponse({"chats": chats, "total": total, "page": page, "has_more": offset + limit < total})
 
 
 async def api_chat_load(request: Request) -> JSONResponse:
@@ -340,20 +387,58 @@ async def api_swap(request: Request) -> JSONResponse:
         return JSONResponse({"error": "model_name required"}, status_code=400)
 
     backend_url = _backend_url()
-    payload = {"model_name": model_name}
-    if "ctx_size" in body:
-        payload["args"] = {"n_ctx": body["ctx_size"]}
-    if "gpu_layers" in body:
-        payload["args"] = payload.get("args", {})
-        payload["args"]["n_gpu_layers"] = body["gpu_layers"]
+
+    # Resolve config.yaml model overrides (ctx_size, gpu_layers, etc.)
+    cfg = _load_config()
+    model_config: dict = {}
+    for pattern, overrides in cfg.get("models", {}).items():
+        if pattern in model_name:
+            model_config = overrides
+            break
+
+    def _resolve(key: str, default=None):
+        """Explicit request param > config.yaml model override > default."""
+        if key in body:
+            return body[key]
+        if key in model_config:
+            return model_config[key]
+        return default
+
+    # Build loading args — resolve each param through the config chain
+    load_args: dict = {}
+    LOAD_PARAM_KEYS = [
+        "ctx_size", "gpu_layers", "threads", "threads_batch",
+        "batch_size", "ubatch_size", "cache_type", "flash_attn",
+        "rope_freq_base", "tensor_split", "parallel",
+        "model_draft", "draft_max", "gpu_layers_draft", "ctx_size_draft",
+        "spec_type", "spec_ngram_size_n", "spec_ngram_size_m", "spec_ngram_min_hits",
+    ]
+    for key in LOAD_PARAM_KEYS:
+        val = _resolve(key)
+        if val is not None:
+            load_args[key] = val
+
+    # Ensure ctx_size and gpu_layers always have safe defaults
+    ctx_size = load_args.get("ctx_size", 8192)
+    load_args.setdefault("ctx_size", ctx_size)
+    load_args.setdefault("gpu_layers", -1)
+
+    payload: dict = {
+        "model_name": model_name,
+        "args": load_args,
+        "settings": {"truncation_length": ctx_size},
+    }
+
+    applied = {k: v for k, v in load_args.items() if v is not None}
+    config_source = model_config.get("ctx_size") and f" (from config: {list(model_config.keys())})" or ""
 
     try:
         async with httpx.AsyncClient(timeout=180) as client:
             resp = await client.post(f"{backend_url}/internal/model/load", json=payload)
-            result = resp.json() if resp.status_code == 200 else {"error": resp.text}
-            # Notify users
-            await notify_all("Model Swapped", f"Now running: {model_name}", "model-swap")
-            return JSONResponse(result)
+            if resp.status_code == 200:
+                await notify_all("Model Swapped", f"Now running: {model_name}", "model-swap")
+                return JSONResponse({"status": "ok", "model": model_name, "applied": applied})
+            return JSONResponse({"error": resp.text}, status_code=resp.status_code)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -407,6 +492,11 @@ async def api_search(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 async def api_metrics(request: Request) -> JSONResponse:
+    global _gpu_metrics_cache
+    now = time.time()
+    if now - _gpu_metrics_cache[0] < _METRICS_CACHE_TTL and _gpu_metrics_cache[1] is not None:
+        return JSONResponse(_gpu_metrics_cache[1])
+
     metrics = {"gpu": None, "backends": []}
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -429,6 +519,7 @@ async def api_metrics(request: Request) -> JSONResponse:
                 }
     except Exception:
         pass
+    _gpu_metrics_cache = (now, metrics)
     return JSONResponse(metrics)
 
 
@@ -1671,6 +1762,374 @@ async def api_kg_graph(request: Request) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
+# Agent Approval Queue
+# ---------------------------------------------------------------------------
+
+# Set by gateway.py (or lazily initialized)
+_approval_queue = None
+
+
+def _get_approval_queue():
+    global _approval_queue
+    if _approval_queue is None:
+        from localforge.agents.approval import ApprovalQueue
+        _approval_queue = ApprovalQueue()
+    return _approval_queue
+
+
+async def api_approvals_list(request: Request) -> JSONResponse:
+    """List pending approval requests."""
+    aq = _get_approval_queue()
+    return JSONResponse({
+        "pending": aq.list_pending(),
+        "recent": aq.list_recent(limit=10),
+    })
+
+
+async def api_approvals_decide(request: Request) -> JSONResponse:
+    """Approve or deny a pending request."""
+    body = await request.json()
+    req_id = body.get("id", "")
+    action = body.get("action", "")  # "approve" or "deny"
+    if not req_id or action not in ("approve", "deny"):
+        return JSONResponse({"error": "id and action (approve/deny) required"}, status_code=400)
+
+    aq = _get_approval_queue()
+    user = getattr(request.state, "user", {})
+    decided_by = user.get("name", "dashboard")
+
+    if action == "approve":
+        ok = aq.approve(req_id, decided_by=decided_by)
+    else:
+        ok = aq.deny(req_id, decided_by=decided_by)
+
+    if ok:
+        await notify_all(
+            f"Approval {action}d",
+            f"Request {req_id} was {action}d by {decided_by}",
+            f"approval-{action}",
+        )
+    return JSONResponse({"status": "ok" if ok else "not found"})
+
+
+# ---------------------------------------------------------------------------
+# Hub Mode & Character
+# ---------------------------------------------------------------------------
+
+async def api_modes(request: Request) -> JSONResponse:
+    """List available modes and the current one."""
+    config = _load_config()
+    modes = config.get("modes", {})
+    return JSONResponse({
+        "modes": {k: {**v} for k, v in modes.items()},
+        "current": _current_mode.get("name", ""),
+    })
+
+
+async def api_characters(request: Request) -> JSONResponse:
+    """List available characters and the current one."""
+    config = _load_config()
+    characters = config.get("characters", {})
+    return JSONResponse({
+        "characters": {k: {"name": v.get("name", k)} for k, v in characters.items()},
+        "current": _current_character.get("name", ""),
+    })
+
+
+async def api_set_mode(request: Request) -> JSONResponse:
+    """Set the hub mode (updates generation params accordingly)."""
+    global _current_mode
+    body = await request.json()
+    mode_name = body.get("mode", "")
+    config = _load_config()
+    modes = config.get("modes", {})
+
+    if not mode_name:
+        _current_mode = {}
+        _gen_param_overrides.pop("temperature", None)
+        _gen_param_overrides.pop("max_tokens", None)
+        return JSONResponse({"status": "mode cleared"})
+
+    if mode_name not in modes:
+        return JSONResponse({"error": f"Unknown mode: {mode_name}"}, status_code=400)
+
+    mode_cfg = modes[mode_name]
+    _current_mode = {"name": mode_name, **mode_cfg}
+
+    # Apply mode's generation param overrides
+    if mode_cfg.get("temperature") is not None:
+        _gen_param_overrides["temperature"] = mode_cfg["temperature"]
+    if mode_cfg.get("max_tokens"):
+        _gen_param_overrides["max_tokens"] = mode_cfg["max_tokens"]
+
+    return JSONResponse({
+        "status": "ok",
+        "mode": mode_name,
+        "temperature": mode_cfg.get("temperature"),
+        "max_tokens": mode_cfg.get("max_tokens"),
+        "prefer_model": mode_cfg.get("prefer_model", []),
+    })
+
+
+async def api_set_character(request: Request) -> JSONResponse:
+    """Set the hub character/persona."""
+    global _current_character
+    body = await request.json()
+    char_name = body.get("character", "")
+    config = _load_config()
+    characters = config.get("characters", {})
+
+    if not char_name or char_name == "default":
+        _current_character = {}
+        return JSONResponse({"status": "character cleared"})
+
+    if char_name not in characters:
+        return JSONResponse({"error": f"Unknown character: {char_name}"}, status_code=400)
+
+    char_cfg = characters[char_name]
+    _current_character = {"name": char_name, **char_cfg}
+
+    if char_cfg.get("temperature_override") is not None:
+        _gen_param_overrides["temperature"] = char_cfg["temperature_override"]
+
+    return JSONResponse({
+        "status": "ok",
+        "character": char_name,
+        "name": char_cfg.get("name", char_name),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Compute Mesh — heartbeat receiver + mesh status
+# ---------------------------------------------------------------------------
+
+# In-memory registry of worker nodes — delegated to gpu_pool for unified state.
+# The gpu_pool reference is set by gateway.py during lifespan startup.
+_gpu_pool_ref = None  # Set by gateway.py
+
+async def api_mesh_heartbeat(request: Request) -> JSONResponse:
+    """Receive heartbeat from a worker node and update the mesh registry."""
+    # Body size guard — reject oversized payloads
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > 65536:  # 64KB max for heartbeat
+        return JSONResponse({"error": "Payload too large"}, status_code=413)
+
+    body = await request.json()
+    hostname = body.get("hostname", "")
+    if not hostname:
+        return JSONResponse({"error": "hostname required"}, status_code=400)
+
+    if _gpu_pool_ref is not None:
+        key, accepted = _gpu_pool_ref.register_heartbeat(body)
+        if not accepted:
+            return JSONResponse({"error": "Mesh worker limit reached"}, status_code=503)
+        return JSONResponse({"status": "ok", "registered": key})
+
+    # Fallback if gpu_pool not yet initialized (shouldn't happen in practice)
+    return JSONResponse({"error": "GPU pool not initialized"}, status_code=503)
+
+
+async def api_mesh_status(request: Request) -> JSONResponse:
+    """Return all registered mesh workers and their status."""
+    if _gpu_pool_ref is not None:
+        workers = _gpu_pool_ref.get_mesh_workers()
+        return JSONResponse({"workers": workers, "count": len(workers)})
+    return JSONResponse({"workers": [], "count": 0})
+
+
+# ---------------------------------------------------------------------------
+# Model Sync
+# ---------------------------------------------------------------------------
+
+
+async def api_sync_models(request: Request) -> JSONResponse:
+    """Sync GGUF models from secondary drive to webui models directory."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    try:
+        from localforge.tools.infrastructure import sync_models as _sync_models
+        result = await _sync_models(body)
+        return JSONResponse({"status": "ok", "result": result})
+    except ImportError:
+        # Fallback for monolith mode — run sync inline
+        result = await _sync_models_fallback(body)
+        return JSONResponse({"status": "ok", "result": result})
+    except Exception as exc:
+        return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
+
+
+async def _sync_models_fallback(args: dict) -> str:
+    """Inline model sync for monolith mode (no localforge package)."""
+    import glob as glob_mod
+
+    clean = args.get("clean", True)
+    cfg = _load_config()
+
+    # Auto-detect webui models directory
+    webui_root = cfg.get("webui_root") or os.environ.get("LOCALFORGE_WEBUI_ROOT")
+    if not webui_root:
+        for candidate_path in [
+            Path.home() / "Development" / "text-generation-webui",
+            Path.home() / "text-generation-webui",
+        ]:
+            if (candidate_path / "user_data" / "models").exists():
+                webui_root = str(candidate_path)
+                break
+    if not webui_root:
+        return "Cannot find text-generation-webui. Set LOCALFORGE_WEBUI_ROOT."
+
+    target_dir = Path(os.path.expanduser(webui_root)) / "user_data" / "models"
+    if not target_dir.exists():
+        return f"Models directory not found: {target_dir}"
+
+    # Auto-detect source
+    source = args.get("source")
+    if source:
+        source_dir = Path(os.path.expanduser(source))
+    else:
+        configured = cfg.get("model_source")
+        if configured:
+            source_dir = Path(os.path.expanduser(configured))
+        else:
+            source_dir = None
+            candidates = [Path("/mnt/models")]
+            volume = cfg.get("model_volume")
+            if volume:
+                candidates.extend(Path(p) for p in sorted(glob_mod.glob(f"/media/*/{volume}*")))
+            for cp in candidates:
+                if cp.is_dir() and list(cp.glob("*.gguf")):
+                    source_dir = cp
+                    break
+        if not source_dir or not source_dir.is_dir():
+            return "No model source found. Set model_source in config.yaml."
+
+    added, removed = [], []
+    skipped = 0
+    if clean:
+        for link in target_dir.glob("*.gguf"):
+            if link.is_symlink() and not link.exists():
+                link.unlink()
+                removed.append(link.name)
+    for model_file in sorted(source_dir.glob("*.gguf")):
+        target = target_dir / model_file.name
+        if target.exists() or target.is_symlink():
+            skipped += 1
+            continue
+        target.symlink_to(model_file)
+        added.append(model_file.name)
+
+    total = len(list(target_dir.glob("*.gguf")))
+    lines = [f"Sync complete: +{len(added)} new, {skipped} existing, -{len(removed)} broken"]
+    lines.append(f"Total models: {total}")
+    if added:
+        lines.append("\nNew: " + ", ".join(added))
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Training Pipeline
+# ---------------------------------------------------------------------------
+
+
+def _import_training():
+    """Import training tools, returning None if not available (monolith mode)."""
+    try:
+        from localforge.tools import training
+        return training
+    except ImportError:
+        return None
+
+
+async def api_training_list(request: Request) -> JSONResponse:
+    """List training datasets, runs, and models."""
+    mod = _import_training()
+    if not mod:
+        return JSONResponse({"status": "ok", "result": "Training tools not installed. Install the localforge package."})
+    what = request.query_params.get("what", "all")
+    try:
+        result = await mod.train_list({"what": what})
+        return JSONResponse({"status": "ok", "result": result})
+    except Exception as exc:
+        return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
+
+
+async def api_training_status(request: Request) -> JSONResponse:
+    """Get training run status."""
+    mod = _import_training()
+    if not mod:
+        return JSONResponse({"status": "ok", "result": "Training tools not installed."})
+    name = request.query_params.get("name")
+    tail = int(request.query_params.get("tail", "20"))
+    args = {"tail": tail}
+    if name:
+        args["name"] = name
+    try:
+        result = await mod.train_status(args)
+        return JSONResponse({"status": "ok", "result": result})
+    except Exception as exc:
+        return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
+
+
+async def api_training_prepare(request: Request) -> JSONResponse:
+    """Prepare a training dataset."""
+    mod = _import_training()
+    if not mod:
+        return JSONResponse({"status": "error", "error": "Training tools not installed."}, status_code=501)
+    body = await request.json()
+    try:
+        result = await mod.train_prepare(body)
+        return JSONResponse({"status": "ok", "result": result})
+    except Exception as exc:
+        return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
+
+
+async def api_training_start(request: Request) -> JSONResponse:
+    """Start a training run."""
+    mod = _import_training()
+    if not mod:
+        return JSONResponse({"status": "error", "error": "Training tools not installed."}, status_code=501)
+    body = await request.json()
+    try:
+        result = await mod.train_start(body)
+        return JSONResponse({"status": "ok", "result": result})
+    except Exception as exc:
+        return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
+
+
+async def api_training_feedback(request: Request) -> JSONResponse:
+    """Record training feedback."""
+    mod = _import_training()
+    if not mod:
+        return JSONResponse({"status": "error", "error": "Training tools not installed."}, status_code=501)
+    body = await request.json()
+    try:
+        result = await mod.train_feedback(body)
+        return JSONResponse({"status": "ok", "result": result})
+    except Exception as exc:
+        return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
+
+
+# ---------------------------------------------------------------------------
+# Model config lookup (for dashboard pre-fill)
+# ---------------------------------------------------------------------------
+
+async def api_model_config(request: Request) -> JSONResponse:
+    """Return config.yaml model overrides for a given model name."""
+    model_name = request.query_params.get("model", "")
+    if not model_name:
+        return JSONResponse({"config": {}})
+    cfg = _load_config()
+    for pattern, overrides in cfg.get("models", {}).items():
+        if pattern in model_name:
+            return JSONResponse({"config": overrides, "matched_pattern": pattern})
+    return JSONResponse({"config": {}})
+
+
+# ---------------------------------------------------------------------------
 # Route list for mounting in the gateway
 # ---------------------------------------------------------------------------
 dashboard_routes = [
@@ -1688,6 +2147,7 @@ dashboard_routes = [
     # Models
     Route("/models", api_models, methods=["GET"]),
     Route("/swap", api_swap, methods=["POST"]),
+    Route("/models/config", api_model_config, methods=["GET"]),
     # Generation params
     Route("/generation-params", api_generation_params, methods=["GET", "POST"]),
     # Presets
@@ -1755,4 +2215,23 @@ dashboard_routes = [
     Route("/workflows/{workflow_id}", api_workflow_save, methods=["PUT"]),
     # KG graph visualization
     Route("/kg/graph", api_kg_graph, methods=["POST"]),
+    # Approval queue
+    Route("/approvals", api_approvals_list, methods=["GET"]),
+    Route("/approvals/decide", api_approvals_decide, methods=["POST"]),
+    # Hub mode & character
+    Route("/modes", api_modes, methods=["GET"]),
+    Route("/modes/set", api_set_mode, methods=["POST"]),
+    Route("/characters", api_characters, methods=["GET"]),
+    Route("/characters/set", api_set_character, methods=["POST"]),
+    # Compute mesh
+    Route("/mesh/heartbeat", api_mesh_heartbeat, methods=["POST"]),
+    Route("/mesh/status", api_mesh_status, methods=["GET"]),
+    # Model sync
+    Route("/sync-models", api_sync_models, methods=["POST"]),
+    # Training pipeline
+    Route("/training", api_training_list, methods=["GET"]),
+    Route("/training/status", api_training_status, methods=["GET"]),
+    Route("/training/prepare", api_training_prepare, methods=["POST"]),
+    Route("/training/start", api_training_start, methods=["POST"]),
+    Route("/training/feedback", api_training_feedback, methods=["POST"]),
 ]

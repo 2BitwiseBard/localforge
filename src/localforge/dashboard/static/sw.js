@@ -1,5 +1,6 @@
-// AI Hub Service Worker — cache-first for static assets, network-first for API
-const CACHE_NAME = 'ai-hub-v2';
+// AI Hub Service Worker — stale-while-revalidate for static, network-first for API
+const CACHE_VERSION = 3;  // Bump on every static file change
+const CACHE_NAME = `ai-hub-v${CACHE_VERSION}`;
 const STATIC_ASSETS = [
   '/',
   '/static/style.css',
@@ -26,7 +27,7 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
-// Fetch: cache-first for static, network-first for API
+// Fetch: stale-while-revalidate for static, network-only for API
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
@@ -35,17 +36,18 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Static assets: cache first, fallback to network
+  // Static assets: serve cached immediately, update cache in background
   event.respondWith(
     caches.match(event.request).then(cached => {
-      if (cached) return cached;
-      return fetch(event.request).then(response => {
-        if (response.ok && url.pathname.startsWith('/static/')) {
+      const networkFetch = fetch(event.request).then(response => {
+        if (response.ok && (url.pathname.startsWith('/static/') || url.pathname === '/')) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
         }
         return response;
-      });
+      }).catch(() => cached);  // offline fallback to cache
+
+      return cached || networkFetch;
     })
   );
 });

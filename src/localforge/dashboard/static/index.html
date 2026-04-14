@@ -17,55 +17,83 @@
 <header>
   <h1>AI Hub</h1>
   <div class="header-controls">
+    <span id="conn-dot" class="conn-dot conn-unknown" title="Backend status"></span>
     <span id="user-badge" class="user-badge"></span>
     <select id="model-select" title="Switch model"></select>
     <div id="model-badge" class="badge">--</div>
   </div>
 </header>
 
-<nav>
-  <button class="tab active" data-tab="status">Status</button>
-  <button class="tab" data-tab="chat">Chat</button>
-  <button class="tab" data-tab="search">Search</button>
-  <button class="tab" data-tab="media">Media</button>
-  <button class="tab" data-tab="config">Config</button>
-  <button class="tab" data-tab="agents">Agents</button>
-  <button class="tab" data-tab="research">Research</button>
-  <button class="tab" data-tab="workflows">Workflows</button>
-  <button class="tab" data-tab="notes">Notes</button>
-  <button class="tab" data-tab="knowledge">Knowledge</button>
+<nav role="navigation" aria-label="Dashboard tabs">
+  <button class="tab active" data-tab="status" role="tab" aria-selected="true" aria-controls="tab-status">Status</button>
+  <button class="tab" data-tab="chat" role="tab" aria-selected="false" aria-controls="tab-chat">Chat</button>
+  <button class="tab" data-tab="search" role="tab" aria-selected="false" aria-controls="tab-search">Search</button>
+  <button class="tab" data-tab="media" role="tab" aria-selected="false" aria-controls="tab-media">Media</button>
+  <button class="tab" data-tab="config" role="tab" aria-selected="false" aria-controls="tab-config">Config</button>
+  <button class="tab" data-tab="agents" role="tab" aria-selected="false" aria-controls="tab-agents">Agents</button>
+  <button class="tab" data-tab="research" role="tab" aria-selected="false" aria-controls="tab-research">Research</button>
+  <button class="tab" data-tab="workflows" role="tab" aria-selected="false" aria-controls="tab-workflows">Workflows</button>
+  <button class="tab" data-tab="training" role="tab" aria-selected="false" aria-controls="tab-training">Training</button>
+  <button class="tab" data-tab="notes" role="tab" aria-selected="false" aria-controls="tab-notes">Notes</button>
+  <button class="tab" data-tab="knowledge" role="tab" aria-selected="false" aria-controls="tab-knowledge">Knowledge</button>
 </nav>
 
-<main>
+<main role="main">
   <!-- Status Tab -->
-  <section id="tab-status" class="tab-content active">
+  <section id="tab-status" class="tab-content active" role="tabpanel" aria-label="System status">
     <div class="card">
-      <h2>System Status</h2>
-      <div id="status-info">Loading...</div>
+      <h2>System Status <span id="refresh-indicator" class="refresh-indicator" title="Auto-refreshes every 30s"></span></h2>
+      <div id="status-info" aria-live="polite">Loading...</div>
     </div>
     <div class="card">
       <h2>GPU Metrics</h2>
       <div id="gpu-metrics">Loading...</div>
     </div>
     <div class="card">
+      <h2>Hub Mode</h2>
+      <div class="mode-controls">
+        <select id="mode-select" class="param-select">
+          <option value="">loading...</option>
+        </select>
+        <select id="character-select" class="param-select">
+          <option value="">loading...</option>
+        </select>
+        <button id="mode-apply" class="btn-primary">Apply</button>
+      </div>
+      <div id="mode-info" class="mode-info"></div>
+    </div>
+    <div class="card">
       <h2>Gateway Health</h2>
       <div id="health-info">Loading...</div>
+    </div>
+    <div class="card">
+      <h2>Compute Mesh</h2>
+      <div id="mesh-info">Loading...</div>
+    </div>
+    <div class="card">
+      <h2>Model Management</h2>
+      <p class="param-subtitle">Sync new models from external drives</p>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+        <button id="sync-models-btn" class="btn-primary">Sync Models</button>
+        <span id="sync-models-status" style="color:#8b949e;font-size:0.85em;"></span>
+      </div>
+      <pre id="sync-models-result" style="display:none;margin-top:12px;white-space:pre-wrap;font-size:0.85em;color:#c9d1d9;max-height:200px;overflow:auto;"></pre>
     </div>
   </section>
 
   <!-- Chat Tab -->
-  <section id="tab-chat" class="tab-content">
+  <section id="tab-chat" class="tab-content" role="tabpanel" aria-label="Chat">
     <div class="card chat-container">
       <div class="chat-header">
         <div class="chat-header-left">
-          <button id="chat-history-btn" class="icon-btn" title="Chat history">&#x1f4dc;</button>
-          <button id="chat-new-btn" class="icon-btn" title="New chat">+</button>
-          <button id="chat-save-btn" class="icon-btn" title="Save chat">&#x1f4be;</button>
-          <button id="chat-export-btn" class="icon-btn" title="Export chat">&#x2B07;</button>
-          <button id="sys-prompt-toggle" class="icon-btn" title="System prompt">&#x2699;</button>
+          <button id="chat-history-btn" class="icon-btn" title="Chat history" aria-label="Chat history">&#x1f4dc;</button>
+          <button id="chat-new-btn" class="icon-btn" title="New chat" aria-label="New chat">+</button>
+          <button id="chat-save-btn" class="icon-btn" title="Save chat" aria-label="Save chat">&#x1f4be;</button>
+          <button id="chat-export-btn" class="icon-btn" title="Export chat" aria-label="Export chat">&#x2B07;</button>
+          <button id="sys-prompt-toggle" class="icon-btn" title="System prompt" aria-label="System prompt">&#x2699;</button>
         </div>
         <div class="chat-header-right">
-          <button id="tts-toggle" class="icon-btn" title="Text-to-speech">&#x1f508;</button>
+          <button id="tts-toggle" class="icon-btn" title="Text-to-speech" aria-label="Text-to-speech">&#x1f508;</button>
           <select id="voice-select" class="voice-select"></select>
         </div>
       </div>
@@ -81,13 +109,13 @@
       </div>
       <div id="image-preview-area" class="image-preview-area" style="display:none">
         <img id="image-thumbnail" class="image-thumbnail" />
-        <button id="image-clear" class="icon-btn">&times;</button>
+        <button id="image-clear" class="icon-btn" aria-label="Clear image">&times;</button>
       </div>
       <div class="chat-input">
         <textarea id="chat-prompt" placeholder="Ask anything..." rows="2"></textarea>
         <div class="chat-input-buttons">
-          <label class="icon-btn file-label" title="Image">&#x1f4f7;<input type="file" id="image-input" accept="image/*" style="display:none"></label>
-          <button id="mic-btn" class="icon-btn" title="Voice">&#x1f3a4;</button>
+          <label class="icon-btn file-label" title="Image" aria-label="Attach image">&#x1f4f7;<input type="file" id="image-input" accept="image/*" style="display:none"></label>
+          <button id="mic-btn" class="icon-btn" title="Voice" aria-label="Voice input">&#x1f3a4;</button>
           <button id="chat-send">Send</button>
         </div>
       </div>
@@ -98,7 +126,7 @@
   </section>
 
   <!-- Search Tab -->
-  <section id="tab-search" class="tab-content">
+  <section id="tab-search" class="tab-content" role="tabpanel" aria-label="Search">
     <div class="card">
       <h2>Code Search / RAG</h2>
       <div class="search-controls">
@@ -128,7 +156,7 @@
   </section>
 
   <!-- Media Tab (Photos + Videos) -->
-  <section id="tab-media" class="tab-content">
+  <section id="tab-media" class="tab-content" role="tabpanel" aria-label="Media">
     <div class="card">
       <h2>Media Gallery</h2>
       <div class="media-tabs">
@@ -151,7 +179,7 @@
   </section>
 
   <!-- Config Tab -->
-  <section id="tab-config" class="tab-content">
+  <section id="tab-config" class="tab-content" role="tabpanel" aria-label="Configuration">
     <div class="card">
       <h2>Generation Parameters</h2>
       <div class="param-grid">
@@ -209,6 +237,131 @@
     </div>
 
     <div class="card">
+      <h2>Model Loading Parameters</h2>
+      <p class="param-subtitle">Applied on next model swap. Leave blank to use config.yaml defaults.</p>
+
+      <details class="param-section" open>
+        <summary>Core</summary>
+        <div class="param-grid">
+          <div class="param-row">
+            <label>Context Size <span class="param-hint">tokens</span></label>
+            <input type="number" id="ctrl-ctx-size" placeholder="32768" min="512" max="1048576" step="256" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>GPU Layers <span class="param-hint">-1 = all</span></label>
+            <input type="number" id="ctrl-gpu-layers" placeholder="-1" min="-1" max="999" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>Threads</label>
+            <input type="number" id="ctrl-threads" placeholder="auto" min="1" max="128" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>Threads (Batch)</label>
+            <input type="number" id="ctrl-threads-batch" placeholder="auto" min="1" max="128" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>Batch Size</label>
+            <input type="number" id="ctrl-batch-size" placeholder="512" min="32" max="8192" step="32" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>Micro Batch</label>
+            <input type="number" id="ctrl-ubatch-size" placeholder="512" min="32" max="8192" step="32" class="param-number">
+          </div>
+        </div>
+      </details>
+
+      <details class="param-section">
+        <summary>KV Cache &amp; Attention</summary>
+        <div class="param-grid">
+          <div class="param-row">
+            <label>Cache Type</label>
+            <select id="ctrl-cache-type" class="param-select">
+              <option value="">default (fp16)</option>
+              <option value="fp16">fp16</option>
+              <option value="q8_0">q8_0 (half VRAM)</option>
+              <option value="q4_0">q4_0 (quarter VRAM)</option>
+            </select>
+          </div>
+          <div class="param-row">
+            <label>Flash Attention</label>
+            <select id="ctrl-flash-attn" class="param-select">
+              <option value="">default</option>
+              <option value="true">enabled</option>
+              <option value="false">disabled</option>
+            </select>
+          </div>
+          <div class="param-row">
+            <label>RoPE Freq Base</label>
+            <input type="number" id="ctrl-rope-freq-base" placeholder="auto" min="1" class="param-number">
+          </div>
+        </div>
+      </details>
+
+      <details class="param-section">
+        <summary>Parallelism</summary>
+        <div class="param-grid">
+          <div class="param-row">
+            <label>Parallel Slots</label>
+            <input type="number" id="ctrl-parallel" placeholder="1" min="1" max="32" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>Tensor Split <span class="param-hint">e.g. 0.7,0.3</span></label>
+            <input type="text" id="ctrl-tensor-split" placeholder="auto" class="param-number" style="width:160px;text-align:left">
+          </div>
+        </div>
+      </details>
+
+      <details class="param-section">
+        <summary>Speculative Decoding</summary>
+        <div class="param-grid">
+          <div class="param-row">
+            <label>Spec Type</label>
+            <select id="ctrl-spec-type" class="param-select">
+              <option value="">none</option>
+              <option value="draft">draft model</option>
+              <option value="ngram">n-gram</option>
+            </select>
+          </div>
+          <div class="param-row">
+            <label>Draft Model</label>
+            <select id="ctrl-model-draft" class="param-select">
+              <option value="">none</option>
+            </select>
+          </div>
+          <div class="param-row">
+            <label>Draft Max Tokens</label>
+            <input type="number" id="ctrl-draft-max" placeholder="16" min="1" max="128" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>Draft GPU Layers <span class="param-hint">-1 = all</span></label>
+            <input type="number" id="ctrl-gpu-layers-draft" placeholder="-1" min="-1" max="999" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>Draft Ctx Size</label>
+            <input type="number" id="ctrl-ctx-size-draft" placeholder="same" min="512" max="131072" step="256" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>N-gram Size N</label>
+            <input type="number" id="ctrl-ngram-n" placeholder="4" min="1" max="16" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>N-gram Size M</label>
+            <input type="number" id="ctrl-ngram-m" placeholder="2" min="1" max="16" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>N-gram Min Hits</label>
+            <input type="number" id="ctrl-ngram-hits" placeholder="2" min="1" max="16" class="param-number">
+          </div>
+        </div>
+      </details>
+
+      <div class="param-actions">
+        <button id="load-params-clear" class="btn-secondary">Clear All</button>
+        <span class="param-hint">Parameters are sent with the next model swap</span>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>LoRA Adapters</h2>
       <div id="lora-info"></div>
       <div id="lora-list" class="lora-list"></div>
@@ -219,7 +372,11 @@
   </section>
 
   <!-- Agents Tab -->
-  <section id="tab-agents" class="tab-content">
+  <section id="tab-agents" class="tab-content" role="tabpanel" aria-label="Agents">
+    <div class="card" id="approval-card">
+      <h2>Approval Queue</h2>
+      <div id="approval-list" class="approval-list">No pending approvals</div>
+    </div>
     <div class="card">
       <h2>Autonomous Agents</h2>
       <p class="agent-subtitle">Background agents with messaging, task queues, and sub-agent spawning.</p>
@@ -234,7 +391,7 @@
   </section>
 
   <!-- Research Tab -->
-  <section id="tab-research" class="tab-content">
+  <section id="tab-research" class="tab-content" role="tabpanel" aria-label="Research">
     <div class="card">
       <h2>Research Sessions</h2>
       <div class="research-controls">
@@ -252,7 +409,7 @@
   </section>
 
   <!-- Workflows Tab -->
-  <section id="tab-workflows" class="tab-content">
+  <section id="tab-workflows" class="tab-content" role="tabpanel" aria-label="Workflows">
     <div class="card">
       <h2>Workflow Engine</h2>
       <p class="agent-subtitle">DAG-based workflows with parallel execution, conditions, and loops.</p>
@@ -278,8 +435,78 @@
     </div>
   </section>
 
+  <!-- Training Tab -->
+  <section id="tab-training" class="tab-content" role="tabpanel" aria-label="Training">
+    <div class="card">
+      <h2>Training Pipeline</h2>
+      <p class="param-subtitle">QLoRA fine-tuning via Unsloth</p>
+      <div id="training-overview">Loading...</div>
+    </div>
+    <div class="card">
+      <h2>Prepare Dataset</h2>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <select id="train-mode" class="param-select">
+          <option value="git-diffs">From Git History (commit messages)</option>
+          <option value="code-pairs">From Code (function pairs)</option>
+          <option value="from-feedback">From Feedback (rated responses)</option>
+        </select>
+        <input type="text" id="train-repo" class="param-number" placeholder="Repository or directory path..." style="width:100%">
+        <input type="text" id="train-glob" class="param-number" placeholder="Glob pattern (e.g. **/*.py)" style="width:100%">
+        <input type="text" id="train-dataset-name" class="param-number" placeholder="Dataset name (optional)" style="width:100%">
+        <button id="train-prepare-btn" class="btn-primary">Prepare Dataset</button>
+        <pre id="train-prepare-result" style="display:none;white-space:pre-wrap;font-size:0.85em;color:#c9d1d9;max-height:200px;overflow:auto;"></pre>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Start Training</h2>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <select id="train-dataset-select" class="param-select">
+          <option value="">Select dataset...</option>
+        </select>
+        <details class="param-section">
+          <summary>Training Parameters</summary>
+          <div class="param-grid">
+            <label>Base Model<input type="text" id="train-base-model" class="param-number" value="unsloth/Qwen3-8B-bnb-4bit" style="width:100%"></label>
+            <label>Epochs<input type="number" id="train-epochs" class="param-number" value="3"></label>
+            <label>Batch Size<input type="number" id="train-batch" class="param-number" value="2"></label>
+            <label>Learning Rate<input type="number" id="train-lr" class="param-number" value="0.0002" step="0.00001"></label>
+            <label>LoRA Rank<input type="number" id="train-lora-rank" class="param-number" value="16"></label>
+            <label>Max Seq Len<input type="number" id="train-max-seq" class="param-number" value="2048"></label>
+            <label>GGUF Export<input type="text" id="train-gguf" class="param-number" value="q4_k_m"></label>
+          </div>
+        </details>
+        <button id="train-start-btn" class="btn-primary">Start Training</button>
+        <div id="train-start-warn" style="display:none;color:#f0883e;font-size:0.85em;margin-top:4px;"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Training Status</h2>
+      <div id="training-status">No active run</div>
+    </div>
+    <div class="card">
+      <h2>Feedback</h2>
+      <p class="param-subtitle">Rate model responses to build personalized training data</p>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">
+        <textarea id="fb-prompt" placeholder="Prompt that was given..." rows="2" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical;"></textarea>
+        <textarea id="fb-response" placeholder="Model's response to rate..." rows="3" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical;"></textarea>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <label style="color:#8b949e;">Rating:</label>
+          <select id="fb-rating" class="param-select" style="width:auto;">
+            <option value="5">5 - Excellent</option>
+            <option value="4">4 - Good</option>
+            <option value="3" selected>3 - OK</option>
+            <option value="2">2 - Poor</option>
+            <option value="1">1 - Terrible</option>
+          </select>
+          <button id="fb-submit-btn" class="btn-primary">Submit Feedback</button>
+        </div>
+        <div id="fb-result" style="color:#8b949e;font-size:0.85em;"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- Notes Tab -->
-  <section id="tab-notes" class="tab-content">
+  <section id="tab-notes" class="tab-content" role="tabpanel" aria-label="Notes">
     <div class="card">
       <h2>Persistent Notes</h2>
       <div id="notes-list">Loading...</div>
@@ -287,7 +514,7 @@
   </section>
 
   <!-- Knowledge Graph Tab -->
-  <section id="tab-knowledge" class="tab-content">
+  <section id="tab-knowledge" class="tab-content" role="tabpanel" aria-label="Knowledge graph">
     <div class="card">
       <h2>Knowledge Graph</h2>
       <div id="kg-stats" class="kg-stats">Loading...</div>
