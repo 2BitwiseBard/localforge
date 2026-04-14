@@ -16,6 +16,11 @@ Usage (local — on the hub):
     local note save topic "content"       # save a note
     local note recall topic               # recall a note
     local benchmark                       # benchmark tok/s
+    local hub status                      # check service status
+    local hub stop                        # stop all services
+    local hub disable                     # turn off auto-start
+    local hub enable                      # turn on auto-start
+    local hub update                      # git pull + restart
     local call <tool> --arg val           # generic tool dispatch
 
 Usage (remote — any device on Tailscale):
@@ -304,6 +309,66 @@ api_key: "{api_key}"
         print("  api_key: (empty — set this to your gateway API key)")
 
 
+def cmd_hub(args):
+    """Manage AI hub services (start/stop/status/enable/disable/update)."""
+    import subprocess
+
+    CORE_SERVICES = ["text-gen-webui", "mcp-gateway", "litellm"]
+    action = args.hub_action
+
+    if action == "status":
+        subprocess.run(
+            ["systemctl", "--user", "status"] + CORE_SERVICES + ["--no-pager"],
+            check=False,
+        )
+        return
+
+    if action in ("start", "stop", "restart"):
+        subprocess.run(["systemctl", "--user", action] + CORE_SERVICES, check=False)
+        subprocess.run(
+            ["systemctl", "--user", "status"] + CORE_SERVICES + ["--no-pager"],
+            check=False,
+        )
+        return
+
+    if action == "enable":
+        subprocess.run(["systemctl", "--user", "enable"] + CORE_SERVICES, check=False)
+        print("Auto-start ON — services will start on boot.")
+        return
+
+    if action == "disable":
+        subprocess.run(["systemctl", "--user", "disable"] + CORE_SERVICES, check=False)
+        print("Auto-start OFF — services will NOT start on boot.")
+        print("Use 'local hub start' to start them manually.")
+        return
+
+    if action == "logs":
+        unit_args = []
+        for svc in CORE_SERVICES:
+            unit_args.extend(["-u", svc])
+        subprocess.run(
+            ["journalctl", "--user"] + unit_args + ["-n", "50", "-f"],
+            check=False,
+        )
+        return
+
+    if action == "update":
+        print("Pulling latest code...")
+        localforge_dir = Path(__file__).resolve().parent.parent
+        result = subprocess.run(
+            ["git", "-C", str(localforge_dir), "pull", "--ff-only"],
+            capture_output=True, text=True,
+        )
+        print(result.stdout or result.stderr)
+        if result.returncode == 0:
+            print("Restarting services...")
+            subprocess.run(["systemctl", "--user", "restart"] + CORE_SERVICES, check=False)
+            print("Update complete.")
+        else:
+            print("Git pull failed — services not restarted.", file=sys.stderr)
+        return
+
+
 def cmd_call(args):
     endpoint, api_key = get_endpoint_and_key(args)
     # Parse --key value pairs into arguments dict
@@ -387,6 +452,11 @@ def main():
     p.add_argument("--key", help="API key for the gateway")
     p.add_argument("--force", action="store_true", help="Overwrite existing config")
 
+    # hub
+    p = sub.add_parser("hub", help="Manage AI hub services (start/stop/enable/disable/update)")
+    p.add_argument("hub_action", choices=["start", "stop", "restart", "status", "enable", "disable", "logs", "update"],
+                   help="Action: start, stop, restart, status, enable (auto-start on), disable (auto-start off), logs, update")
+
     # call (generic)
     p = sub.add_parser("call", help="Call any MCP tool by name")
     p.add_argument("tool_name", help="Tool name (e.g. health_check, local_chat)")
@@ -412,6 +482,7 @@ def main():
         "note": cmd_note,
         "benchmark": cmd_benchmark,
         "setup": cmd_setup,
+        "hub": cmd_hub,
         "call": cmd_call,
     }
     handlers[args.command](args)

@@ -27,49 +27,54 @@ classifiers = [
 
 # Core dependencies — required for MCP server to function
 dependencies = [
-    "mcp>=1.0.0",
-    "httpx>=0.27.0",
-    "tenacity>=9.0.0",
-    "pyyaml>=6.0",
+    "mcp~=1.0",
+    "httpx~=0.27",
+    "tenacity~=9.0",
+    "pyyaml~=6.0",
 ]
 
 [project.optional-dependencies]
 # HTTP gateway (dashboard, remote access, CLI)
 gateway = [
-    "uvicorn>=0.30.0",
-    "starlette>=0.38.0",
+    "uvicorn~=0.30",
+    "starlette~=0.38",
 ]
 
 # Semantic search (dense + sparse + ColBERT + reranker)
 embeddings = [
-    "fastembed>=0.3.0",
-    "numpy>=1.24.0",
+    "fastembed~=0.3",
+    "numpy~=1.24",
 ]
 
 # Code-aware chunking for RAG indexing
 search = [
-    "tree-sitter-languages>=1.10.0",
+    "tree-sitter-languages~=1.10",
+]
+
+# Bcrypt key hashing for production auth
+auth = [
+    "bcrypt~=4.0",
 ]
 
 # Autonomous agent file-watch triggers
 agents = [
-    "watchdog>=6.0.0",
+    "watchdog~=6.0",
 ]
 
 # Web search and research tools
 web = [
-    "ddgs>=2.0.0",
-    "trafilatura>=2.0.0",
+    "ddgs~=2.0",
+    "trafilatura~=2.0",
 ]
 
 # Media processing (photo/video)
 media = [
-    "Pillow>=10.0.0",
+    "Pillow~=10.0",
 ]
 
 # All optional features
 all = [
-    "localforge[gateway,embeddings,search,agents,web,media]",
+    "localforge[gateway,embeddings,search,agents,web,media,auth]",
 ]
 
 # Development tools
@@ -79,6 +84,11 @@ dev = [
     "ruff>=0.4.0",
     "mypy>=1.10.0",
 ]
+
+[project.scripts]
+localforge = "localforge.server:main_sync"
+localforge-gateway = "localforge.gateway:main"
+localforge-worker = "localforge.workers.device_worker:main"
 
 [project.urls]
 Homepage = "https://github.com/bitwisebard/localforge"
@@ -94,6 +104,7 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
+ignore = ["E501"]  # line length in schema descriptions
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
