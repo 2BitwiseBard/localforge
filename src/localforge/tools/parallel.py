@@ -1,4 +1,8 @@
-"""Parallel execution tools — fan_out, parallel_file_review, quality_sweep."""
+"""Parallel execution tools — fan_out, parallel_file_review, quality_sweep.
+
+When mesh workers are available, tasks are distributed across the mesh.
+Otherwise, everything runs on the hub model.
+"""
 
 import asyncio
 import logging
@@ -7,27 +11,65 @@ from pathlib import Path
 from typing import Any
 
 from localforge import config as cfg
-from localforge.client import resolve_model, _chat_to_backend
+from localforge.client import _chat_to_backend, resolve_model
 from localforge.tools import tool_handler
 
 log = logging.getLogger("localforge")
 
 
-async def _local_analyze_one(file_path: str, concern: str, preamble: str | None,
-                              gen_params: dict[str, Any]) -> dict[str, str]:
-    """Analyze a single file for a concern. Returns {file, verdict, details}."""
-    path = Path(os.path.expanduser(file_path)).resolve()
-    home = Path.home().resolve()
-    if not (str(path).startswith(str(home)) or str(path).startswith("/tmp")):
-        return {"file": file_path, "verdict": "SKIP", "details": "outside allowed paths"}
-    if not path.exists():
-        return {"file": file_path, "verdict": "SKIP", "details": "file not found"}
-    if not path.is_file():
-        return {"file": file_path, "verdict": "SKIP", "details": "not a file"}
+def _get_mesh_worker_urls() -> list[str]:
+    """Return URLs of healthy mesh workers with inference capability."""
+    try:
+        from localforge.tools.compute import _get_healthy_worker_urls
+        return _get_healthy_worker_urls("inference")
+    except ImportError:
+        return []
 
-    size = path.stat().st_size
-    if size > 100_000:
-        return {"file": file_path, "verdict": "SKIP", "details": f"too large ({size:,} bytes)"}
+
+async def _chat_to_mesh_or_hub(body: dict, worker_url: str | None = None) -> str:
+    """Send a chat request to a mesh worker if available, otherwise to the hub.
+
+    Args:
+        body: OpenAI-compatible chat completion request body.
+        worker_url: If provided, dispatch to this specific worker.
+                    If None, use the hub model.
+    """
+    if worker_url:
+        try:
+            import httpx
+            # Convert chat body to worker task format
+            payload = {
+                "type": "chat",
+                "messages": body.get("messages", []),
+                "max_tokens": body.get("max_tokens", 1024),
+                "temperature": body.get("temperature", 0.7),
+            }
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.post(f"{worker_url}/task", json=payload)
+                result = resp.json()
+                if "error" in result:
+                    log.debug("Mesh worker %s failed: %s, falling back to hub", worker_url, result["error"])
+                else:
+                    return result.get("response", "")
+        except Exception as e:
+            log.debug("Mesh dispatch to %s failed: %s, falling back to hub", worker_url, e)
+
+    # Fallback to hub
+    return await _chat_to_backend(cfg.TGWUI_BASE, body)
+
+
+async def _local_analyze_one(file_path: str, concern: str, preamble: str | None,
+                              gen_params: dict[str, Any],
+                              worker_url: str | None = None) -> dict[str, str]:
+    """Analyze a single file for a concern. Returns {file, verdict, details}.
+
+    If worker_url is provided, dispatches to that mesh worker instead of the hub.
+    """
+    from localforge.tools.utils import validate_file_path
+
+    path, err = validate_file_path(file_path)
+    if err:
+        return {"file": file_path, "verdict": "SKIP", "details": err.replace("Error: ", "")}
 
     try:
         content = path.read_text(encoding="utf-8", errors="replace")
@@ -55,7 +97,7 @@ async def _local_analyze_one(file_path: str, concern: str, preamble: str | None,
     body: dict[str, Any] = {"model": cfg.MODEL or "", "messages": messages, "stream": False, **gen_params}
 
     try:
-        result = await _chat_to_backend(cfg.TGWUI_BASE, body)
+        result = await _chat_to_mesh_or_hub(body, worker_url=worker_url)
         has_issues = "no issues" not in result.lower()
         return {
             "file": path.name,
@@ -104,24 +146,36 @@ async def fan_out(args: dict) -> str:
 
     gen_params = cfg.get_generation_params(cfg.MODEL)
 
-    async def _run_one(idx: int, prompt: str) -> tuple[int, str]:
+    # Get mesh workers for distribution
+    mesh_workers = _get_mesh_worker_urls()
+    using_mesh = len(mesh_workers) > 0
+
+    async def _run_one(idx: int, prompt: str, worker_url: str | None = None) -> tuple[int, str]:
         messages: list[dict[str, str]] = []
         if effective_system:
             messages.append({"role": "system", "content": effective_system})
         messages.append({"role": "user", "content": prompt})
         body: dict[str, Any] = {"model": cfg.MODEL or "", "messages": messages, "stream": False, **gen_params}
         try:
-            result = await _chat_to_backend(cfg.TGWUI_BASE, body)
+            result = await _chat_to_mesh_or_hub(body, worker_url=worker_url)
             return (idx, result)
         except Exception as e:
             return (idx, f"Error: {e}")
 
-    log.info("fan_out: dispatching %d prompts in parallel", len(prompts))
-    tasks = [_run_one(i, p) for i, p in enumerate(prompts)]
+    # Distribute across mesh workers (round-robin) if available, else all go to hub
+    tasks = []
+    for i, p in enumerate(prompts):
+        worker = mesh_workers[i % len(mesh_workers)] if mesh_workers else None
+        tasks.append(_run_one(i, p, worker_url=worker))
+
+    dispatch_target = f"{len(mesh_workers)} mesh workers" if using_mesh else "hub"
+    log.info("fan_out: dispatching %d prompts across %s", len(prompts), dispatch_target)
     results = await asyncio.gather(*tasks)
     results_sorted = sorted(results, key=lambda x: x[0])
 
     parts = []
+    if using_mesh:
+        parts.append(f"Distributed across {len(mesh_workers)} mesh workers\n")
     for idx, result in results_sorted:
         prompt_preview = prompts[idx][:60] + "..." if len(prompts[idx]) > 60 else prompts[idx]
         parts.append(f"--- [{idx + 1}] {prompt_preview} ---\n{result}")
@@ -163,8 +217,13 @@ async def parallel_file_review(args: dict) -> str:
     preamble = cfg.get_system_preamble()
     gen_params = cfg.get_generation_params(cfg.MODEL)
 
-    log.info("parallel_file_review: %d files for '%s'", len(file_paths), concern)
-    tasks = [_local_analyze_one(fp, concern, preamble, gen_params) for fp in file_paths]
+    mesh_workers = _get_mesh_worker_urls()
+    dispatch_target = f"{len(mesh_workers)} mesh workers" if mesh_workers else "hub"
+    log.info("parallel_file_review: %d files for '%s' across %s", len(file_paths), concern, dispatch_target)
+    tasks = []
+    for i, fp in enumerate(file_paths):
+        worker = mesh_workers[i % len(mesh_workers)] if mesh_workers else None
+        tasks.append(_local_analyze_one(fp, concern, preamble, gen_params, worker_url=worker))
     results = await asyncio.gather(*tasks)
 
     passes = sum(1 for r in results if r["verdict"] == "PASS")
@@ -208,12 +267,10 @@ async def quality_sweep(args: dict) -> str:
     if cfg.MODEL is None:
         cfg.MODEL = await resolve_model()
 
-    directory = Path(os.path.expanduser(args["directory"])).resolve()
-    home = Path.home().resolve()
-    if not (str(directory).startswith(str(home)) or str(directory).startswith("/tmp")):
-        return f"Error: directory must be under {home} or /tmp"
-    if not directory.exists():
-        return f"Error: directory not found: {directory}"
+    from localforge.tools.utils import validate_directory
+    directory, err = validate_directory(args["directory"])
+    if err:
+        return err
 
     glob_pattern = args["glob_pattern"]
     criterion = args["criterion"]
@@ -232,8 +289,13 @@ async def quality_sweep(args: dict) -> str:
     preamble = cfg.get_system_preamble()
     gen_params = cfg.get_generation_params(cfg.MODEL)
 
-    log.info("quality_sweep: %d files in %s for '%s'", len(files), directory, criterion)
-    tasks = [_local_analyze_one(str(f), criterion, preamble, gen_params) for f in files]
+    mesh_workers = _get_mesh_worker_urls()
+    dispatch_target = f"{len(mesh_workers)} mesh workers" if mesh_workers else "hub"
+    log.info("quality_sweep: %d files in %s for '%s' across %s", len(files), directory, criterion, dispatch_target)
+    tasks = []
+    for i, f in enumerate(files):
+        worker = mesh_workers[i % len(mesh_workers)] if mesh_workers else None
+        tasks.append(_local_analyze_one(str(f), criterion, preamble, gen_params, worker_url=worker))
     results = await asyncio.gather(*tasks)
 
     passes = sum(1 for r in results if r["verdict"] == "PASS")

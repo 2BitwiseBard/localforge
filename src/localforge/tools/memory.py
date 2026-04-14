@@ -73,7 +73,7 @@ async def scratchpad(args: dict) -> str:
     },
 )
 async def save_note(args: dict) -> str:
-    nd = notes_dir()
+    notes_dir()  # ensure directory exists
     topic = cfg.sanitize_topic(args["topic"])
     path = cfg.safe_note_path(topic)
     if path is None:

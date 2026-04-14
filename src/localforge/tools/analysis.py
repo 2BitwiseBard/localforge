@@ -1,14 +1,14 @@
 """Code analysis tools."""
 
-import base64
-import os
 import asyncio
+import base64
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
 from localforge import config as cfg
-from localforge.client import chat, _client, resolve_model, _chat_to_backend, check_backend_health
+from localforge.client import _chat_to_backend, chat, check_backend_health, resolve_model, task_type_context
 from localforge.tools import tool_handler
 
 log = logging.getLogger("localforge")
@@ -35,7 +35,8 @@ async def analyze_code(args: dict) -> str:
         f"Be concise. List specific line numbers and issues.\n\n"
         f"```\n{args['code']}\n```"
     )
-    return await chat(prompt, system=cfg.get_system_preamble())
+    async with task_type_context("code"):
+        return await chat(prompt, system=cfg.get_system_preamble())
 
 
 @tool_handler(
@@ -143,7 +144,8 @@ async def summarize_file(args: dict) -> str:
         f"Be concise. Use a structured format.\n\n"
         f"```\n{args['code']}\n```"
     )
-    return await chat(prompt, system=cfg.get_system_preamble())
+    async with task_type_context("code"):
+        return await chat(prompt, system=cfg.get_system_preamble())
 
 
 @tool_handler(
@@ -167,7 +169,8 @@ async def explain_error(args: dict) -> str:
         f"Error:\n```\n{args['error']}\n```{context_block}\n\n"
         f"Format: 1) What it means  2) Why it happens  3) How to fix it (with code)"
     )
-    return await chat(prompt, system=cfg.get_system_preamble())
+    async with task_type_context("code"):
+        return await chat(prompt, system=cfg.get_system_preamble())
 
 
 @tool_handler(
@@ -187,20 +190,11 @@ async def explain_error(args: dict) -> str:
     },
 )
 async def file_qa(args: dict) -> str:
-    file_path = Path(os.path.expanduser(args["file_path"])).resolve()
+    from localforge.tools.utils import validate_file_path
 
-    home = Path.home().resolve()
-    allowed_prefixes = [str(home), "/tmp"]
-    if not any(str(file_path).startswith(p) for p in allowed_prefixes):
-        return f"Error: file must be under {home} or /tmp"
-    if not file_path.exists():
-        return f"Error: file not found: {file_path}"
-    if not file_path.is_file():
-        return f"Error: not a file: {file_path}"
-
-    size = file_path.stat().st_size
-    if size > 100_000:
-        return f"Error: file too large ({size:,} bytes, max 100KB). Use line_range to read a section."
+    file_path, err = validate_file_path(args["file_path"])
+    if err:
+        return err
 
     content = file_path.read_text(encoding="utf-8", errors="replace")
 
@@ -219,7 +213,8 @@ async def file_qa(args: dict) -> str:
         f"```\n{content}\n```\n\n"
         f"Question: {args['question']}"
     )
-    return await chat(prompt, system=cfg.get_system_preamble())
+    async with task_type_context("code"):
+        return await chat(prompt, system=cfg.get_system_preamble())
 
 
 @tool_handler(
@@ -250,16 +245,10 @@ async def analyze_image(args: dict) -> str:
             f"Load a vision model first, e.g.: swap_model(model_name='Qwen3-VL-30B-A3B-Instruct-UD-Q4_K_XL.gguf')"
         )
 
-    image_path = Path(os.path.expanduser(args["image_path"])).resolve()
-    home = Path.home().resolve()
-    if not (str(image_path).startswith(str(home)) or str(image_path).startswith("/tmp")):
-        return f"Error: image must be under {home} or /tmp"
-    if not image_path.exists():
-        return f"Error: image not found: {image_path}"
-
-    size = image_path.stat().st_size
-    if size > 10_000_000:
-        return f"Error: image too large ({size / 1_000_000:.1f} MB, max 10MB)"
+    from localforge.tools.utils import validate_file_path
+    image_path, err = validate_file_path(args["image_path"], max_size=10_000_000)
+    if err:
+        return err
 
     suffix = image_path.suffix.lower()
     mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -290,7 +279,8 @@ async def analyze_image(args: dict) -> str:
 
     gen_params = cfg.get_generation_params(cfg.MODEL)
     body: dict[str, Any] = {"model": cfg.MODEL, "messages": messages, "stream": False, **gen_params}
-    return await _chat_to_backend(cfg.TGWUI_BASE, body)
+    async with task_type_context("vision"):
+        return await _chat_to_backend(cfg.TGWUI_BASE, body)
 
 
 @tool_handler(
