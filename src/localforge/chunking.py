@@ -129,7 +129,7 @@ def chunk_file_line(path: Path, chunk_lines: int = 50, overlap: int = 10) -> lis
     while start < len(lines):
         end = min(start + chunk_lines, len(lines))
         chunk_content = "\n".join(lines[start:end])
-        non_empty = sum(1 for l in lines[start:end] if l.strip())
+        non_empty = sum(1 for ln in lines[start:end] if ln.strip())
         if non_empty >= 3:
             chunks.append({
                 "file": str(path),
@@ -199,7 +199,7 @@ def chunk_file_treesitter(path: Path, max_chunk_lines: int = 80) -> list[dict[st
             current_end = end
         else:
             chunk_content = "\n".join(lines[current_start:current_end + 1])
-            non_empty = sum(1 for l in lines[current_start:current_end + 1] if l.strip())
+            non_empty = sum(1 for ln in lines[current_start:current_end + 1] if ln.strip())
             if non_empty >= 2:
                 chunks.append({
                     "file": str(path),
@@ -213,7 +213,7 @@ def chunk_file_treesitter(path: Path, max_chunk_lines: int = 80) -> list[dict[st
 
     # Flush last chunk
     chunk_content = "\n".join(lines[current_start:current_end + 1])
-    non_empty = sum(1 for l in lines[current_start:current_end + 1] if l.strip())
+    non_empty = sum(1 for ln in lines[current_start:current_end + 1] if ln.strip())
     if non_empty >= 2:
         chunks.append({
             "file": str(path),
@@ -227,7 +227,7 @@ def chunk_file_treesitter(path: Path, max_chunk_lines: int = 80) -> list[dict[st
     if chunks and nodes:
         if nodes[0][0] > 2:
             preamble = "\n".join(lines[:nodes[0][0]])
-            non_empty = sum(1 for l in lines[:nodes[0][0]] if l.strip())
+            non_empty = sum(1 for ln in lines[:nodes[0][0]] if ln.strip())
             if non_empty >= 3:
                 chunks.insert(0, {
                     "file": str(path),
