@@ -1,7 +1,7 @@
 """Diff review and commit message tools."""
 
 from localforge import config as cfg
-from localforge.client import chat
+from localforge.client import chat, task_type_context
 from localforge.tools import tool_handler
 
 
@@ -28,7 +28,8 @@ async def review_diff(args: dict) -> str:
         f"If the diff looks clean, say so.\n\n"
         f"```diff\n{args['diff']}\n```"
     )
-    return await chat(prompt, system=cfg.get_system_preamble())
+    async with task_type_context("code"):
+        return await chat(prompt, system=cfg.get_system_preamble())
 
 
 @tool_handler(

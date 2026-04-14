@@ -6,7 +6,6 @@ No GPU competition — all run on CPU alongside the primary inference backend.
 
 import logging
 import math
-from typing import Any
 
 from localforge.paths import fastembed_cache_dir
 

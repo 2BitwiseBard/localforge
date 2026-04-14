@@ -13,9 +13,11 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
+from localforge.paths import knowledge_db_path
+
 log = logging.getLogger("research-sessions")
 
-DB_PATH = Path(__file__).parent.parent / "knowledge.db"
+DB_PATH = knowledge_db_path()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS research_sessions (

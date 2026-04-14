@@ -3,8 +3,8 @@
 
 const API = window.location.origin + '/api';
 
-// API key from localStorage for authenticated requests
-let apiKey = localStorage.getItem('ai-hub-key') || '';
+// API key from sessionStorage for authenticated requests (cleared on tab close)
+let apiKey = sessionStorage.getItem('ai-hub-key') || '';
 let currentUser = null;
 
 function authHeaders(extra = {}) {
@@ -15,6 +15,7 @@ async function authFetch(url, opts = {}) {
   opts.headers = { ...authHeaders(), ...(opts.headers || {}) };
   return fetch(url, opts);
 }
+const apiFetch = authFetch;
 
 // =====================================================================
 // PWA Registration
@@ -24,12 +25,32 @@ if ('serviceWorker' in navigator) {
 }
 
 // =====================================================================
+// Connection status indicator
+// =====================================================================
+const connDot = document.getElementById('conn-dot');
+async function checkConnection() {
+  try {
+    const r = await fetch('/health', {signal: AbortSignal.timeout(3000)});
+    const ok = r.ok;
+    connDot.className = 'conn-dot ' + (ok ? 'conn-online' : 'conn-offline');
+    connDot.title = ok ? 'Backend online' : 'Backend error';
+    return ok;
+  } catch {
+    connDot.className = 'conn-dot conn-offline';
+    connDot.title = 'Backend unreachable';
+    return false;
+  }
+}
+checkConnection();
+setInterval(checkConnection, 15000);
+
+// =====================================================================
 // Auth / User
 // =====================================================================
 async function initUser() {
   if (!apiKey) {
     apiKey = prompt('Enter your AI Hub API key:') || '';
-    if (apiKey) localStorage.setItem('ai-hub-key', apiKey);
+    if (apiKey) sessionStorage.setItem('ai-hub-key', apiKey);
   }
   try {
     const resp = await authFetch(API + '/me');
@@ -37,9 +58,9 @@ async function initUser() {
       currentUser = await resp.json();
       document.getElementById('user-badge').textContent = currentUser.name || currentUser.id;
     } else if (resp.status === 401) {
-      localStorage.removeItem('ai-hub-key');
+      sessionStorage.removeItem('ai-hub-key');
       apiKey = prompt('Invalid key. Enter your AI Hub API key:') || '';
-      if (apiKey) { localStorage.setItem('ai-hub-key', apiKey); return initUser(); }
+      if (apiKey) { sessionStorage.setItem('ai-hub-key', apiKey); return initUser(); }
     }
   } catch (e) {
     document.getElementById('user-badge').textContent = 'offline';
@@ -109,6 +130,19 @@ async function loadStatus() {
   }
 }
 
+// Auto-refresh status tab every 30s when visible
+let _statusInterval = null;
+function startStatusRefresh() {
+  if (_statusInterval) return;
+  _statusInterval = setInterval(() => {
+    const tab = document.querySelector('.tab.active');
+    if (tab && tab.dataset.tab === 'status') {
+      loadStatus(); loadMeshStatus();
+    }
+  }, 30000);
+}
+startStatusRefresh();
+
 function renderGPUMetrics(metrics) {
   const el = document.getElementById('gpu-metrics');
   if (!metrics.gpu) { el.textContent = 'GPU metrics unavailable'; return; }
@@ -133,6 +167,91 @@ function statusRow(label, value, cls) {
 function formatUptime(s) { if(!s)return'--'; const h=Math.floor(s/3600),m=Math.floor((s%3600)/60); return h>0?`${h}h ${m}m`:`${m}m`; }
 
 // =====================================================================
+// Hub Mode & Character
+// =====================================================================
+async function loadModes() {
+  try {
+    const [modesData, charsData] = await Promise.all([
+      authFetch(API + '/modes').then(r => r.json()),
+      authFetch(API + '/characters').then(r => r.json()),
+    ]);
+
+    const modeSel = document.getElementById('mode-select');
+    modeSel.innerHTML = '<option value="">(no mode)</option>';
+    for (const [key, cfg] of Object.entries(modesData.modes || {})) {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = key;
+      if (key === modesData.current) opt.selected = true;
+      modeSel.appendChild(opt);
+    }
+
+    const charSel = document.getElementById('character-select');
+    charSel.innerHTML = '<option value="">(no character)</option>';
+    for (const [key, cfg] of Object.entries(charsData.characters || {})) {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = cfg.name || key;
+      if (key === charsData.current) opt.selected = true;
+      charSel.appendChild(opt);
+    }
+
+    // Show current mode info
+    const infoEl = document.getElementById('mode-info');
+    if (modesData.current) {
+      const m = modesData.modes[modesData.current] || {};
+      infoEl.innerHTML = `Mode: <strong>${modesData.current}</strong> &middot; temp=${m.temperature || '?'} &middot; max_tokens=${m.max_tokens || '?'} &middot; model=${(m.prefer_model||['any'])[0]}`;
+    } else {
+      infoEl.textContent = 'No mode active — using default settings';
+    }
+    if (charsData.current) {
+      infoEl.innerHTML += ` &middot; Character: <strong>${charsData.current}</strong>`;
+    }
+  } catch(e) {}
+}
+
+document.getElementById('mode-apply').addEventListener('click', async () => {
+  const mode = document.getElementById('mode-select').value;
+  const char = document.getElementById('character-select').value;
+  try {
+    await authFetch(API+'/modes/set', {method:'POST', headers:{'Content-Type':'application/json',...authHeaders()}, body:JSON.stringify({mode})});
+    if (char !== undefined) {
+      await authFetch(API+'/characters/set', {method:'POST', headers:{'Content-Type':'application/json',...authHeaders()}, body:JSON.stringify({character: char})});
+    }
+    showToast(mode ? `Mode: ${mode}` : 'Mode cleared');
+    loadModes();
+  } catch(e) { showToast('Failed to set mode', 'error'); }
+});
+
+async function loadMeshStatus() {
+  const el = document.getElementById('mesh-info');
+  try {
+    const data = await authFetch(API + '/mesh/status').then(r => r.json());
+    const workers = data.workers || [];
+    if (workers.length === 0) {
+      el.innerHTML = '<div class="empty-state">No worker nodes connected. Run <code>localforge-worker --hub ai-hub:8100</code> on a device to join the mesh.</div>';
+      return;
+    }
+    el.innerHTML = workers.map(w => {
+      const caps = w.capabilities || {};
+      const capFlags = Object.keys(caps).filter(k => caps[k] === true);
+      const healthCls = w.healthy ? 'ok' : 'error';
+      const gpu = caps.gpu_name ? ` (${caps.gpu_name})` : '';
+      return `<div class="mesh-node">
+        ${statusRow('Node', `${w.hostname}:${w.port}${gpu}`, healthCls)}
+        ${statusRow('Tier', w.tier)}
+        ${statusRow('Tasks', `${w.active_tasks} active, ${(w.stats?.tasks_completed||0)} done`)}
+        ${statusRow('Capabilities', capFlags.join(', ') || 'none')}
+        ${statusRow('Uptime', formatUptime(w.uptime_s))}
+        ${statusRow('Heartbeat', `${w.heartbeat_age_s}s ago`, w.heartbeat_age_s > 60 ? 'error' : '')}
+      </div>`;
+    }).join('<hr style="border-color:var(--border);margin:8px 0">');
+  } catch(e) {
+    el.textContent = 'Mesh status unavailable';
+  }
+}
+
+// =====================================================================
 // Model Swap
 // =====================================================================
 const modelSelect = document.getElementById('model-select');
@@ -150,18 +269,71 @@ async function loadModels() {
     });
   } catch(e) { modelSelect.innerHTML = '<option>Error</option>'; }
 }
+function collectLoadParams() {
+  const body = {};
+  // Integer params
+  const intFields = [
+    ['ctrl-ctx-size', 'ctx_size'], ['ctrl-gpu-layers', 'gpu_layers'],
+    ['ctrl-threads', 'threads'], ['ctrl-threads-batch', 'threads_batch'],
+    ['ctrl-batch-size', 'batch_size'], ['ctrl-ubatch-size', 'ubatch_size'],
+    ['ctrl-rope-freq-base', 'rope_freq_base'], ['ctrl-parallel', 'parallel'],
+    ['ctrl-draft-max', 'draft_max'], ['ctrl-gpu-layers-draft', 'gpu_layers_draft'],
+    ['ctrl-ctx-size-draft', 'ctx_size_draft'],
+    ['ctrl-ngram-n', 'spec_ngram_size_n'], ['ctrl-ngram-m', 'spec_ngram_size_m'],
+    ['ctrl-ngram-hits', 'spec_ngram_min_hits'],
+  ];
+  for (const [id, key] of intFields) {
+    const el = document.getElementById(id);
+    if (el && el.value !== '') body[key] = parseInt(el.value);
+  }
+  // Select/string params
+  const selFields = [
+    ['ctrl-cache-type', 'cache_type'], ['ctrl-spec-type', 'spec_type'],
+  ];
+  for (const [id, key] of selFields) {
+    const el = document.getElementById(id);
+    if (el && el.value) body[key] = el.value;
+  }
+  // Flash attention (boolean)
+  const faEl = document.getElementById('ctrl-flash-attn');
+  if (faEl && faEl.value) body.flash_attn = faEl.value === 'true';
+  // Tensor split (comma-separated floats → string)
+  const tsEl = document.getElementById('ctrl-tensor-split');
+  if (tsEl && tsEl.value.trim()) body.tensor_split = tsEl.value.trim();
+  // Draft model
+  const dmEl = document.getElementById('ctrl-model-draft');
+  if (dmEl && dmEl.value) body.model_draft = dmEl.value;
+  return body;
+}
+
+// Pre-fill loading params from config.yaml when model is selected
 modelSelect.addEventListener('change', async () => {
   const model = modelSelect.value;
-  if (!model || !confirm(`Swap to ${model.replace('.gguf','')}?`)) { modelSelect.value=''; return; }
+  if (!model) return;
+
+  // Fetch config overrides for this model and pre-fill fields
+  try {
+    const cfgData = await authFetch(API+'/models/config?model='+encodeURIComponent(model)).then(r=>r.json());
+    const cfg = cfgData.config || {};
+    if (cfg.ctx_size) document.getElementById('ctrl-ctx-size').value = cfg.ctx_size;
+    if (cfg.gpu_layers != null) document.getElementById('ctrl-gpu-layers').value = cfg.gpu_layers;
+    if (cfg.flash_attn != null) document.getElementById('ctrl-flash-attn').value = String(cfg.flash_attn);
+    if (cfg.cache_type) document.getElementById('ctrl-cache-type').value = cfg.cache_type;
+    if (cfg.parallel) document.getElementById('ctrl-parallel').value = cfg.parallel;
+    if (cfgData.matched_pattern) {
+      showToast(`Config loaded: ${cfgData.matched_pattern} (ctx=${cfg.ctx_size||'default'}, gpu=${cfg.gpu_layers||'all'})`);
+    }
+  } catch(e) { /* non-critical, continue with swap */ }
+
+  if (!confirm(`Swap to ${model.replace('.gguf','')}?`)) { modelSelect.value=''; return; }
   const badge = document.getElementById('model-badge');
   badge.textContent = 'Loading...'; badge.style.background = 'var(--yellow)';
   try {
-    const swapBody = {model_name: model};
-    const ctxEl = document.getElementById('ctrl-ctx-size');
-    const gpuEl = document.getElementById('ctrl-gpu-layers');
-    if (ctxEl && ctxEl.value) swapBody.ctx_size = parseInt(ctxEl.value);
-    if (gpuEl && gpuEl.value) swapBody.gpu_layers = parseInt(gpuEl.value);
-    await authFetch(API+'/swap', { method:'POST', headers:{'Content-Type':'application/json',...authHeaders()}, body:JSON.stringify(swapBody) });
+    const swapBody = {model_name: model, ...collectLoadParams()};
+    const resp = await authFetch(API+'/swap', { method:'POST', headers:{'Content-Type':'application/json',...authHeaders()}, body:JSON.stringify(swapBody) });
+    const data = await resp.json();
+    if (data.error) { showToast('Swap error: '+data.error, 'error'); }
+    else if (data.applied) { showToast(`Loaded: ctx=${data.applied.ctx_size}, gpu=${data.applied.gpu_layers}`); }
   } catch(e) { showToast('Swap error: '+e.message, 'error'); }
   badge.style.background = ''; loadStatus(); loadModels();
 });
@@ -229,7 +401,17 @@ async function sendChat() {
 async function streamResponse(resp, msgEl) {
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
-  let buffer='', fullText='';
+  let buffer='', fullText='', tokenCount=0;
+  const startTime = performance.now();
+
+  // Token speed display element
+  let speedEl = msgEl.parentElement.querySelector('.token-speed');
+  if (!speedEl) {
+    speedEl = document.createElement('div');
+    speedEl.className = 'token-speed';
+    msgEl.insertAdjacentElement('afterend', speedEl);
+  }
+
   while(true) {
     const{done,value}=await reader.read(); if(done)break;
     buffer+=decoder.decode(value,{stream:true});
@@ -237,17 +419,72 @@ async function streamResponse(resp, msgEl) {
     for(const line of lines) {
       if(line.startsWith('data: ')) {
         const data=line.slice(6); if(data==='[DONE]')continue;
-        try{const c=JSON.parse(data);if(c.content){fullText+=c.content;msgEl.textContent=fullText;chatMessages.scrollTop=chatMessages.scrollHeight;}if(c.error)msgEl.textContent+='\n[Error: '+c.error+']';}catch(e){}
+        try{
+          const c=JSON.parse(data);
+          if(c.content){
+            fullText+=c.content;
+            tokenCount++;
+            // Update display with markdown rendering
+            msgEl.innerHTML = renderMarkdown(fullText);
+            chatMessages.scrollTop=chatMessages.scrollHeight;
+            // Update speed every 5 tokens
+            if(tokenCount%5===0) {
+              const elapsed=(performance.now()-startTime)/1000;
+              const tps=elapsed>0?(tokenCount/elapsed).toFixed(1):'...';
+              speedEl.textContent=`${tokenCount} tokens | ${tps} tok/s`;
+            }
+          }
+          if(c.error) msgEl.innerHTML+=`<br><span style="color:var(--red)">[Error: ${escapeHtml(c.error)}]</span>`;
+        }catch(e){}
       }
     }
   }
+  // Final stats
+  const elapsed=(performance.now()-startTime)/1000;
+  const tps=elapsed>0?(tokenCount/elapsed).toFixed(1):'0';
+  speedEl.textContent=`${tokenCount} tokens | ${tps} tok/s | ${elapsed.toFixed(1)}s`;
+  // Final markdown render
+  msgEl.innerHTML = renderMarkdown(fullText);
   return fullText;
+}
+
+// Lightweight markdown renderer (no external deps)
+function renderMarkdown(text) {
+  if (!text) return '';
+  let html = escapeHtml(text);
+  // Code blocks (```lang\n...\n```)
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+  // Inline code
+  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  // Bold
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Italic
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  // Headers
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  // Blockquotes
+  html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+  // Unordered lists
+  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+  // Links
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+  // Line breaks (but not inside pre blocks)
+  html = html.replace(/(?<!\n)\n(?!\n)/g, '<br>');
+  html = html.replace(/\n\n+/g, '<br><br>');
+  return html;
 }
 
 function addMessage(text, role) {
   const div = document.createElement('div');
   div.className = 'msg msg-' + role;
-  div.textContent = text;
+  if (role === 'assistant') {
+    div.innerHTML = renderMarkdown(text);
+  } else {
+    div.textContent = text;
+  }
   chatMessages.appendChild(div);
   chatMessages.scrollTop = chatMessages.scrollHeight;
   return div;
@@ -276,22 +513,35 @@ document.getElementById('chat-history-btn').addEventListener('click', async () =
   if(historyPanel.style.display!=='none'){historyPanel.style.display='none';return;}
   historyPanel.style.display='block';
   try {
-    const data = await authFetch(API+'/chats').then(r=>r.json());
-    if(!data.chats?.length){historyList.innerHTML='<div class="empty-state">No saved chats</div>';return;}
-    historyList.innerHTML = data.chats.map(c=>`
-      <div class="history-item" data-id="${c.id}">
-        <div class="history-title">${escapeHtml(c.title)}</div>
-        <div class="history-meta">${c.message_count} msgs | ${new Date(c.updated*1000).toLocaleDateString()}</div>
-      </div>
-    `).join('');
-    historyList.querySelectorAll('.history-item').forEach(el=>{
-      el.addEventListener('click', async()=>{
-        const data = await authFetch(API+'/chats/'+el.dataset.id).then(r=>r.json());
-        chatHistory=data.messages||[]; currentChatId=data.id; chatMessages.innerHTML='';
-        chatHistory.forEach(m=>addMessage(m.content,m.role));
-        historyPanel.style.display='none';
+    let chatPage = 1;
+    const renderChats = async (page) => {
+      const data = await authFetch(API+`/chats?page=${page}&limit=30`).then(r=>r.json());
+      if(page===1 && !data.chats?.length){historyList.innerHTML='<div class="empty-state">No saved chats</div>';return;}
+      if(page===1) historyList.innerHTML='';
+      historyList.insertAdjacentHTML('beforeend', data.chats.map(c=>`
+        <div class="history-item" data-id="${c.id}">
+          <div class="history-title">${escapeHtml(c.title)}</div>
+          <div class="history-meta">${c.message_count} msgs | ${new Date(c.updated*1000).toLocaleDateString()}</div>
+        </div>
+      `).join(''));
+      // Remove old load-more button if exists
+      historyList.querySelector('.load-more-btn')?.remove();
+      if(data.has_more){
+        historyList.insertAdjacentHTML('beforeend',
+          `<button class="load-more-btn btn btn-sm" style="width:100%;margin-top:8px">Load more</button>`);
+        historyList.querySelector('.load-more-btn').addEventListener('click', ()=>renderChats(++chatPage));
+      }
+      historyList.querySelectorAll('.history-item:not([data-bound])').forEach(el=>{
+        el.dataset.bound='1';
+        el.addEventListener('click', async()=>{
+          const data = await authFetch(API+'/chats/'+el.dataset.id).then(r=>r.json());
+          chatHistory=data.messages||[]; currentChatId=data.id; chatMessages.innerHTML='';
+          chatHistory.forEach(m=>addMessage(m.content,m.role));
+          historyPanel.style.display='none';
+        });
       });
-    });
+    };
+    await renderChats(chatPage);
   } catch(e) { historyList.innerHTML='Error loading history'; }
 });
 
@@ -393,8 +643,15 @@ const photoSearchBtn=document.getElementById('photo-search-btn');
 
 // Blob URL cache for authed media (prevents auth issues with <img>/<video> src)
 const _blobCache = new Map();
+const _BLOB_CACHE_MAX = 50;
 async function fetchAuthedBlob(url) {
   if (_blobCache.has(url)) return _blobCache.get(url);
+  // Evict oldest entries when cache exceeds threshold
+  if (_blobCache.size >= _BLOB_CACHE_MAX) {
+    const oldest = _blobCache.keys().next().value;
+    URL.revokeObjectURL(_blobCache.get(oldest));
+    _blobCache.delete(oldest);
+  }
   try {
     const resp = await authFetch(url);
     if (!resp.ok) return '';
@@ -584,6 +841,60 @@ document.getElementById('agent-bus-btn')?.addEventListener('click', async()=>{
     `).join('')+'</div>';
   }catch(e){panel.innerHTML='<div class="error-msg">'+e.message+'</div>';}
 });
+
+// =====================================================================
+// Approval Queue
+// =====================================================================
+async function loadApprovals() {
+  try {
+    const data = await authFetch(API + '/approvals').then(r => r.json());
+    const el = document.getElementById('approval-list');
+    const pending = data.pending || [];
+    if (pending.length === 0) {
+      el.innerHTML = '<div class="empty-state">No pending approvals</div>';
+      // Hide card if no pending and no recent
+      const card = document.getElementById('approval-card');
+      if (!(data.recent || []).length) card.style.display = 'none';
+      else {
+        card.style.display = '';
+        el.innerHTML = (data.recent || []).map(r =>
+          `<div class="approval-item approval-${r.status}">
+            <span class="approval-tool">${escapeHtml(r.tool_name)}</span>
+            <span class="approval-agent">${escapeHtml(r.agent_id)}</span>
+            <span class="badge" style="background:${r.status==='approved'?'var(--green)':'var(--red)'}">${r.status}</span>
+          </div>`
+        ).join('');
+      }
+      return;
+    }
+    document.getElementById('approval-card').style.display = '';
+    el.innerHTML = pending.map(r =>
+      `<div class="approval-item approval-pending">
+        <div class="approval-info">
+          <strong>${escapeHtml(r.tool_name)}</strong>
+          <span class="approval-agent">by ${escapeHtml(r.agent_id)}</span>
+          <span class="param-hint">${r.remaining_seconds}s remaining</span>
+          <div class="approval-args"><code>${escapeHtml(JSON.stringify(r.arguments).substring(0,120))}</code></div>
+        </div>
+        <div class="approval-actions">
+          <button class="btn-primary btn-small" onclick="decideApproval('${r.id}','approve')">Approve</button>
+          <button class="btn-danger btn-small" onclick="decideApproval('${r.id}','deny')">Deny</button>
+        </div>
+      </div>`
+    ).join('');
+  } catch(e) {}
+}
+
+async function decideApproval(id, action) {
+  try {
+    await authFetch(API+'/approvals/decide', {
+      method:'POST', headers:{'Content-Type':'application/json',...authHeaders()},
+      body:JSON.stringify({id, action}),
+    });
+    showToast(`Approval ${action}d`);
+    loadApprovals();
+  } catch(e) { showToast('Failed','error'); }
+}
 
 async function loadAgents() {
   try {
@@ -1058,6 +1369,72 @@ document.getElementById('run-benchmark').addEventListener('click', async () => {
 });
 
 // =====================================================================
+// Config: Model Loading Parameters
+// =====================================================================
+
+// Populate draft-model dropdown from model list
+async function loadDraftModels() {
+  const sel = document.getElementById('ctrl-model-draft');
+  if (!sel) return;
+  try {
+    const data = await authFetch(API + '/models').then(r => r.json());
+    const current = sel.value;
+    sel.innerHTML = '<option value="">none</option>';
+    (data.models || []).forEach(m => {
+      const name = typeof m === 'string' ? m : m.name || m;
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name.replace('.gguf','').substring(0,45);
+      if (name === current) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  } catch(e) {}
+}
+
+// Clear all loading parameter fields
+document.getElementById('load-params-clear').addEventListener('click', () => {
+  const numberIds = [
+    'ctrl-ctx-size', 'ctrl-gpu-layers', 'ctrl-threads', 'ctrl-threads-batch',
+    'ctrl-batch-size', 'ctrl-ubatch-size', 'ctrl-rope-freq-base', 'ctrl-parallel',
+    'ctrl-draft-max', 'ctrl-gpu-layers-draft', 'ctrl-ctx-size-draft',
+    'ctrl-ngram-n', 'ctrl-ngram-m', 'ctrl-ngram-hits',
+  ];
+  for (const id of numberIds) {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  }
+  const selectIds = ['ctrl-cache-type', 'ctrl-flash-attn', 'ctrl-spec-type', 'ctrl-model-draft'];
+  for (const id of selectIds) {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  }
+  const tsEl = document.getElementById('ctrl-tensor-split');
+  if (tsEl) tsEl.value = '';
+  showToast('Loading parameters cleared');
+});
+
+// Show/hide spec decoding fields based on spec type
+document.getElementById('ctrl-spec-type').addEventListener('change', () => {
+  const specType = document.getElementById('ctrl-spec-type').value;
+  const draftFields = ['ctrl-model-draft', 'ctrl-draft-max', 'ctrl-gpu-layers-draft', 'ctrl-ctx-size-draft'];
+  const ngramFields = ['ctrl-ngram-n', 'ctrl-ngram-m', 'ctrl-ngram-hits'];
+  for (const id of draftFields) {
+    const row = document.getElementById(id)?.closest('.param-row');
+    if (row) row.style.display = specType === 'draft' ? '' : 'none';
+  }
+  for (const id of ngramFields) {
+    const row = document.getElementById(id)?.closest('.param-row');
+    if (row) row.style.display = specType === 'ngram' ? '' : 'none';
+  }
+});
+
+// Initialize: hide spec fields, load draft models
+(function initLoadParams() {
+  document.getElementById('ctrl-spec-type').dispatchEvent(new Event('change'));
+  loadDraftModels();
+})();
+
+// =====================================================================
 // Config: LoRA Management
 // =====================================================================
 
@@ -1471,6 +1848,182 @@ function showToast(msg, type = 'info') {
 // =====================================================================
 function escapeHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 function escapeAttr(s){return(s||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function debounce(fn,ms=300){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);}}
+// =====================================================================
+// Model Sync
+// =====================================================================
+document.getElementById('sync-models-btn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('sync-models-btn');
+  const status = document.getElementById('sync-models-status');
+  const result = document.getElementById('sync-models-result');
+  btn.disabled = true;
+  status.textContent = 'Syncing...';
+  result.style.display = 'none';
+  try {
+    const resp = await apiFetch('/api/sync-models', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({clean:true})});
+    const data = await resp.json();
+    result.textContent = data.result || data.error || 'Done';
+    result.style.display = 'block';
+    status.textContent = '';
+    // Refresh model list after sync
+    loadModels();
+    showToast('Models synced', 'success');
+  } catch(e) {
+    status.textContent = 'Error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// =====================================================================
+// Training Pipeline
+// =====================================================================
+async function loadTrainingOverview() {
+  const el = document.getElementById('training-overview');
+  if (!el) return;
+  try {
+    const resp = await apiFetch('/api/training?what=all');
+    const data = await resp.json();
+    el.textContent = data.result || 'No training data yet.';
+    // Populate dataset dropdown
+    const select = document.getElementById('train-dataset-select');
+    if (select) {
+      const dResp = await apiFetch('/api/training?what=datasets');
+      const dData = await dResp.json();
+      select.innerHTML = '<option value="">Select dataset...</option>';
+      const lines = (dData.result || '').split('\n');
+      for (const line of lines) {
+        const match = line.match(/^\s+(\S+\.jsonl)/);
+        if (match) {
+          const opt = document.createElement('option');
+          opt.value = match[1];
+          opt.textContent = line.trim();
+          select.appendChild(opt);
+        }
+      }
+    }
+  } catch(e) {
+    el.textContent = 'Error loading training data: ' + e.message;
+  }
+}
+
+async function loadTrainingStatus() {
+  const el = document.getElementById('training-status');
+  if (!el) return;
+  try {
+    const resp = await apiFetch('/api/training/status');
+    const data = await resp.json();
+    el.textContent = data.result || 'No active run';
+  } catch(e) {
+    el.textContent = 'No training runs found.';
+  }
+}
+
+document.getElementById('train-prepare-btn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('train-prepare-btn');
+  const result = document.getElementById('train-prepare-result');
+  const mode = document.getElementById('train-mode').value;
+  const body = {mode};
+  if (mode === 'git-diffs') body.repo = document.getElementById('train-repo').value;
+  if (mode === 'code-pairs') {
+    body.directory = document.getElementById('train-repo').value;
+    const glob = document.getElementById('train-glob').value;
+    if (glob) body.glob_pattern = glob;
+  }
+  const name = document.getElementById('train-dataset-name').value;
+  if (name) body.name = name;
+  btn.disabled = true;
+  btn.textContent = 'Preparing...';
+  result.style.display = 'none';
+  try {
+    const resp = await apiFetch('/api/training/prepare', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const data = await resp.json();
+    result.textContent = data.result || data.error;
+    result.style.display = 'block';
+    showToast('Dataset prepared', 'success');
+    loadTrainingOverview();
+  } catch(e) {
+    result.textContent = 'Error: ' + e.message;
+    result.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Prepare Dataset';
+  }
+});
+
+document.getElementById('train-start-btn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('train-start-btn');
+  const warn = document.getElementById('train-start-warn');
+  const dataset = document.getElementById('train-dataset-select').value;
+  if (!dataset) { warn.textContent = 'Select a dataset first.'; warn.style.display = 'block'; return; }
+  const body = {
+    dataset,
+    base_model: document.getElementById('train-base-model').value,
+    epochs: parseInt(document.getElementById('train-epochs').value) || 3,
+    batch_size: parseInt(document.getElementById('train-batch').value) || 2,
+    learning_rate: parseFloat(document.getElementById('train-lr').value) || 0.0002,
+    lora_rank: parseInt(document.getElementById('train-lora-rank').value) || 16,
+    max_seq_len: parseInt(document.getElementById('train-max-seq').value) || 2048,
+    export_gguf: document.getElementById('train-gguf').value || 'q4_k_m',
+  };
+  btn.disabled = true;
+  btn.textContent = 'Starting...';
+  warn.style.display = 'none';
+  try {
+    const resp = await apiFetch('/api/training/start', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const data = await resp.json();
+    if (data.result && data.result.includes('currently loaded')) {
+      warn.textContent = data.result;
+      warn.style.display = 'block';
+    } else {
+      showToast('Training started!', 'success');
+      loadTrainingStatus();
+    }
+  } catch(e) {
+    warn.textContent = 'Error: ' + e.message;
+    warn.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Start Training';
+  }
+});
+
+document.getElementById('fb-submit-btn')?.addEventListener('click', async () => {
+  const prompt = document.getElementById('fb-prompt').value;
+  const response = document.getElementById('fb-response').value;
+  const rating = parseInt(document.getElementById('fb-rating').value);
+  const resultEl = document.getElementById('fb-result');
+  if (!prompt || !response) { resultEl.textContent = 'Prompt and response are required.'; return; }
+  try {
+    const resp = await apiFetch('/api/training/feedback', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompt, response, rating})});
+    const data = await resp.json();
+    resultEl.textContent = data.result || 'Feedback recorded.';
+    document.getElementById('fb-prompt').value = '';
+    document.getElementById('fb-response').value = '';
+    showToast('Feedback recorded', 'success');
+  } catch(e) {
+    resultEl.textContent = 'Error: ' + e.message;
+  }
+});
+
+// Show/hide repo/glob fields based on training mode
+document.getElementById('train-mode')?.addEventListener('change', (e) => {
+  const mode = e.target.value;
+  const repoEl = document.getElementById('train-repo');
+  const globEl = document.getElementById('train-glob');
+  if (mode === 'git-diffs') {
+    repoEl.placeholder = 'Repository path (e.g. ~/Development/my-project)';
+    repoEl.style.display = '';
+    globEl.style.display = 'none';
+  } else if (mode === 'code-pairs') {
+    repoEl.placeholder = 'Source directory path';
+    repoEl.style.display = '';
+    globEl.style.display = '';
+  } else {
+    repoEl.style.display = 'none';
+    globEl.style.display = 'none';
+  }
+});
 
 // =====================================================================
 // Init
@@ -1481,7 +2034,15 @@ function escapeAttr(s){return(s||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;'
   loadModels();
   loadAgents();
   loadNotes();
+  loadMeshStatus();
+  loadModes();
+  loadApprovals();
+  loadTrainingOverview();
+  loadTrainingStatus();
   // SSE notifications with query param auth
   connectSSE();
   setInterval(loadStatus, 30000);
+  setInterval(loadMeshStatus, 30000);
+  setInterval(loadApprovals, 15000);
+  setInterval(loadTrainingStatus, 30000); // Monitor active training runs
 })();

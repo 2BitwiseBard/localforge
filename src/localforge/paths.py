@@ -80,6 +80,14 @@ def task_queue_db_path() -> Path:
     return data_dir() / "task_queue.db"
 
 
+def approval_db_path() -> Path:
+    return data_dir() / "approval_queue.db"
+
+
+def message_bus_db_path() -> Path:
+    return data_dir() / "message_bus.db"
+
+
 def config_path() -> Path:
     """Resolve config.yaml location.
 
@@ -104,6 +112,28 @@ def config_path() -> Path:
 
     # Default to src location (even if it doesn't exist yet)
     return src_config
+
+
+def training_dir() -> Path:
+    d = data_dir() / "training"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def agents_config_path() -> Path:
+    """Resolve agents.yaml location (same logic as config_path)."""
+    env = os.environ.get("LOCALFORGE_AGENTS_CONFIG")
+    if env:
+        return Path(os.path.expanduser(env))
+
+    # Next to config.yaml
+    cfg = config_path()
+    agents_yaml = cfg.parent / "agents.yaml"
+    if agents_yaml.exists():
+        return agents_yaml
+
+    # Default to same directory as config (even if it doesn't exist yet)
+    return agents_yaml
 
 
 def fastembed_cache_dir() -> Path:

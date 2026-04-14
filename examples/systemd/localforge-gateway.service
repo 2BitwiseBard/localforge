@@ -1,0 +1,25 @@
+# LocalForge HTTP Gateway
+# Install: cp localforge-gateway.service ~/.config/systemd/user/
+# Enable:  systemctl --user enable --now localforge-gateway
+
+[Unit]
+Description=LocalForge MCP HTTP Gateway
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/localforge-gateway --port 8100 --log-format json
+Restart=on-failure
+RestartSec=5s
+StartLimitIntervalSec=60
+StartLimitBurst=3
+Environment=LOCALFORGE_CONFIG=%h/.config/localforge/config.yaml
+
+# Security hardening
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=%h
+
+[Install]
+WantedBy=default.target

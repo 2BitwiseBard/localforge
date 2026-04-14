@@ -7,6 +7,7 @@ Merge order for generation params (later wins):
     webui settings → config defaults → model overrides → runtime overrides
 """
 
+import asyncio
 import logging
 import os
 import re
@@ -18,6 +19,11 @@ import yaml
 from localforge.paths import config_path, notes_dir
 
 log = logging.getLogger("localforge")
+
+# ---------------------------------------------------------------------------
+# Config lock — protects global state during reload/mutation
+# ---------------------------------------------------------------------------
+_config_lock = asyncio.Lock()
 
 # ---------------------------------------------------------------------------
 # Backend URLs (mutable — updated by _load_backends)
@@ -92,8 +98,13 @@ _context: dict[str, str] = {}  # mutable session context
 # Config loading
 # ---------------------------------------------------------------------------
 
+# Cached config for hot-path callers (auth middleware, etc.)
+_config_cache: tuple[float, dict[str, Any]] = (0.0, {})
+_CONFIG_CACHE_TTL = 30.0  # seconds
+
+
 def _load_config() -> dict[str, Any]:
-    """Load config.yaml if it exists."""
+    """Load config.yaml if it exists (no cache — used by reload_config)."""
     path = config_path()
     if path.exists():
         try:
@@ -102,6 +113,23 @@ def _load_config() -> dict[str, Any]:
         except Exception as e:
             log.warning("Failed to load config.yaml: %s", e)
     return {}
+
+
+def load_config_cached() -> dict[str, Any]:
+    """Load config.yaml with a 30s TTL cache.
+
+    Use this for hot paths (auth middleware, health checks) where re-reading
+    the file on every request is wasteful. For config reload operations,
+    use _load_config() directly.
+    """
+    global _config_cache
+    import time as _time
+    now = _time.monotonic()
+    if now - _config_cache[0] < _CONFIG_CACHE_TTL and _config_cache[1]:
+        return _config_cache[1]
+    cfg = _load_config()
+    _config_cache = (now, cfg)
+    return cfg
 
 
 def _load_webui_settings_from_disk(config: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
@@ -203,7 +231,11 @@ def set_active_backend(name: str, url: str) -> None:
 # ---------------------------------------------------------------------------
 
 def reload_config() -> None:
-    """Reload config and webui settings from disk."""
+    """Reload config and webui settings from disk.
+
+    NOTE: For async callers, use reload_config_safe() which acquires the lock.
+    This sync version exists for the module-level init call.
+    """
     global _config, _webui_settings, _webui_preset_name
     _config = _load_config()
     _webui_settings = _load_webui_settings(_config)
@@ -224,6 +256,25 @@ def reload_config() -> None:
              _webui_preset_name,
              list(_webui_settings.keys()),
              list(_config.get("defaults", {}).keys()))
+
+
+async def reload_config_safe() -> None:
+    """Async-safe config reload — acquires lock to prevent partial state reads."""
+    async with _config_lock:
+        reload_config()
+    # Clear response cache since generation params may have changed
+    try:
+        from localforge.client import _cache
+        _cache.clear()
+        log.info("Response cache cleared after config reload")
+    except ImportError:
+        pass
+
+
+async def set_runtime_overrides_safe(overrides: dict[str, Any]) -> None:
+    """Async-safe runtime override update — acquires lock."""
+    async with _config_lock:
+        _runtime_overrides.update(overrides)
 
 
 # ---------------------------------------------------------------------------

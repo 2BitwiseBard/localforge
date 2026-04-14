@@ -46,6 +46,7 @@ TRUST_WHITELISTS: dict[TrustLevel, set[str]] = {
         "save_note",  # Low-risk write — needed for alerts and notifications
         "list_indexes", "list_sessions", "session_stats",
         "classify_task", "slot_info", "cache_stats",
+        "compute_status", "compute_route",
     },
     TrustLevel.SAFE: {
         # Includes all MONITOR tools plus:
@@ -60,6 +61,7 @@ TRUST_WHITELISTS: dict[TrustLevel, set[str]] = {
         "git_context",
         "web_search", "web_fetch", "deep_research",
         "kg_add", "kg_relate", "kg_query",
+        "compute_status", "compute_route", "mesh_dispatch",
     },
     TrustLevel.FULL: set(),  # All tools allowed
 }
@@ -115,15 +117,37 @@ class BaseAgent:
         # Set by supervisor after creation
         self._bus = None  # MessageBus
         self._task_queue = None  # TaskQueue
+        self._approval_queue = None  # ApprovalQueue
         self._supervisor = None  # AgentSupervisor (weak reference for spawning)
         self._children: list[str] = []  # child agent IDs
 
     async def call_tool(self, name: str, arguments: dict, timeout: float = 60) -> dict:
-        """Call an MCP tool, gated by trust level."""
+        """Call an MCP tool, gated by trust level and approval queue."""
         if self._allowed and name not in self._allowed:
             msg = f"Tool '{name}' not allowed at trust level '{self.trust_level.value}'"
             self.state.log(f"BLOCKED: {msg}")
             return {"error": msg}
+
+        # Approval gate for destructive actions at FULL trust
+        if (self.trust_level == TrustLevel.FULL
+                and self._approval_queue
+                and self._approval_queue.needs_approval(name)):
+            self.state.log(f"Requesting approval for: {name}")
+            req_id = self._approval_queue.request_approval(
+                self.agent_id, name, arguments,
+                reason=f"Agent {self.agent_id} wants to call {name}",
+            )
+            await self.notify(
+                f"Approval needed: {name}",
+                f"Agent {self.agent_id} wants to call {name}({arguments})",
+                level="warning",
+            )
+            approved = await self._approval_queue.wait_for_approval(req_id, timeout=300)
+            if not approved:
+                msg = f"Action {name} was denied or timed out"
+                self.state.log(f"DENIED: {msg}")
+                return {"error": msg}
+            self.state.log(f"APPROVED: {name}")
 
         headers = {
             "Content-Type": "application/json",
@@ -256,6 +280,26 @@ class BaseAgent:
         if not self._task_queue:
             return None
         return self._task_queue.dequeue(queue=queue, agent_id=self.agent_id)
+
+    # --- Mesh dispatch ---
+
+    async def call_mesh(self, task_type: str, payload: dict,
+                        target: str = "") -> dict:
+        """Dispatch a task to a mesh worker.
+
+        Args:
+            task_type: chat, embeddings, tts, stt, classify, rerank
+            payload: task-specific payload dict
+            target: specific worker (hostname:port) or empty for auto-routing
+
+        Returns:
+            Result dict from the worker, or {"error": "..."} on failure.
+        """
+        return await self.call_tool("mesh_dispatch", {
+            "task_type": task_type,
+            "payload": payload,
+            "target": target,
+        })
 
     # --- Notifications ---
 

@@ -1,7 +1,7 @@
 """Code generation, docs, and transformation tools."""
 
 from localforge import config as cfg
-from localforge.client import chat
+from localforge.client import chat, task_type_context
 from localforge.tools import tool_handler
 
 
@@ -29,7 +29,8 @@ async def generate_test_stubs(args: dict) -> str:
     if module:
         prompt += f"Module/crate name for imports: {module}\n"
     prompt += f"\n```\n{args['code']}\n```\n\nOutput only the test code."
-    return await chat(prompt, system=cfg.get_system_preamble())
+    async with task_type_context("code"):
+        return await chat(prompt, system=cfg.get_system_preamble())
 
 
 @tool_handler(
@@ -50,7 +51,8 @@ async def suggest_refactor(args: dict) -> str:
         f"```\n{args['code']}\n```\n\n"
         f"Output the refactored code with brief comments explaining changes."
     )
-    return await chat(prompt, system=cfg.get_system_preamble())
+    async with task_type_context("code"):
+        return await chat(prompt, system=cfg.get_system_preamble())
 
 
 @tool_handler(
@@ -107,7 +109,8 @@ async def translate_code(args: dict) -> str:
         f"```\n{args['code']}\n```\n\n"
         f"Output only the translated code."
     )
-    return await chat(prompt, system=cfg.get_system_preamble())
+    async with task_type_context("code"):
+        return await chat(prompt, system=cfg.get_system_preamble())
 
 
 @tool_handler(

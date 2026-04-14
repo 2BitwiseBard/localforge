@@ -8,9 +8,11 @@ Executes workflow definitions with support for:
 - Progress callbacks for live monitoring
 """
 
+import ast
 import asyncio
 import json
 import logging
+import operator
 import re
 import time
 import uuid
@@ -18,17 +20,78 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .schema import WorkflowDef, NodeDef
+from .schema import NodeDef, WorkflowDef
 
 log = logging.getLogger("workflow-engine")
 
-# Restricted namespace for condition evaluation
-_SAFE_BUILTINS = {
-    "len": len, "int": int, "float": float, "str": str, "bool": bool,
-    "list": list, "dict": dict, "any": any, "all": all,
-    "max": max, "min": min, "sum": sum, "abs": abs,
-    "True": True, "False": False, "None": None,
+# Safe expression evaluator — walks AST instead of using eval()
+_SAFE_FUNCS = {"len": len, "int": int, "float": float, "str": str, "bool": bool,
+               "abs": abs, "min": min, "max": max, "sum": sum, "any": any, "all": all}
+
+_CMP_OPS = {
+    ast.Eq: operator.eq, ast.NotEq: operator.ne,
+    ast.Lt: operator.lt, ast.LtE: operator.le,
+    ast.Gt: operator.gt, ast.GtE: operator.ge,
+    ast.Is: operator.is_, ast.IsNot: operator.is_not,
+    ast.In: lambda a, b: a in b, ast.NotIn: lambda a, b: a not in b,
 }
+_BIN_OPS = {
+    ast.Add: operator.add, ast.Sub: operator.sub,
+    ast.Mult: operator.mul, ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+}
+_UNARY_OPS = {ast.Not: operator.not_, ast.USub: operator.neg}
+_BOOL_OPS = {ast.And: all, ast.Or: any}
+
+
+def _safe_eval(node: ast.AST, ns: dict) -> Any:
+    """Recursively evaluate an AST node against a namespace, rejecting unsafe constructs."""
+    if isinstance(node, ast.Expression):
+        return _safe_eval(node.body, ns)
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        if node.id in ns:
+            return ns[node.id]
+        raise NameError(f"Undefined: {node.id}")
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY_OPS:
+        return _UNARY_OPS[type(node.op)](_safe_eval(node.operand, ns))
+    if isinstance(node, ast.BinOp) and type(node.op) in _BIN_OPS:
+        return _BIN_OPS[type(node.op)](_safe_eval(node.left, ns), _safe_eval(node.right, ns))
+    if isinstance(node, ast.BoolOp):
+        fn = _BOOL_OPS.get(type(node.op))
+        if fn:
+            return fn(_safe_eval(v, ns) for v in node.values)
+    if isinstance(node, ast.Compare):
+        left = _safe_eval(node.left, ns)
+        for op, comp in zip(node.ops, node.comparators):
+            fn = _CMP_OPS.get(type(op))
+            if not fn:
+                raise ValueError(f"Unsupported comparator: {type(op).__name__}")
+            right = _safe_eval(comp, ns)
+            if not fn(left, right):
+                return False
+            left = right
+        return True
+    if isinstance(node, ast.IfExp):
+        return _safe_eval(node.body, ns) if _safe_eval(node.test, ns) else _safe_eval(node.orelse, ns)
+    if isinstance(node, ast.Subscript):
+        obj = _safe_eval(node.value, ns)
+        key = _safe_eval(node.slice, ns)
+        return obj[key]
+    if isinstance(node, ast.Attribute):
+        obj = _safe_eval(node.value, ns)
+        if not isinstance(obj, dict):
+            raise ValueError(f"Attribute access only on dicts, got {type(obj).__name__}")
+        return obj.get(node.attr)
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name) and node.func.id in _SAFE_FUNCS:
+            args = [_safe_eval(a, ns) for a in node.args]
+            return _SAFE_FUNCS[node.func.id](*args)
+        raise ValueError(f"Function call not allowed: {ast.dump(node.func)}")
+    if isinstance(node, (ast.List, ast.Tuple)):
+        return [_safe_eval(e, ns) for e in node.elts]
+    raise ValueError(f"Unsupported expression: {type(node).__name__}")
 
 EXECUTIONS_DIR = Path(__file__).parent.parent / "workflow_executions"
 
@@ -311,15 +374,16 @@ class WorkflowEngine:
 
     def _eval_condition(self, expression: str, ctx: WorkflowContext,
                         current_node_id: str = "") -> bool:
-        """Safely evaluate a condition expression."""
+        """Safely evaluate a condition expression using AST walking."""
         namespace = {
-            **_SAFE_BUILTINS,
             "output": ctx.node_outputs.get(current_node_id, ""),
             "variables": ctx.variables,
             "outputs": ctx.node_outputs,
+            "True": True, "False": False, "None": None,
         }
         try:
-            result = eval(expression, {"__builtins__": {}}, namespace)  # noqa: S307
+            tree = ast.parse(expression, mode="eval")
+            result = _safe_eval(tree, namespace)
             return bool(result)
         except Exception as e:
             log.warning(f"Condition eval failed: '{expression}' → {e}")

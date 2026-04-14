@@ -54,7 +54,9 @@ defaults:
 # Generation params: temperature, max_tokens, top_p, top_k, min_p,
 #   repetition_penalty, enable_thinking, mode, do_sample
 # Behavior: system_suffix
-# Loading (used by swap_model): ctx_size, gpu_layers
+# Loading (used by swap_model): ctx_size, gpu_layers, threads, batch_size,
+#   ubatch_size, cache_type, flash_attn, rope_freq_base, tensor_split,
+#   parallel, model_draft, draft_max, gpu_layers_draft, spec_type
 models:
   # Thinking model — enable reasoning
   Qwen3-30B-A3B-Thinking:
@@ -62,6 +64,11 @@ models:
     system_suffix: ""
     ctx_size: 32768
     gpu_layers: -1
+    # cache_type: q8_0       # halve KV cache VRAM (slight quality loss)
+    # flash_attn: true       # faster attention for long contexts
+    # model_draft: "Qwen3.5-2B-UD-Q8_K_XL.gguf"  # spec decoding for 1.5-2x speedup
+    # draft_max: 16
+    # gpu_layers_draft: -1
 
   # Coder models — higher max_tokens for code output
   Qwen3-Coder:
@@ -82,6 +89,12 @@ models:
     gpu_layers: -1
 
   Qwen3-VL-8B:
+    ctx_size: 32768
+    gpu_layers: -1
+
+  # Gemma 4 — Google's latest (June 2025)
+  gemma-4:
+    max_tokens: 4096
     ctx_size: 32768
     gpu_layers: -1
 

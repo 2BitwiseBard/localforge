@@ -69,9 +69,6 @@ class ResearchAgent(BaseAgent):
             }, timeout=15)
             text = self.extract_text(result)
             if text and "no " not in text.lower()[:20]:
-                # Check if it's recent (within 7 days)
-                # KG results include updated_at — look for recent timestamps
-                seven_days_ago = time.time() - (7 * 86400)
                 if "updated_at" in text:
                     # Found existing research
                     return text

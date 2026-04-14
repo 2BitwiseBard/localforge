@@ -1,7 +1,7 @@
 """Config and generation parameter tools."""
 
 from localforge import config as cfg
-from localforge.client import resolve_model, reload_webui_params_from_api
+from localforge.client import reload_webui_params_from_api, resolve_model
 from localforge.tools import tool_handler
 
 

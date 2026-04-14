@@ -57,7 +57,7 @@ class DailyDigest(BaseAgent):
         code_findings = []
         if notes_text:
             for line in notes_text.splitlines():
-                if f"code-watcher" in line and date_str in line:
+                if "code-watcher" in line and date_str in line:
                     # Extract topic name and recall it
                     topic = line.strip().split(":")[0].strip().lstrip("- ")
                     if topic:
@@ -66,7 +66,7 @@ class DailyDigest(BaseAgent):
                         if note_text and "not found" not in note_text.lower():
                             code_findings.append(note_text[:400])
         if code_findings:
-            sections.append(f"## Code Review Findings\n\n" + "\n\n".join(code_findings))
+            sections.append("## Code Review Findings\n\n" + "\n\n".join(code_findings))
 
         # --- Health alerts ---
         alerts = await self.call_tool("recall_note", {

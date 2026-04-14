@@ -22,14 +22,26 @@ from typing import Optional
 
 import yaml
 
-from .base import BaseAgent, TrustLevel, TriggerType, allowed_tools
-from .message_bus import MessageBus, Message
+from .base import BaseAgent, TrustLevel, allowed_tools
+from .message_bus import Message, MessageBus
 from .task_queue import TaskQueue
 
 log = logging.getLogger("agent-supervisor")
 
-AGENTS_CONFIG = Path(__file__).parent.parent / "agents.yaml"
-STATE_DIR = Path(__file__).parent.parent / "agent_state"
+
+def _agents_config() -> Path:
+    """Resolve agents.yaml path, preferring paths module."""
+    try:
+        from localforge.paths import agents_config_path
+        return agents_config_path()
+    except ImportError:
+        return Path(__file__).parent.parent / "agents.yaml"
+
+
+def _state_dir() -> Path:
+    """Resolve agent state directory."""
+    from localforge.paths import agent_state_dir
+    return agent_state_dir()
 
 # Registry of agent classes
 _agent_classes: dict[str, type] = {}
@@ -57,13 +69,20 @@ class AgentSupervisor:
         self.bus = MessageBus()
         self.task_queue = TaskQueue()
 
-        # Worker pool
+        # Worker pool (configurable via agents.yaml supervisor.workers)
         self._worker_count = 2
         self._worker_tasks: list[asyncio.Task] = []
 
+        # Error tracking per agent (for error budgets)
+        self._error_counts: dict[str, list[float]] = {}  # agent_id -> [failure_timestamps]
+        self._max_errors = 5          # max failures in error window
+        self._error_window = 300.0    # 5 minute window
+        self._default_agent_timeout = 3600  # 1 hour default timeout per execution
+
     def load_config(self) -> dict:
-        if AGENTS_CONFIG.exists():
-            with open(AGENTS_CONFIG) as f:
+        cfg_path = _agents_config()
+        if cfg_path.exists():
+            with open(cfg_path) as f:
                 return yaml.safe_load(f) or {}
         return {}
 
@@ -71,10 +90,16 @@ class AgentSupervisor:
         """Load config and start all enabled agents."""
         self._running = True
         self._loop = asyncio.get_running_loop()
-        STATE_DIR.mkdir(exist_ok=True)
+        _state_dir().mkdir(exist_ok=True)
 
         config = self.load_config()
         agents_cfg = config.get("agents", {})
+
+        # Read supervisor-level config
+        sup_cfg = config.get("supervisor", {})
+        self._worker_count = sup_cfg.get("workers", 2)
+        self._max_errors = sup_cfg.get("max_errors", 5)
+        self._error_window = float(sup_cfg.get("error_window", 300))
 
         # Subscribe supervisor to the bus for spawn requests and notifications
         await self.bus.subscribe("__supervisor__")
@@ -123,6 +148,7 @@ class AgentSupervisor:
             await self.stop_agent(agent_id)
 
         self.task_queue.close()
+        self.bus.close()
         log.info("Supervisor stopped")
 
     async def spawn_agent(self, agent_id: str, config: dict) -> bool:
@@ -155,7 +181,7 @@ class AgentSupervisor:
         self._configs.setdefault(agent_id, config)
 
         # Load persisted state
-        state_file = STATE_DIR / f"{agent_id}.json"
+        state_file = _state_dir() / f"{agent_id}.json"
         if state_file.exists():
             try:
                 saved = json.loads(state_file.read_text())
@@ -242,13 +268,13 @@ class AgentSupervisor:
             # Write to agents.yaml
             full_config = self.load_config()
             full_config.setdefault("agents", {})[agent_id] = acfg
-            with open(AGENTS_CONFIG, "w") as f:
+            with open(_agents_config(), "w") as f:
                 yaml.dump(full_config, f, default_flow_style=False)
 
         return await self.spawn_agent(agent_id, acfg)
 
     def _save_state(self, agent: BaseAgent):
-        state_file = STATE_DIR / f"{agent.agent_id}.json"
+        state_file = _state_dir() / f"{agent.agent_id}.json"
         state_file.write_text(json.dumps({
             "data": agent.state.data,
             "run_count": agent.state.run_count,
@@ -261,7 +287,17 @@ class AgentSupervisor:
         }))
 
     async def _run_once(self, agent: BaseAgent):
-        await agent.execute()
+        timeout = self._configs.get(agent.agent_id, {}).get(
+            "timeout", self._default_agent_timeout
+        )
+        try:
+            await asyncio.wait_for(agent.execute(), timeout=timeout)
+        except asyncio.TimeoutError:
+            log.error(
+                "Agent %s timed out after %ds", agent.agent_id, timeout
+            )
+            agent.state.log(f"Execution timed out after {timeout}s")
+            agent.state.last_error = f"Timed out after {timeout}s"
         self._save_state(agent)
 
     async def _wait_for_gateway(self, max_wait: int = 60):
@@ -282,7 +318,67 @@ class AgentSupervisor:
         return False
 
     async def _schedule_loop(self, agent: BaseAgent, schedule: str):
-        """Simple cron-like schedule loop with initial delay for daily schedules."""
+        """Schedule loop with crash respawn and error budget enforcement.
+
+        If the inner loop crashes, it is restarted with exponential backoff
+        (5s, 10s, 20s, 40s ... capped at 300s).  If an agent exceeds its
+        error budget (_max_errors failures within _error_window seconds), it
+        is paused automatically until manually resumed.
+        """
+        backoff = 5.0
+        max_backoff = 300.0
+
+        while self._running:
+            try:
+                await self._schedule_inner(agent, schedule)
+                break  # clean exit (supervisor stopping)
+            except asyncio.CancelledError:
+                raise  # propagate cancellation
+            except Exception as exc:
+                agent_id = agent.agent_id
+                log.exception(f"Agent {agent_id} schedule loop crashed: {exc}")
+                agent.state.log(f"Schedule loop crashed: {exc}")
+                agent.state.last_error = str(exc)
+
+                # Record failure for error budget
+                now = time.time()
+                failures = self._error_counts.setdefault(agent_id, [])
+                failures.append(now)
+                # Prune old failures outside the window
+                cutoff = now - self._error_window
+                self._error_counts[agent_id] = [t for t in failures if t > cutoff]
+
+                if len(self._error_counts[agent_id]) >= self._max_errors:
+                    log.error(
+                        f"Agent {agent_id} exceeded error budget "
+                        f"({self._max_errors} failures in {self._error_window}s) — pausing"
+                    )
+                    agent.state.log(f"Auto-paused: exceeded error budget")
+                    self._paused.add(agent_id)
+                    agent.state.status = "error-paused"
+                    # Notify via bus
+                    await self.bus.publish(Message(
+                        sender="__supervisor__",
+                        topic="agent.notification",
+                        payload={
+                            "title": f"Agent {agent_id} auto-paused",
+                            "body": f"Exceeded {self._max_errors} failures in "
+                                    f"{self._error_window}s. Last error: {exc}",
+                            "level": "error",
+                            "agent_id": agent_id,
+                            "agent_type": agent.name,
+                            "timestamp": now,
+                        },
+                    ))
+                    break  # stop retrying
+
+                log.info(f"Respawning {agent_id} schedule loop in {backoff:.0f}s")
+                agent.state.log(f"Respawning in {backoff:.0f}s")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, max_backoff)
+
+    async def _schedule_inner(self, agent: BaseAgent, schedule: str):
+        """The actual schedule tick loop (separated for crash respawn wrapper)."""
         interval = self._parse_schedule(schedule)
         initial_delay = self._initial_delay(schedule)
         # Wait for gateway on first run
@@ -292,10 +388,26 @@ class AgentSupervisor:
             agent.state.log(f"Waiting {initial_delay // 60:.0f}m until target time")
             await asyncio.sleep(initial_delay)
         while self._running:
+            next_run = time.monotonic() + interval
             if agent.agent_id not in self._paused:
-                await agent.execute()
+                timeout = self._configs.get(agent.agent_id, {}).get(
+                    "timeout", self._default_agent_timeout
+                )
+                try:
+                    await asyncio.wait_for(agent.execute(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    log.error(
+                        "Agent %s timed out after %ds", agent.agent_id, timeout
+                    )
+                    agent.state.log(f"Execution timed out after {timeout}s")
+                    agent.state.last_error = f"Timed out after {timeout}s"
                 self._save_state(agent)
-            await asyncio.sleep(interval)
+            # Sleep remaining time to prevent drift from execution duration
+            remaining = next_run - time.monotonic()
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+            else:
+                await asyncio.sleep(1)  # yield at minimum
 
     @staticmethod
     def _parse_schedule(schedule: str) -> int:
@@ -571,8 +683,8 @@ class AgentSupervisor:
             return
 
         try:
-            from watchdog.observers import Observer
             from watchdog.events import FileSystemEventHandler
+            from watchdog.observers import Observer
         except ImportError:
             log.warning("watchdog not installed, file_watch triggers disabled")
             return
@@ -601,14 +713,19 @@ class AgentSupervisor:
                     return
                 self._last_trigger = now
                 # Trigger agent from watchdog thread → asyncio loop
-                if self.supervisor._loop and self.supervisor._running:
-                    asyncio.run_coroutine_threadsafe(
-                        self.supervisor.trigger_agent(
-                            self.agent_id, "file_watch",
-                            {"path": path, "event": event.event_type}
-                        ),
-                        self.supervisor._loop,
-                    )
+                # Capture loop ref atomically; guard against shutdown race
+                loop = self.supervisor._loop
+                if loop is not None and not loop.is_closed() and self.supervisor._running:
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            self.supervisor.trigger_agent(
+                                self.agent_id, "file_watch",
+                                {"path": path, "event": event.event_type}
+                            ),
+                            loop,
+                        )
+                    except RuntimeError:
+                        pass  # loop closed between check and use
 
         self._observer = Observer()
         for wc in watch_configs:
@@ -673,12 +790,26 @@ class AgentSupervisor:
 
     def get_metrics(self) -> dict:
         """Return supervisor-level metrics."""
+        now = time.time()
+        cutoff = now - self._error_window
         return {
             "total_agents": len(self._agents),
             "running": sum(1 for a in self._agents.values() if a.state.status == "running"),
             "paused": len(self._paused),
+            "error_paused": sum(
+                1 for a in self._agents.values() if a.state.status == "error-paused"
+            ),
             "task_queue_depth": self.task_queue.queue_depth(),
             "bus_subscribers": self.bus.subscriber_count,
             "workers": self._worker_count,
-            "agents": [a.metrics() for a in self._agents.values()],
+            "error_budget": {
+                "max_errors": self._max_errors,
+                "error_window_s": self._error_window,
+            },
+            "agents": [
+                {**a.metrics(), "recent_errors": len(
+                    [t for t in self._error_counts.get(a.agent_id, []) if t > cutoff]
+                )}
+                for a in self._agents.values()
+            ],
         }

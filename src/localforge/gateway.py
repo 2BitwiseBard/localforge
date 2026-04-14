@@ -1,7 +1,6 @@
-#!/usr/bin/env python3
-"""HTTP gateway for the local-model MCP server.
+"""HTTP gateway for the LocalForge MCP server.
 
-Wraps the existing MCP Server app in a Starlette/uvicorn HTTP server
+Wraps the MCP Server app in a Starlette/uvicorn HTTP server
 using StreamableHTTPSessionManager for MCP-over-HTTP transport.
 
 Serves:
@@ -11,60 +10,51 @@ Serves:
   /          — web dashboard static files (public)
 
 Usage:
-    python3 gateway.py                    # HTTP mode on :8100
-    python3 gateway.py --port 9000        # custom port
-    python3 gateway.py --host 127.0.0.1   # localhost only
-
-The existing stdio mode is still available via:
-    python3 server.py                     # unchanged
+    python -m localforge.gateway                    # HTTP mode on :8100
+    python -m localforge.gateway --port 9000        # custom port
+    python -m localforge.gateway --host 127.0.0.1   # localhost only
 """
 
 import argparse
 import asyncio
 import contextlib
 import logging
-import sys
+import os
 import time
 from pathlib import Path
 from typing import AsyncIterator
 
 import uvicorn
 import yaml
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Mount, Route
-from starlette.responses import FileResponse
 from starlette.staticfiles import StaticFiles
 
-from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-
-# Ensure the server module is importable
-sys.path.insert(0, str(Path(__file__).parent))
-from server import app as mcp_app  # noqa: E402
-from auth import BearerAuthMiddleware  # noqa: E402
-from dashboard.routes import dashboard_routes  # noqa: E402
-from gpu_pool import GPUPool  # noqa: E402
+from localforge.auth import BearerAuthMiddleware
+from localforge.config import load_config_cached
+from localforge.dashboard.routes import dashboard_routes
+from localforge.gpu_pool import GPUPool
+from localforge.log import setup_logging
+from localforge.paths import config_path
+from localforge.server import app as mcp_app
 
 log = logging.getLogger("mcp-gateway")
 
-CONFIG_PATH = Path(__file__).parent / "config.yaml"
 STATIC_DIR = Path(__file__).parent / "dashboard" / "static"
 START_TIME = time.time()
 
 # GPU pool instance (shared)
-gpu_pool = GPUPool(_cfg := {})
+gpu_pool = GPUPool({})
 
 # Agent supervisor (shared, set during lifespan)
 agent_supervisor = None
 
 
 def _load_config() -> dict:
-    try:
-        with open(CONFIG_PATH) as f:
-            return yaml.safe_load(f) or {}
-    except Exception:
-        return {}
+    return load_config_cached()
 
 
 # ---------------------------------------------------------------------------
@@ -128,12 +118,17 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
     gpu_pool.register_from_config(cfg.get("backends", {}))
     await gpu_pool.start()
 
-    # Make GPU pool accessible to server.py tools
-    try:
-        import server as _server
-        _server._gpu_pool = gpu_pool
-    except Exception:
-        pass
+    # Make GPU pool accessible to compute tools
+    from localforge.tools import compute as _compute_tools
+    _compute_tools._gpu_pool = gpu_pool
+
+    # Make GPU pool accessible to client.py for mesh-aware routing
+    from localforge import client as _client_mod
+    _client_mod.set_gpu_pool(gpu_pool)
+
+    # Make GPU pool accessible to dashboard routes for heartbeat registration
+    from localforge.dashboard import routes as _dash_routes
+    _dash_routes._gpu_pool_ref = gpu_pool
 
     # Start agent supervisor
     gateway_cfg = cfg.get("gateway", {})
@@ -142,25 +137,42 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
     port = gateway_cfg.get("port", 8100)
 
     try:
-        from agents.supervisor import AgentSupervisor
-        # Import all agent modules to register them
-        import agents.health_monitor  # noqa: F401
-        import agents.index_maintainer  # noqa: F401
-        import agents.code_watcher  # noqa: F401
-        import agents.research_agent  # noqa: F401
-        import agents.news_agent  # noqa: F401
-        import agents.daily_digest  # noqa: F401
+        import localforge.agents.code_watcher  # noqa: F401
+        import localforge.agents.daily_digest  # noqa: F401
 
+        # Import all agent modules to register them
+        import localforge.agents.health_monitor  # noqa: F401
+        import localforge.agents.index_maintainer  # noqa: F401
+        import localforge.agents.news_agent  # noqa: F401
+        import localforge.agents.research_agent  # noqa: F401
+        from localforge.agents.supervisor import AgentSupervisor
+
+        gateway_url = os.environ.get(
+            "LOCALFORGE_GATEWAY_URL",
+            f"http://{gateway_cfg.get('host', '0.0.0.0')}:{port}",
+        )
         agent_supervisor = AgentSupervisor(
-            gateway_url=f"http://localhost:{port}",
+            gateway_url=gateway_url,
             api_key=api_key,
         )
         await agent_supervisor.start()
         # Make supervisor, bus, and task queue accessible to dashboard routes
-        import dashboard.routes as _routes
+        from localforge.dashboard import routes as _routes
         _routes._supervisor = agent_supervisor
         _routes._message_bus = agent_supervisor.bus
         _routes._task_queue = agent_supervisor.task_queue
+        # Start approval queue TTL warning loop
+        try:
+            from localforge.agents.approval import ApprovalQueue
+            from localforge.agents.message_bus import Message as _Msg
+            _aq = ApprovalQueue()
+            _aq.on_notify(lambda payload: agent_supervisor.bus.publish(
+                _Msg(sender="approval-gate", topic="agent.notification", payload=payload)
+            ))
+            _aq.start_warning_loop()
+            _routes._approval_queue = _aq
+        except Exception as exc:
+            log.warning(f"Approval queue warning loop failed: {exc}")
         log.info("Agent supervisor started")
     except Exception as e:
         log.warning(f"Agent supervisor failed to start: {e}")
@@ -169,9 +181,19 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
         log.info("MCP HTTP gateway started (with dashboard + GPU pool + agents)")
         yield
 
+    log.info("Shutting down gracefully...")
     if agent_supervisor:
         await agent_supervisor.stop()
     await gpu_pool.stop()
+    # Checkpoint SQLite WAL files for clean shutdown
+    try:
+        import sqlite3
+        for db_file in Path(os.environ.get("LOCALFORGE_DATA_DIR", ".")).glob("*.db"):
+            conn = sqlite3.connect(str(db_file))
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.close()
+    except Exception as e:
+        log.debug(f"WAL checkpoint: {e}")
     log.info("MCP HTTP gateway stopped")
 
 
@@ -186,6 +208,76 @@ starlette_app = Starlette(
     lifespan=lifespan,
 )
 starlette_app.add_middleware(BearerAuthMiddleware)
+
+
+# ---------------------------------------------------------------------------
+# Security headers middleware (CSP, etc.)
+# ---------------------------------------------------------------------------
+from starlette.middleware.base import BaseHTTPMiddleware as _BaseMiddleware
+
+
+class SecurityHeadersMiddleware(_BaseMiddleware):
+    """Add Content-Security-Policy and other security headers to all responses."""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        # CSP: block inline scripts, restrict sources to self + data URIs for images
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self'; "
+            "font-src 'self'; "
+            "object-src 'none'; "
+            "frame-ancestors 'none'"
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+
+# Default body size limit: 1 MB for most routes, overridden per-route where needed
+MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MB
+# Routes that need larger bodies (file uploads, photos, training data)
+LARGE_BODY_PATHS = {
+    "/api/photos/upload",
+    "/api/videos/upload",
+    "/api/upload-image",
+    "/api/transcribe",
+    "/api/training/start",
+    "/api/training/prepare",
+}
+LARGE_BODY_LIMIT = 50 * 1024 * 1024  # 50 MB for uploads
+
+
+class RequestBodyLimitMiddleware(_BaseMiddleware):
+    """Reject requests with bodies exceeding the size limit.
+
+    Prevents OOM from oversized payloads. Upload routes get a higher limit.
+    """
+
+    async def dispatch(self, request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                size = int(content_length)
+            except ValueError:
+                return JSONResponse({"error": "Invalid Content-Length"}, status_code=400)
+
+            path = request.url.path.rstrip("/")
+            limit = LARGE_BODY_LIMIT if path in LARGE_BODY_PATHS else MAX_BODY_BYTES
+            if size > limit:
+                return JSONResponse(
+                    {"error": f"Request body too large ({size:,} bytes, max {limit:,})"},
+                    status_code=413,
+                )
+        return await call_next(request)
+
+
+starlette_app.add_middleware(SecurityHeadersMiddleware)
+starlette_app.add_middleware(RequestBodyLimitMiddleware)
 
 
 # ---------------------------------------------------------------------------
@@ -206,9 +298,12 @@ def main():
     parser = argparse.ArgumentParser(description="MCP HTTP Gateway")
     parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8100, help="Port (default: 8100)")
+    parser.add_argument("--log-format", choices=["human", "json"], default="human",
+                        help="Log output format (default: human)")
+    parser.add_argument("--log-level", default="INFO", help="Log level (default: INFO)")
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    setup_logging(fmt=args.log_format, level=args.log_level)
     asyncio.run(run_http(host=args.host, port=args.port))
 
 

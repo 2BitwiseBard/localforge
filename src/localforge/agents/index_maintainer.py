@@ -47,10 +47,8 @@ class IndexMaintainer(BaseAgent):
         for entry in directories:
             if isinstance(entry, str):
                 index_name = entry.split("/")[-1]
-                directory = entry
             elif isinstance(entry, dict):
                 index_name = entry.get("name", entry["directory"].split("/")[-1])
-                directory = entry["directory"]
             else:
                 continue
 

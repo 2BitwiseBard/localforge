@@ -1,5 +1,7 @@
 """Context, mode, and character tools."""
 
+from pathlib import Path
+
 from localforge import config as cfg
 from localforge.client import resolve_model
 from localforge.tools import tool_handler
@@ -197,3 +199,165 @@ async def check_model(args: dict) -> str:
     preamble = cfg.get_system_preamble()
     ctx_status = "Active context preamble set" if preamble else "Generic mode (no context set)"
     return f"Connected. Model: {cfg.MODEL}\nEndpoint: {cfg.TGWUI_BASE}\nContext: {ctx_status}"
+
+
+# Project manifest -> language detection map
+_MANIFEST_MAP = [
+    ("Cargo.toml", "rust"),
+    ("go.mod", "go"),
+    ("pyproject.toml", "python"),
+    ("setup.py", "python"),
+    ("requirements.txt", "python"),
+    ("package.json", "typescript"),
+    ("tsconfig.json", "typescript"),
+    ("Gemfile", "ruby"),
+    ("build.gradle", "java"),
+    ("pom.xml", "java"),
+    ("build.gradle.kts", "kotlin"),
+    ("*.csproj", "csharp"),
+    ("*.sln", "csharp"),
+    ("mix.exs", "elixir"),
+    ("pubspec.yaml", "dart"),
+    ("CMakeLists.txt", "cpp"),
+    ("Makefile", "c"),
+    ("dune-project", "ocaml"),
+    ("stack.yaml", "haskell"),
+    ("Dockerfile", "docker"),
+]
+
+
+def _detect_project(directory: str) -> dict:
+    """Detect project language and name from directory contents."""
+    d = Path(directory).expanduser().resolve()
+    if not d.is_dir():
+        return {}
+
+    result: dict = {"directory": str(d)}
+
+    # Detect language from manifest files
+    for filename, lang in _MANIFEST_MAP:
+        if "*" in filename:
+            if list(d.glob(filename)):
+                result["language"] = lang
+                break
+        elif (d / filename).exists():
+            result["language"] = lang
+            break
+
+    # Detect project name from common sources
+    cargo = d / "Cargo.toml"
+    if cargo.exists():
+        for line in cargo.read_text(errors="replace").splitlines()[:20]:
+            if line.strip().startswith("name"):
+                name = line.split("=", 1)[-1].strip().strip('"').strip("'")
+                if name:
+                    result["project_name"] = name
+                    break
+
+    pkg = d / "package.json"
+    if pkg.exists():
+        try:
+            import json
+            data = json.loads(pkg.read_text(errors="replace"))
+            if data.get("name"):
+                result["project_name"] = data["name"]
+        except Exception:
+            pass
+
+    pyproj = d / "pyproject.toml"
+    if pyproj.exists():
+        for line in pyproj.read_text(errors="replace").splitlines()[:30]:
+            if line.strip().startswith("name"):
+                name = line.split("=", 1)[-1].strip().strip('"').strip("'")
+                if name:
+                    result["project_name"] = name
+                    break
+
+    gomod = d / "go.mod"
+    if gomod.exists():
+        first_line = gomod.read_text(errors="replace").splitlines()[0] if gomod.stat().st_size > 0 else ""
+        if first_line.startswith("module "):
+            result["project_name"] = first_line.split()[-1].split("/")[-1]
+
+    # Check for .localforge-context.yaml or .forge-context.yaml
+    for ctx_file in [".localforge-context.yaml", ".forge-context.yaml"]:
+        ctx_path = d / ctx_file
+        if ctx_path.exists():
+            try:
+                import yaml
+                ctx_data = yaml.safe_load(ctx_path.read_text())
+                if isinstance(ctx_data, dict):
+                    result["context_file"] = str(ctx_path)
+                    if ctx_data.get("language"):
+                        result["language"] = ctx_data["language"]
+                    if ctx_data.get("project"):
+                        result["project_name"] = ctx_data["project"]
+                    if ctx_data.get("rules"):
+                        result["rules"] = ctx_data["rules"]
+            except Exception:
+                pass
+
+    # Fallback: use directory name as project name
+    if "project_name" not in result:
+        result["project_name"] = d.name
+
+    return result
+
+
+@tool_handler(
+    name="auto_context",
+    description=(
+        "Auto-detect project language and name from a directory, then set context. "
+        "Detects from Cargo.toml, package.json, pyproject.toml, go.mod, etc. "
+        "Also reads .localforge-context.yaml if present for custom rules. "
+        "Optionally pass apply=false to preview without setting."
+    ),
+    schema={
+        "type": "object",
+        "properties": {
+            "directory": {
+                "type": "string",
+                "description": "Directory to scan (default: current working directory)",
+            },
+            "apply": {
+                "type": "boolean",
+                "description": "Whether to apply detected context (default: true)",
+            },
+        },
+        "required": [],
+    },
+)
+async def auto_context(args: dict) -> str:
+    import os
+    directory = args.get("directory", os.getcwd())
+    apply = args.get("apply", True)
+
+    detected = _detect_project(directory)
+    if not detected.get("language"):
+        return f"Could not detect project language in {directory}. Use set_context() manually."
+
+    parts = [f"Detected: {detected['language']} project"]
+    if detected.get("project_name"):
+        parts.append(f"Name: {detected['project_name']}")
+    if detected.get("context_file"):
+        parts.append(f"Context file: {detected['context_file']}")
+    if detected.get("rules"):
+        parts.append(f"Rules: {detected['rules'][:100]}")
+
+    if apply:
+        cfg._context.clear()
+        cfg._context["language"] = detected["language"]
+        if detected.get("project_name"):
+            cfg._context["project"] = detected["project_name"]
+        if detected.get("rules"):
+            cfg._context["rules"] = detected["rules"]
+
+        preamble = cfg.get_system_preamble()
+        if preamble:
+            parts.append("\nContext applied. Preamble active.")
+        else:
+            parts.append(f"\nContext set to: {detected['language']}")
+    else:
+        parts.append("\n(preview only — not applied)")
+
+    return "\n".join(parts)

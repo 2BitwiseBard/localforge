@@ -12,10 +12,13 @@ To add a new tool:
 The registry is consumed by server.py to build the MCP tool list.
 """
 
+import logging
 from functools import wraps
-from typing import Any, Callable, Awaitable
+from typing import Any, Awaitable, Callable
 
 from mcp.types import Tool
+
+log = logging.getLogger("localforge.tools")
 
 # ---------------------------------------------------------------------------
 # Shared registry — populated by @tool_handler decorators at import time
@@ -31,6 +34,11 @@ def tool_handler(
 ):
     """Decorator to register a tool with its MCP definition and async handler."""
     def decorator(fn: Callable[..., Awaitable[str]]) -> Callable[..., Awaitable[str]]:
+        if name in _tool_handlers:
+            log.warning(
+                "Tool name collision: '%s' registered by %s, overwriting previous handler %s",
+                name, fn.__module__, _tool_handlers[name].__module__,
+            )
         _tool_definitions.append(Tool(name=name, description=description, inputSchema=schema))
         _tool_handlers[name] = fn
 
