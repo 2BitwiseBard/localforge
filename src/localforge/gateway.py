@@ -283,28 +283,42 @@ starlette_app.add_middleware(RequestBodyLimitMiddleware)
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
-async def run_http(host: str = "0.0.0.0", port: int = 8100):
-    config = uvicorn.Config(
-        starlette_app,
-        host=host,
-        port=port,
-        log_level="info",
-    )
+async def run_http(
+    host: str = "0.0.0.0",
+    port: int = 8100,
+    ssl_certfile: str | None = None,
+    ssl_keyfile: str | None = None,
+):
+    kwargs: dict = {"host": host, "port": port, "log_level": "info"}
+    if ssl_certfile and ssl_keyfile:
+        kwargs["ssl_certfile"] = ssl_certfile
+        kwargs["ssl_keyfile"] = ssl_keyfile
+    config = uvicorn.Config(starlette_app, **kwargs)
     server = uvicorn.Server(config)
     await server.serve()
 
 
 def main():
+    import os
     parser = argparse.ArgumentParser(description="MCP HTTP Gateway")
     parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8100, help="Port (default: 8100)")
     parser.add_argument("--log-format", choices=["human", "json"], default="human",
                         help="Log output format (default: human)")
     parser.add_argument("--log-level", default="INFO", help="Log level (default: INFO)")
+    parser.add_argument("--ssl-certfile", default=os.environ.get("LOCALFORGE_SSL_CERTFILE"),
+                        help="TLS cert file (enables HTTPS). Env: LOCALFORGE_SSL_CERTFILE")
+    parser.add_argument("--ssl-keyfile", default=os.environ.get("LOCALFORGE_SSL_KEYFILE"),
+                        help="TLS key file (enables HTTPS). Env: LOCALFORGE_SSL_KEYFILE")
     args = parser.parse_args()
 
     setup_logging(fmt=args.log_format, level=args.log_level)
-    asyncio.run(run_http(host=args.host, port=args.port))
+    asyncio.run(run_http(
+        host=args.host,
+        port=args.port,
+        ssl_certfile=args.ssl_certfile,
+        ssl_keyfile=args.ssl_keyfile,
+    ))
 
 
 if __name__ == "__main__":

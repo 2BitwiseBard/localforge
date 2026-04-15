@@ -17,20 +17,33 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$Hub,
-
-    [Parameter(Mandatory = $true)]
-    [string]$Token,
-
+    # When served via /api/mesh/install-script, the hub & token placeholders
+    # below are substituted server-side so the one-liner can stay
+    # `iwr URL | iex` with no args. Env-var fallbacks help manual runs.
+    [string]$Hub = "%%LOCALFORGE_HUB_URL%%",
+    [string]$Token = "%%LOCALFORGE_ENROLLMENT_TOKEN%%",
     [int]$Port = 8200,
-
     [string]$InstallDir = "$env:LOCALAPPDATA\LocalForge",
-
     [string]$GitRepo = "https://github.com/bitwisebard/localforge"
 )
 
+# If placeholders weren't substituted (manual run), try env-var fallback.
+if ($Hub -like '%%*%%') { $Hub = $env:LOCALFORGE_HUB_URL }
+if ($Token -like '%%*%%') { $Token = $env:LOCALFORGE_ENROLLMENT_TOKEN }
+
 $ErrorActionPreference = "Stop"
+
+# Validate required params. Supports either -Hub/-Token args or env vars
+# (LOCALFORGE_HUB_URL / LOCALFORGE_ENROLLMENT_TOKEN) so the script works
+# both when run via args and when piped through iex.
+if ([string]::IsNullOrWhiteSpace($Hub)) {
+    Write-Host "Error: -Hub not provided and LOCALFORGE_HUB_URL env var not set." -ForegroundColor Red
+    exit 1
+}
+if ([string]::IsNullOrWhiteSpace($Token)) {
+    Write-Host "Error: -Token not provided and LOCALFORGE_ENROLLMENT_TOKEN env var not set." -ForegroundColor Red
+    exit 1
+}
 
 function Write-Step { param([string]$Msg) Write-Host "[+] $Msg" -ForegroundColor Cyan }
 function Write-Warn { param([string]$Msg) Write-Host "[!] $Msg" -ForegroundColor Yellow }
@@ -43,39 +56,74 @@ Write-Host "Install to: $InstallDir"
 Write-Host ""
 
 # --- 1. Python ------------------------------------------------------------
+# Must be 3.11+. We probe common launchers AND direct paths because winget
+# installs to a per-user path that isn't on PATH until a new shell starts.
+function Find-Python311Plus {
+    $candidates = @(
+        "py -3.12", "py -3.11",
+        "python3.12", "python3.11",
+        "python", "python3", "py"
+    )
+    foreach ($cmd in $candidates) {
+        try {
+            $ver = & cmd /c "$cmd --version 2>&1"
+            if ($ver -match "Python (\d+)\.(\d+)") {
+                $major = [int]$Matches[1]; $minor = [int]$Matches[2]
+                if ($major -eq 3 -and $minor -ge 11) { return $cmd }
+            }
+        } catch { }
+    }
+    # Fallback: scan known winget install locations
+    $wingetPaths = @(
+        "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
+        "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
+        "C:\Program Files\Python312\python.exe",
+        "C:\Program Files\Python311\python.exe"
+    )
+    foreach ($p in $wingetPaths) {
+        if (Test-Path $p) { return "`"$p`"" }
+    }
+    return $null
+}
+
 Write-Step "Checking Python 3.11+"
-$pythonExe = $null
-foreach ($candidate in @("python", "python3", "py")) {
-    try {
-        $ver = & $candidate --version 2>&1
-        if ($ver -match "Python (\d+)\.(\d+)") {
-            $major = [int]$Matches[1]; $minor = [int]$Matches[2]
-            if ($major -ge 3 -and $minor -ge 11) { $pythonExe = $candidate; break }
-        }
-    } catch { }
-}
+$pythonExe = Find-Python311Plus
 if (-not $pythonExe) {
-    Write-Warn "Python 3.11+ not found. Attempting winget install..."
-    winget install --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements
-    $pythonExe = "python"
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+    Write-Warn "Python 3.11+ not found. Installing Python 3.12 via winget..."
+    winget install --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements --silent
+    # winget doesn't refresh current-shell PATH; probe the known install path.
+    $pythonExe = Find-Python311Plus
+    if (-not $pythonExe) {
+        Write-Err "winget installed Python but we still can't find a 3.11+ launcher."
+        Write-Err "Open a NEW PowerShell (Admin) window and rerun this script."
+        exit 1
+    }
 }
-Write-Host "    Python: $(& $pythonExe --version)"
+Write-Host "    Python launcher: $pythonExe"
+& cmd /c "$pythonExe --version"
 
 # --- 2. Venv + install ----------------------------------------------------
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $venv = Join-Path $InstallDir "venv"
 if (-not (Test-Path $venv)) {
     Write-Step "Creating venv at $venv"
-    & $pythonExe -m venv $venv
+    # $pythonExe may contain args (e.g. "py -3.12"), so delegate to cmd.
+    & cmd /c "$pythonExe -m venv `"$venv`""
+    if ($LASTEXITCODE -ne 0) { Write-Err "venv creation failed"; exit 1 }
 }
 $venvPy = Join-Path $venv "Scripts\python.exe"
-$venvPip = Join-Path $venv "Scripts\pip.exe"
+
+if (-not (Test-Path $venvPy)) {
+    Write-Err "venv python missing at $venvPy"
+    exit 1
+}
 
 Write-Step "Installing localforge[worker] into venv"
-& $venvPip install --upgrade pip | Out-Null
-# Until localforge is on PyPI, install directly from the repo
-& $venvPip install "git+$GitRepo#egg=localforge[worker]"
+# Use `python -m pip` so pip can replace itself without a Windows file lock.
+# PEP 508 direct-URL syntax — pip 25 rejects #egg= fragments.
+& $venvPy -m pip install --upgrade pip
+& $venvPy -m pip install "localforge[worker] @ git+$GitRepo"
+if ($LASTEXITCODE -ne 0) { Write-Err "pip install failed"; exit 1 }
 
 # --- 3. Hardware detect + register ---------------------------------------
 Write-Step "Detecting hardware"
