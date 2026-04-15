@@ -1765,3 +1765,136 @@ a:focus-visible {
   .history-item { min-height: 44px; display: flex; align-items: center; }
   select, input[type="text"], input[type="search"] { min-height: 44px; }
 }
+
+/* ===== Mesh / Add Node modal ===== */
+
+.card-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.card-header-row h2 { margin: 0; }
+
+.mesh-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.mesh-table th, .mesh-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.mesh-table th { color: #8b949e; font-weight: 600; }
+.mesh-table td.col-status { white-space: nowrap; }
+
+.platform-icon {
+  display: inline-block;
+  width: 1.2em;
+  text-align: center;
+  margin-right: 4px;
+}
+
+.status-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.status-pill.ok      { background: rgba(46, 160, 67, 0.2); color: #3fb950; }
+.status-pill.warn    { background: rgba(210, 153, 34, 0.2); color: #d29922; }
+.status-pill.error   { background: rgba(248, 81, 73, 0.2); color: #f85149; }
+.status-pill.pending { background: rgba(88, 166, 255, 0.2); color: #58a6ff; }
+
+/* Modal overlay */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+.modal-backdrop[hidden] { display: none; }
+
+.modal {
+  background: var(--bg-card, #161b22);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-width: 640px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-header h3 { margin: 0; }
+.modal-close { font-size: 1.4rem; line-height: 1; padding: 0 6px; }
+.modal-body { padding: 18px; }
+
+.platform-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.platform-tab {
+  padding: 8px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.platform-tab:hover { color: #c9d1d9; }
+.platform-tab.active {
+  color: #58a6ff;
+  border-bottom-color: #58a6ff;
+}
+
+.enrollment-note { margin-bottom: 14px; }
+.enrollment-note input {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg, #0d1117);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: #c9d1d9;
+  font-size: 0.9rem;
+}
+
+.enrollment-command-block pre {
+  background: var(--bg, #0d1117);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+  font-size: 0.8rem;
+  color: #c9d1d9;
+  margin: 0;
+}
+
+.enrollment-help {
+  margin-top: 16px;
+  padding: 10px;
+  background: var(--bg, #0d1117);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.enrollment-help summary { cursor: pointer; color: #8b949e; }
+.enrollment-help ul { margin: 10px 0 0 20px; color: #c9d1d9; font-size: 0.85rem; }

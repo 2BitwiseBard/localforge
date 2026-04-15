@@ -223,32 +223,162 @@ document.getElementById('mode-apply').addEventListener('click', async () => {
   } catch(e) { showToast('Failed to set mode', 'error'); }
 });
 
+const PLATFORM_ICONS = {
+  linux:   '🐧',
+  darwin:  '',   // Apple glyph
+  win32:   '🪟',
+  android: '🤖',
+  unknown: '❓',
+};
+
+function platformGlyph(p) {
+  return PLATFORM_ICONS[p] || PLATFORM_ICONS.unknown;
+}
+
+function meshStatusPill(w) {
+  // Registered-but-silent rows come from the workers.json merge in api_mesh_status
+  if (typeof w.status === 'string' && w.status.startsWith('registered')) {
+    return '<span class="status-pill pending">pending</span>';
+  }
+  if (w.healthy === false) return '<span class="status-pill error">down</span>';
+  const age = w.heartbeat_age_s;
+  if (typeof age === 'number' && age > 60) return '<span class="status-pill warn">stale</span>';
+  return '<span class="status-pill ok">online</span>';
+}
+
 async function loadMeshStatus() {
   const el = document.getElementById('mesh-info');
   try {
     const data = await authFetch(API + '/mesh/status').then(r => r.json());
     const workers = data.workers || [];
     if (workers.length === 0) {
-      el.innerHTML = '<div class="empty-state">No worker nodes connected. Run <code>localforge-worker --hub ai-hub:8100</code> on a device to join the mesh.</div>';
+      el.innerHTML = `<div class="empty-state">
+        No worker nodes yet. Click <strong>+ Add Node</strong> above to enroll one.
+      </div>`;
       return;
     }
-    el.innerHTML = workers.map(w => {
+    const rows = workers.map(w => {
       const caps = w.capabilities || {};
-      const capFlags = Object.keys(caps).filter(k => caps[k] === true);
-      const healthCls = w.healthy ? 'ok' : 'error';
-      const gpu = caps.gpu_name ? ` (${caps.gpu_name})` : '';
-      return `<div class="mesh-node">
-        ${statusRow('Node', `${w.hostname}:${w.port}${gpu}`, healthCls)}
-        ${statusRow('Tier', w.tier)}
-        ${statusRow('Tasks', `${w.active_tasks} active, ${(w.stats?.tasks_completed||0)} done`)}
-        ${statusRow('Capabilities', capFlags.join(', ') || 'none')}
-        ${statusRow('Uptime', formatUptime(w.uptime_s))}
-        ${statusRow('Heartbeat', `${w.heartbeat_age_s}s ago`, w.heartbeat_age_s > 60 ? 'error' : '')}
-      </div>`;
-    }).join('<hr style="border-color:var(--border);margin:8px 0">');
+      const vram = caps.vram_mb ? `${(caps.vram_mb / 1024).toFixed(1)} GB` : '—';
+      const tasks = (typeof w.active_tasks === 'number')
+        ? `${w.active_tasks}/${(w.stats?.tasks_completed || 0)}`
+        : '—';
+      const hb = (typeof w.heartbeat_age_s === 'number')
+        ? `${w.heartbeat_age_s}s ago`
+        : (w.last_seen ? `${Math.round((Date.now() / 1000) - w.last_seen)}s ago` : '—');
+      const name = w.hostname || w.worker_id || 'unknown';
+      const platform = w.platform || (caps.platform) || 'unknown';
+      return `<tr>
+        <td><span class="platform-icon" title="${platform}">${platformGlyph(platform)}</span> ${name}</td>
+        <td>${w.tier || caps.tier || '—'}</td>
+        <td>${vram}</td>
+        <td>${tasks}</td>
+        <td>${hb}</td>
+        <td class="col-status">${meshStatusPill(w)}</td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = `<table class="mesh-table">
+      <thead>
+        <tr><th>Node</th><th>Tier</th><th>VRAM</th><th>Tasks</th><th>Heartbeat</th><th>Status</th></tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
   } catch(e) {
     el.textContent = 'Mesh status unavailable';
   }
+}
+
+// =====================================================================
+// Add Node modal — enrollment token + per-platform one-liner
+// =====================================================================
+
+let _enrollmentTokenData = null;          // { token, expires_at, install_commands, hub_url }
+let _selectedPlatform = 'linux';
+
+function _setAddNodeCommand() {
+  const pre = document.getElementById('enrollment-command');
+  const copyBtn = document.getElementById('copy-enrollment-cmd');
+  const expiryEl = document.getElementById('enrollment-expiry');
+  if (!_enrollmentTokenData) {
+    pre.innerHTML = '<em>Click "Mint token &amp; generate command" below.</em>';
+    copyBtn.disabled = true;
+    expiryEl.textContent = '';
+    return;
+  }
+  const cmd = (_enrollmentTokenData.install_commands || {})[_selectedPlatform] || '(no command available)';
+  pre.textContent = cmd;
+  copyBtn.disabled = false;
+  const exp = new Date(_enrollmentTokenData.expires_at * 1000);
+  expiryEl.textContent = `Token expires ${exp.toLocaleTimeString()} (single-use).`;
+}
+
+function openAddNodeModal() {
+  const modal = document.getElementById('add-node-modal');
+  modal.hidden = false;
+  _setAddNodeCommand();
+}
+
+function closeAddNodeModal() {
+  document.getElementById('add-node-modal').hidden = true;
+}
+
+async function mintEnrollmentToken() {
+  const noteInput = document.getElementById('enrollment-note-input');
+  const btn = document.getElementById('mint-token-btn');
+  btn.disabled = true;
+  btn.textContent = 'Minting...';
+  try {
+    const resp = await authFetch(API + '/mesh/enrollment-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note: (noteInput.value || '').trim() }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: 'unknown' }));
+      alert('Failed to mint token: ' + (err.error || resp.status));
+      return;
+    }
+    _enrollmentTokenData = await resp.json();
+    _setAddNodeCommand();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Mint another';
+  }
+}
+
+function initAddNodeModal() {
+  const btn = document.getElementById('add-node-btn');
+  if (!btn) return;
+  btn.addEventListener('click', openAddNodeModal);
+  document.getElementById('add-node-close').addEventListener('click', closeAddNodeModal);
+  document.getElementById('add-node-modal').addEventListener('click', (e) => {
+    if (e.target.id === 'add-node-modal') closeAddNodeModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    const modal = document.getElementById('add-node-modal');
+    if (!modal.hidden && e.key === 'Escape') closeAddNodeModal();
+  });
+  document.querySelectorAll('.platform-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.platform-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      _selectedPlatform = tab.dataset.platform;
+      _setAddNodeCommand();
+    });
+  });
+  document.getElementById('mint-token-btn').addEventListener('click', mintEnrollmentToken);
+  document.getElementById('copy-enrollment-cmd').addEventListener('click', async () => {
+    const cmd = document.getElementById('enrollment-command').textContent;
+    try {
+      await navigator.clipboard.writeText(cmd);
+      const btn = document.getElementById('copy-enrollment-cmd');
+      const orig = btn.textContent;
+      btn.textContent = 'Copied ✓';
+      setTimeout(() => { btn.textContent = orig; }, 1500);
+    } catch {
+      alert('Copy failed — select and copy manually.');
+    }
+  });
 }
 
 // =====================================================================
@@ -2035,6 +2165,7 @@ document.getElementById('train-mode')?.addEventListener('change', (e) => {
   loadAgents();
   loadNotes();
   loadMeshStatus();
+  initAddNodeModal();
   loadModes();
   loadApprovals();
   loadTrainingOverview();
