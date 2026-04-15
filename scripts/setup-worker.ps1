@@ -30,10 +30,15 @@ param(
     [string]$InstallDir = "$env:LOCALAPPDATA\LocalForge",
     [string]$GitRepo = "https://github.com/2BitwiseBard/localforge",
     # Local inference stack: downloads llama-server.exe + a right-sized default
-    # GGUF so the worker can host chat/completions on its own GPU. Use -Model
-    # to point at an existing GGUF (skips the download), or -SkipModel to
-    # install a task-receiver only (embeddings/rerank via ai-hub backend).
+    # GGUF so the worker can host chat/completions on its own GPU. Precedence
+    # (first non-empty wins): -Model (existing GGUF path), -ModelId (catalog id
+    # from src/localforge/models_catalog.py), -ModelTier (tiny/small/medium/
+    # large/xl → TIER_DEFAULTS), else pick_for_vram() chooses the largest model
+    # whose min_vram fits. -SkipModel downgrades to task-receiver only.
     [string]$Model = "",
+    [string]$ModelId = "",
+    [ValidateSet("", "tiny", "small", "medium", "large", "xl")]
+    [string]$ModelTier = "",
     [switch]$SkipModel,
     [ValidateSet("auto", "vulkan", "cuda", "cpu")]
     [string]$LlamaBackend = "auto"
@@ -307,34 +312,49 @@ if ($SkipModel) {
         Write-Host "    llama-server already present at $llamaBin"
     }
 
-    # 4c. Pick a default GGUF sized to detected VRAM. Users with a specific
-    # model in mind pass -Model and skip this entirely. Tier thresholds are
-    # intentionally conservative so Q4 weights + 4k ctx fit alongside the
-    # desktop compositor's own ~500MB VRAM draw.
+    # 4c. Pick a default GGUF from the shared catalog (src/localforge/
+    # models_catalog.py). Precedence: -Model path (skip download) → -ModelId
+    # (exact catalog id) → -ModelTier (TIER_DEFAULTS lookup) → pick_for_vram().
+    # Querying Python keeps the bootstrapper honest — if a model is added or
+    # a URL moves, only the catalog changes, not this script.
     if (-not $Model) {
         New-Item -ItemType Directory -Force -Path $modelsDir | Out-Null
         $vram = [int]$hw.vram_mb
-        if ($vram -ge 8000) {
-            $modelFile = "qwen2.5-7b-instruct-q4_k_m.gguf"
-            $modelUrl  = "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/$modelFile"
-            $approxGb  = "4.5"
-        } elseif ($vram -ge 4000) {
-            $modelFile = "qwen2.5-3b-instruct-q4_k_m.gguf"
-            $modelUrl  = "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/$modelFile"
-            $approxGb  = "1.9"
-        } else {
-            $modelFile = "qwen2.5-1.5b-instruct-q5_k_m.gguf"
-            $modelUrl  = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/$modelFile"
-            $approxGb  = "1.1"
+        $pickExpr = "pick_for_vram($vram, 'chat')"
+        if ($ModelId) {
+            # json.dumps to safely embed the user string in the python one-liner.
+            $pickExpr = "by_id($(ConvertTo-Json $ModelId -Compress))"
+        } elseif ($ModelTier) {
+            $pickExpr = "by_id(TIER_DEFAULTS[$(ConvertTo-Json $ModelTier -Compress)])"
         }
-        $Model = Join-Path $modelsDir $modelFile
+        $pickPy = @"
+import json
+from localforge.models_catalog import by_id, pick_for_vram, TIER_DEFAULTS
+m = $pickExpr
+if m is None:
+    raise SystemExit('catalog lookup returned None (bad --ModelId or --ModelTier)')
+print(json.dumps({'id': m['id'], 'name': m['name'], 'filename': m['filename'],
+                  'url': m['url'], 'size_gb': m['size_gb']}))
+"@
+        try {
+            $pickJson = & $venvPy -c $pickPy
+        } catch {
+            Write-Err "Catalog lookup failed: $_"
+            exit 1
+        }
+        if ($LASTEXITCODE -ne 0 -or -not $pickJson) {
+            Write-Err "Catalog lookup returned no model. Pass -Model <path>, -ModelId <id>, or fix VRAM detect."
+            exit 1
+        }
+        $pick = $pickJson | ConvertFrom-Json
+        Write-Host "    Catalog pick: $($pick.name) (~$($pick.size_gb) GB)"
+        $Model = Join-Path $modelsDir $pick.filename
         if (Test-Path $Model) {
             Write-Host "    Default model already present: $Model"
         } else {
-            Write-Step "Downloading default model $modelFile (~$approxGb GB, first run only)"
-            # Large download — bump timeout so a slow link doesn't abort us.
+            Write-Step "Downloading $($pick.filename) (~$($pick.size_gb) GB, first run only)"
             $tmpModel = "$Model.partial"
-            if (-not (Invoke-Download -Url $modelUrl -OutFile $tmpModel -TimeoutSec 1800)) {
+            if (-not (Invoke-Download -Url $pick.url -OutFile $tmpModel -TimeoutSec 1800)) {
                 Write-Err "Model download failed. Fix network and re-run, or pass -Model <path> with a local GGUF."
                 if (Test-Path $tmpModel) { Remove-Item $tmpModel -Force }
                 exit 1
@@ -416,9 +436,15 @@ if ($LASTEXITCODE -eq 0) {
 # binary without touching the service's inherited PATH — NSSM's
 # AppEnvironmentExtra REPLACES (not appends) any listed var, so setting
 # PATH here would shadow System32 and the venv Scripts dir.
+# LOCALFORGE_INSTALL_DIR + LOCALFORGE_MODELS_DIR let runtime model downloads
+# (POST /models/download from the dashboard) resolve the same on-disk spot
+# the bootstrapper seeded; otherwise `_models_dir()` falls back to
+# ~/.localforge/models, splitting models across two locations.
 $envExtras = @(
     "LOCALFORGE_API_KEY=$workerKey",
-    "LOCALFORGE_HUB_URL=$Hub"
+    "LOCALFORGE_HUB_URL=$Hub",
+    "LOCALFORGE_INSTALL_DIR=$InstallDir",
+    "LOCALFORGE_MODELS_DIR=$modelsDir"
 )
 if (-not $SkipModel) {
     $llamaBin = Join-Path $llamaDir "llama-server.exe"

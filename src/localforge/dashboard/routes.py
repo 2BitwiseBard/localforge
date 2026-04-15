@@ -2226,6 +2226,150 @@ async def api_mesh_worker_config(request: Request) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
+# Model catalog + per-worker model management
+# ---------------------------------------------------------------------------
+
+
+def _worker_base_url(worker_id: str) -> str | None:
+    """Resolve a registered worker_id to the `http://host:port` seen in the
+    heartbeat registry. Returns None if the worker has never sent a
+    heartbeat (so we can't reach it anyway).
+    """
+    try:
+        from localforge.gpu_pool import pool
+    except ImportError:
+        return None
+    # Registry is keyed by `hostname:port`; heartbeats include the same
+    # hostname that `worker_registry` stored at enroll time. Match on that.
+    from localforge.enrollment import worker_registry
+    record = worker_registry().get_worker(worker_id)
+    if record is None:
+        return None
+    target_hostname = record.get("hostname", "")
+    for key, w in pool()._heartbeat_nodes.items():
+        if w.get("hostname", "") == target_hostname:
+            return f"http://{key}"
+    return None
+
+
+async def api_mesh_models_catalog(request: Request) -> JSONResponse:
+    """Return the curated model catalog as JSON.
+
+    Readable by any authenticated user (admin OR worker scope) — needed by
+    the dashboard UI to render a picker, and by workers during setup if
+    they want to self-select (bootstrappers ship with a baked-in copy, so
+    this endpoint is primarily for the UI).
+    """
+    from localforge.auth import _resolve_user
+    user = _resolve_user(request)
+    if user is None:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    from localforge.models_catalog import catalog_json
+    return JSONResponse(catalog_json())
+
+
+async def api_mesh_worker_models(request: Request) -> JSONResponse:
+    """Admin: list GGUFs present on a given worker + what it's currently serving."""
+    from localforge.auth import require_role
+    denied = require_role(request, "admin")
+    if denied is not None:
+        return denied
+    worker_id = request.path_params.get("worker_id", "")
+    base = _worker_base_url(worker_id)
+    if base is None:
+        return JSONResponse({"error": "worker not reachable (no recent heartbeat)"}, status_code=503)
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{base}/models")
+        return JSONResponse(resp.json(), status_code=resp.status_code)
+    except httpx.HTTPError as exc:
+        return JSONResponse({"error": f"worker call failed: {exc}"}, status_code=502)
+
+
+async def api_mesh_worker_model_download(request: Request) -> JSONResponse:
+    """Admin: tell a worker to download a catalog model.
+
+    Body: {"model_id": str}. We look up the catalog entry here (so the
+    worker never has to trust a URL the hub client supplied) and forward
+    the pinned URL + filename. Streams on the worker side, so we set a
+    generous timeout and let the HTTP request block while the worker
+    pulls the file.
+    """
+    from localforge.auth import require_role
+    denied = require_role(request, "admin")
+    if denied is not None:
+        return denied
+    worker_id = request.path_params.get("worker_id", "")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid_json"}, status_code=400)
+    model_id = (body.get("model_id") or "").strip()
+    if not model_id:
+        return JSONResponse({"error": "model_id required"}, status_code=400)
+
+    from localforge.models_catalog import by_id
+    model = by_id(model_id)
+    if model is None:
+        return JSONResponse({"error": f"unknown model_id: {model_id}"}, status_code=404)
+
+    base = _worker_base_url(worker_id)
+    if base is None:
+        return JSONResponse({"error": "worker not reachable (no recent heartbeat)"}, status_code=503)
+
+    import httpx
+    # Generous read timeout — downloads can run minutes on slow links.
+    # Worker streams 1 MB chunks, so connection stays busy.
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=3600.0,
+                                                           write=10.0, pool=10.0)) as client:
+            resp = await client.post(f"{base}/models/download", json={
+                "url": model["url"],
+                "filename": model["filename"],
+            })
+        return JSONResponse(resp.json(), status_code=resp.status_code)
+    except httpx.HTTPError as exc:
+        return JSONResponse({"error": f"worker call failed: {exc}"}, status_code=502)
+
+
+async def api_mesh_worker_model_activate(request: Request) -> JSONResponse:
+    """Admin: hot-swap the worker's running llama-server to a different GGUF.
+
+    Body: {"filename": str}. The worker resolves the filename inside its
+    own models dir (by design — the hub doesn't learn or forward file
+    paths). Returns the worker's response directly, which reports the
+    new active model name or rollback details.
+    """
+    from localforge.auth import require_role
+    denied = require_role(request, "admin")
+    if denied is not None:
+        return denied
+    worker_id = request.path_params.get("worker_id", "")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid_json"}, status_code=400)
+    filename = (body.get("filename") or "").strip()
+    if not filename:
+        return JSONResponse({"error": "filename required"}, status_code=400)
+
+    base = _worker_base_url(worker_id)
+    if base is None:
+        return JSONResponse({"error": "worker not reachable (no recent heartbeat)"}, status_code=503)
+
+    import httpx
+    try:
+        # Model swap takes ~15-30s for a cold GPU load; allow some headroom.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=120.0,
+                                                           write=10.0, pool=10.0)) as client:
+            resp = await client.post(f"{base}/models/activate", json={"filename": filename})
+        return JSONResponse(resp.json(), status_code=resp.status_code)
+    except httpx.HTTPError as exc:
+        return JSONResponse({"error": f"worker call failed: {exc}"}, status_code=502)
+
+
+# ---------------------------------------------------------------------------
 # Model Sync
 # ---------------------------------------------------------------------------
 
@@ -2524,6 +2668,10 @@ dashboard_routes = [
     Route("/mesh/workers/revoke", api_mesh_workers_revoke, methods=["POST"]),
     Route("/mesh/workers/{worker_id}", api_mesh_worker_detail, methods=["GET"]),
     Route("/mesh/workers/{worker_id}/config", api_mesh_worker_config, methods=["POST"]),
+    Route("/mesh/models/catalog", api_mesh_models_catalog, methods=["GET"]),
+    Route("/mesh/workers/{worker_id}/models", api_mesh_worker_models, methods=["GET"]),
+    Route("/mesh/workers/{worker_id}/models/download", api_mesh_worker_model_download, methods=["POST"]),
+    Route("/mesh/workers/{worker_id}/models/activate", api_mesh_worker_model_activate, methods=["POST"]),
     # Model sync
     Route("/sync-models", api_sync_models, methods=["POST"]),
     # Training pipeline

@@ -68,6 +68,32 @@ _backend_url = os.environ.get("LOCALFORGE_BACKEND_URL", "http://localhost:5000/v
 # Local llama-server manager (set in main())
 _llama_manager: "LlamaServerManager | None" = None
 
+# Guards hot-swap so concurrent /models/activate calls don't race
+# (stop + start + global re-assignment). Initialized lazily in create_app()
+# because asyncio.Lock() must be created inside a running loop on some
+# Python builds.
+_llama_swap_lock: "asyncio.Lock | None" = None
+
+
+def _models_dir():
+    """Resolve the on-disk models directory, creating it if needed.
+
+    Priority: LOCALFORGE_MODELS_DIR (explicit) → LOCALFORGE_INSTALL_DIR/models
+    (written by the bootstrapper) → ~/.localforge/models (fallback). The
+    bootstrappers set LOCALFORGE_INSTALL_DIR so `POST /models/download`
+    drops files in the same place the service's --model arg pointed at.
+    """
+    from pathlib import Path
+    explicit = os.environ.get("LOCALFORGE_MODELS_DIR", "").strip()
+    if explicit:
+        p = Path(explicit)
+    else:
+        install = os.environ.get("LOCALFORGE_INSTALL_DIR", "").strip() \
+            or os.environ.get("INSTALL_DIR", "").strip()
+        p = Path(install) / "models" if install else Path.home() / ".localforge" / "models"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
 
 class LlamaServerManager:
     """Manage a local llama-server subprocess for self-hosted inference."""
@@ -781,9 +807,208 @@ def create_app():
     async def metrics_endpoint(request):
         return JSONResponse(system_metrics())
 
+    async def list_models(request):
+        """List GGUF files staged locally + which one is active.
+
+        Read-only, so no auth required — consistent with /health + /status.
+        The hub's admin-only proxy (`GET /api/mesh/workers/{id}/models`) is
+        what users actually hit; direct access is for debugging.
+        """
+        from pathlib import Path
+        models_dir = _models_dir()
+        files = []
+        try:
+            for path in sorted(models_dir.glob("*.gguf")):
+                try:
+                    st = path.stat()
+                except OSError:
+                    continue
+                files.append({
+                    "filename": path.name,
+                    "path": str(path),
+                    "size_bytes": st.st_size,
+                    "size_gb": round(st.st_size / (1024**3), 2),
+                    "modified": int(st.st_mtime),
+                })
+        except OSError as exc:
+            return JSONResponse({"error": f"Cannot read models dir: {exc}"}, status_code=500)
+        return JSONResponse({
+            "models_dir": str(models_dir),
+            "files": files,
+            "active": {
+                "model_name": _llama_manager.model_name if _llama_manager else "",
+                "model_path": _llama_manager.model_path if _llama_manager else "",
+                "port": _llama_manager.port if _llama_manager else 0,
+                "healthy": (await _llama_manager.health_check()) if _llama_manager else False,
+            },
+        })
+
+    async def download_model(request):
+        """Stream a catalog-sanctioned GGUF to the local models dir.
+
+        Body: {"url": str, "filename": str}. Security properties without a
+        bearer: (a) the worker port is Tailscale-firewalled, (b) the URL's
+        host MUST match models_catalog.TRUSTED_HOSTS so the endpoint can't
+        be used as an open file-download proxy, (c) filename is sanitized
+        to a basename ending in .gguf. Matches the existing /task endpoint's
+        effective auth posture (the hub currently doesn't carry worker keys).
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+        url = (body.get("url") or "").strip()
+        filename = (body.get("filename") or "").strip()
+        if not url or not filename:
+            return JSONResponse({"error": "url and filename required"}, status_code=400)
+
+        # Host allow-list. Importing lazily so the worker package stays
+        # importable even if models_catalog is missing on older installs.
+        try:
+            from localforge.models_catalog import TRUSTED_HOSTS
+        except ImportError:
+            TRUSTED_HOSTS = {"huggingface.co", "cdn-lfs.huggingface.co",
+                             "cdn-lfs-us-1.huggingface.co", "cdn-lfs-eu-1.huggingface.co"}
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or parsed.hostname not in TRUSTED_HOSTS:
+            return JSONResponse(
+                {"error": f"Host not in allow-list: {parsed.hostname}"},
+                status_code=403,
+            )
+
+        # Sanitize filename — basename only, must end in .gguf.
+        from pathlib import Path
+        safe_name = Path(filename).name
+        if not safe_name.endswith(".gguf") or "/" in safe_name or "\\" in safe_name:
+            return JSONResponse({"error": "filename must be a plain *.gguf name"}, status_code=400)
+
+        models_dir = _models_dir()
+        target = models_dir / safe_name
+        partial = models_dir / (safe_name + ".partial")
+        if target.exists():
+            return JSONResponse({
+                "status": "already_present",
+                "path": str(target),
+                "size_bytes": target.stat().st_size,
+            })
+
+        # Stream to .partial then atomic rename so a mid-transfer abort
+        # doesn't leave a truncated "valid" file the worker would try to load.
+        try:
+            import httpx
+            bytes_written = 0
+            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=3600.0,
+                                                               write=60.0, pool=10.0),
+                                         follow_redirects=True) as client:
+                async with client.stream("GET", url) as resp:
+                    if resp.status_code != 200:
+                        return JSONResponse(
+                            {"error": f"Upstream returned {resp.status_code}"},
+                            status_code=502,
+                        )
+                    total = int(resp.headers.get("content-length", "0"))
+                    with open(partial, "wb") as f:
+                        async for chunk in resp.aiter_bytes(chunk_size=1024 * 1024):
+                            f.write(chunk)
+                            bytes_written += len(chunk)
+            partial.replace(target)
+        except Exception as exc:
+            try:
+                if partial.exists():
+                    partial.unlink()
+            except OSError:
+                pass
+            log.exception("download_model failed: %s", exc)
+            return JSONResponse({"error": f"Download failed: {exc}"}, status_code=500)
+
+        return JSONResponse({
+            "status": "ok",
+            "path": str(target),
+            "filename": safe_name,
+            "size_bytes": bytes_written,
+            "upstream_size": total,
+        })
+
+    async def activate_model(request):
+        """Hot-swap the running llama-server to serve a different GGUF.
+
+        Body: {"path": str} OR {"filename": str}. Only operates on files
+        that already exist on local disk (the file-existence check doubles
+        as the authorization — if you can drop a GGUF into the worker's
+        models dir, you're already on the trusted side of the firewall).
+        Call blocks until the new server passes a health check (typically
+        15-30s for a cold GPU load); 502 on failure with rollback to the
+        previous model where possible.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+        from pathlib import Path
+        target_path = body.get("path") or ""
+        target_filename = body.get("filename") or ""
+        if target_filename and not target_path:
+            target_path = str(_models_dir() / Path(target_filename).name)
+        if not target_path:
+            return JSONResponse({"error": "path or filename required"}, status_code=400)
+        if not Path(target_path).is_file():
+            return JSONResponse({"error": f"File not found: {target_path}"}, status_code=404)
+
+        global _llama_manager, _llama_swap_lock
+        if _llama_swap_lock is None:
+            _llama_swap_lock = asyncio.Lock()
+
+        async with _llama_swap_lock:
+            old = _llama_manager
+            old_path = old.model_path if old else None
+            old_port = old.port if old else int(os.environ.get("LOCALFORGE_LLAMA_PORT", "5050"))
+
+            if old:
+                await old.stop()
+
+            new_mgr = LlamaServerManager(
+                model_path=target_path,
+                port=old_port,
+                gpu_layers=-1,
+                ctx_size=0,
+                parallel=min(_max_concurrent, 2),
+            )
+            started = await new_mgr.start()
+            if not started:
+                # Roll back to the previous model so the worker doesn't
+                # end up in a headless state after a failed swap.
+                if old_path and old_path != target_path:
+                    rollback = LlamaServerManager(
+                        model_path=old_path, port=old_port,
+                        gpu_layers=-1, ctx_size=0,
+                        parallel=min(_max_concurrent, 2),
+                    )
+                    if await rollback.start():
+                        _llama_manager = rollback
+                        return JSONResponse(
+                            {"error": "New model failed to start; rolled back to previous."},
+                            status_code=502,
+                        )
+                _llama_manager = None
+                return JSONResponse(
+                    {"error": "New model failed to start; no rollback available."},
+                    status_code=502,
+                )
+            _llama_manager = new_mgr
+
+        return JSONResponse({
+            "status": "ok",
+            "model_name": new_mgr.model_name,
+            "model_path": new_mgr.model_path,
+            "port": new_mgr.port,
+        })
+
     async def on_startup():
-        global _task_queue
+        global _task_queue, _llama_swap_lock
         _task_queue = asyncio.Queue(maxsize=_max_concurrent * 4)
+        _llama_swap_lock = asyncio.Lock()
 
         # Start task worker coroutines
         for i in range(_max_concurrent):
@@ -810,6 +1035,9 @@ def create_app():
             Route("/task", handle_task, methods=["POST"]),
             Route("/task/cancel", cancel_task, methods=["POST"]),
             Route("/metrics", metrics_endpoint),
+            Route("/models", list_models),
+            Route("/models/download", download_model, methods=["POST"]),
+            Route("/models/activate", activate_model, methods=["POST"]),
         ],
         on_startup=[on_startup],
     )
