@@ -45,6 +45,18 @@ echo "Installing Termux packages..."
 pkg update -y >/dev/null
 pkg install -y python git curl termux-api termux-tools
 
+# Termux ships a current Python, but belt-and-suspenders check: localforge
+# requires 3.11+. If the user has an old Termux install, surface it clearly.
+if ! python -c 'import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)' 2>/dev/null; then
+    echo "Error: Termux's Python is $(python --version 2>&1), need 3.11+."
+    echo "Run: pkg upgrade -y python   (or reinstall Termux from F-Droid)"
+    exit 1
+fi
+echo "Python: $(python --version)"
+
+# Kill any running worker from a previous install so pip can replace it.
+pkill -f 'localforge-worker' 2>/dev/null || true
+
 # termux-wake-lock keeps CPU awake for network heartbeats
 command -v termux-wake-lock >/dev/null && termux-wake-lock
 

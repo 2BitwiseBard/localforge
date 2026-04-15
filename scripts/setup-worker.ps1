@@ -49,6 +49,30 @@ function Write-Step { param([string]$Msg) Write-Host "[+] $Msg" -ForegroundColor
 function Write-Warn { param([string]$Msg) Write-Host "[!] $Msg" -ForegroundColor Yellow }
 function Write-Err  { param([string]$Msg) Write-Host "[x] $Msg" -ForegroundColor Red }
 
+# Keep the (likely elevated) console window open at the end so users can read
+# success/error output before it closes. Register for both normal and fault exits.
+$script:pauseOnExit = $true
+function Invoke-PauseOnExit {
+    if ($script:pauseOnExit) { try { Read-Host "Press Enter to close" | Out-Null } catch { } }
+}
+trap { Invoke-PauseOnExit; break }
+
+# Admin check: NSSM must register a Windows service, which requires Administrator.
+# If we aren't elevated, bail with a clear message — the Add Node one-liner is
+# responsible for triggering UAC via Start-Process -Verb RunAs before we run.
+$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Err "This installer must run as Administrator (required to register the"
+    Write-Err "LocalForgeWorker service via NSSM)."
+    Write-Host ""
+    Write-Host "Fix: in the dashboard's Add Node modal, use the updated one-liner." -ForegroundColor Yellow
+    Write-Host "It will save this script to a temp file and relaunch it elevated," -ForegroundColor Yellow
+    Write-Host "triggering a single UAC prompt." -ForegroundColor Yellow
+    Invoke-PauseOnExit
+    exit 1
+}
+
 Write-Host "=== LocalForge Windows Worker Setup ===" -ForegroundColor Green
 Write-Host "Hub:        $Hub"
 Write-Host "Port:       $Port"
@@ -271,3 +295,4 @@ Write-Host "Stop:   $nssmExe stop $serviceName"
 Write-Host "Start:  $nssmExe start $serviceName"
 Write-Host "Status: curl http://localhost:$Port/health"
 Write-Host "Hub:    $Hub/api/mesh/status (should show $workerId within 30s)"
+Invoke-PauseOnExit

@@ -1969,11 +1969,15 @@ def _install_oneliners(token: str, hub_url: str) -> dict[str, str]:
             f"curl -fsSL '{base}?platform=darwin&token={token}' | "
             f"bash -s -- --hub {hub_url} --token {token}",
         "win32":
-            # Server-side templates Hub + Token into the script body, so
-            # the one-liner can stay `iwr URL | iex` with zero args —
-            # avoiding PowerShell's nested-quote interpolation nightmare.
-            f"powershell -ExecutionPolicy Bypass -Command "
-            f"\"iwr -useb '{base}?platform=win32&token={token}' | iex\"",
+            # NSSM service registration requires Administrator, so the one-liner
+            # downloads the script to a temp file and relaunches it elevated via
+            # UAC (Start-Process -Verb RunAs). Server-side templates Hub + Token
+            # into the script body so no args need to cross the UAC boundary.
+            f"powershell -ExecutionPolicy Bypass -NoProfile -Command "
+            f"\"$s=$env:TEMP+'\\localforge-setup.ps1'; "
+            f"iwr -useb '{base}?platform=win32&token={token}' -OutFile $s; "
+            f"Start-Process powershell -Verb RunAs -Wait -ArgumentList "
+            f"'-ExecutionPolicy','Bypass','-NoProfile','-File',$s\"",
         "android":
             f"curl -fsSL '{base}?platform=android&token={token}' | "
             f"bash -s -- --hub {hub_url} --token {token}",

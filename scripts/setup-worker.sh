@@ -39,17 +39,40 @@ echo "=== LocalForge Linux Worker Setup ==="
 [[ -z "$HUB_URL" ]]  && { echo "Error: --hub required"; exit 1; }
 [[ -z "$API_KEY" && -z "$ENROLL_TOKEN" ]] && { echo "Error: --token or --key required"; exit 1; }
 
-command -v python3 >/dev/null || { echo "Error: python3 not found."; exit 1; }
-echo "Python: $(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+# Python 3.11+ check. localforge's pyproject.toml enforces this, but a clear
+# error here is friendlier than pip's "Requires-Python" message.
+PY=""
+for cmd in python3.13 python3.12 python3.11 python3; do
+    if command -v "$cmd" >/dev/null; then
+        if "$cmd" -c 'import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)' 2>/dev/null; then
+            PY="$cmd"; break
+        fi
+    fi
+done
+if [[ -z "$PY" ]]; then
+    echo "Error: Python 3.11+ is required. Found:"
+    for cmd in python3 python3.10 python3.11 python3.12 python3.13; do
+        command -v "$cmd" >/dev/null && echo "  $cmd -> $($cmd --version 2>&1)"
+    done
+    echo "Install a newer Python (apt/dnf/pacman python3.11 or pyenv) and re-run."
+    exit 1
+fi
+echo "Python: $($PY --version)"
+
+# Stop any existing worker service so pip can replace its binary cleanly.
+if systemctl --user is-active --quiet localforge-worker 2>/dev/null; then
+    echo "Stopping existing localforge-worker service for upgrade..."
+    systemctl --user stop localforge-worker || true
+fi
 
 # --- 1. Install localforge[worker] ---------------------------------------
 echo ""
 echo "Installing localforge[worker]..."
 if command -v uv >/dev/null; then
-    uv pip install --user "localforge[worker] @ git+$GIT_REPO"
+    uv pip install --python "$PY" --user "localforge[worker] @ git+$GIT_REPO"
 else
-    python3 -m pip install --user --upgrade pip
-    python3 -m pip install --user "localforge[worker] @ git+$GIT_REPO"
+    "$PY" -m pip install --user --upgrade pip
+    "$PY" -m pip install --user "localforge[worker] @ git+$GIT_REPO"
 fi
 
 # Ensure ~/.local/bin is on PATH for this shell (the service uses an absolute path anyway)
@@ -60,9 +83,9 @@ WORKER_BIN="$(command -v localforge-worker || echo "$HOME/.local/bin/localforge-
 # --- 2. Detect hardware --------------------------------------------------
 echo ""
 echo "Detecting hardware..."
-HW_JSON=$(python3 -c "import json; from localforge.workers.detect import detect; print(json.dumps(detect().to_dict()))")
-PLATFORM=$(echo "$HW_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['platform'])")
-TIER=$(echo "$HW_JSON"     | python3 -c "import sys,json; print(json.load(sys.stdin)['tier'])")
+HW_JSON=$("$PY" -c "import json; from localforge.workers.detect import detect; print(json.dumps(detect().to_dict()))")
+PLATFORM=$(echo "$HW_JSON" | "$PY" -c "import sys,json; print(json.load(sys.stdin)['platform'])")
+TIER=$(echo "$HW_JSON"     | "$PY" -c "import sys,json; print(json.load(sys.stdin)['tier'])")
 echo "  Platform: $PLATFORM"
 echo "  Tier:     $TIER"
 
@@ -70,7 +93,7 @@ echo "  Tier:     $TIER"
 if [[ -n "$ENROLL_TOKEN" ]]; then
     echo ""
     echo "Registering with hub..."
-    REG_BODY=$(python3 - <<EOF
+    REG_BODY=$("$PY" - <<EOF
 import json, os
 print(json.dumps({
     "enrollment_token": "$ENROLL_TOKEN",
@@ -83,8 +106,8 @@ EOF
     REG_RESP=$(curl -fsSL -X POST "$HUB_URL/api/mesh/register" \
                     -H "Content-Type: application/json" \
                     -d "$REG_BODY")
-    API_KEY=$(echo "$REG_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['api_key'])")
-    WORKER_ID=$(echo "$REG_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['worker_id'])")
+    API_KEY=$(echo "$REG_RESP" | "$PY" -c "import sys,json; print(json.load(sys.stdin)['api_key'])")
+    WORKER_ID=$(echo "$REG_RESP" | "$PY" -c "import sys,json; print(json.load(sys.stdin)['worker_id'])")
     echo "  Registered as: $WORKER_ID"
 fi
 

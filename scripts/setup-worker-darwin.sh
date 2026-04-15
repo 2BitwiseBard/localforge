@@ -59,14 +59,30 @@ if [[ -z "$PY" ]]; then
 fi
 echo "Python: $("$PY" --version)"
 
+# Stop any existing launchd agent so pip can cleanly replace the binary.
+UID_NUM=$(id -u)
+if launchctl print "gui/$UID_NUM/com.localforge.worker" >/dev/null 2>&1; then
+    echo "Stopping existing com.localforge.worker agent for upgrade..."
+    launchctl bootout "gui/$UID_NUM/com.localforge.worker" 2>/dev/null || true
+fi
+
 # --- 2. Venv + install ---------------------------------------------------
 mkdir -p "$APP_SUPPORT"
 VENV="$APP_SUPPORT/venv"
+VENV_PY="$VENV/bin/python"
+
+# If an existing venv is pinned to Python <3.11, rebuild it. Prior failed
+# runs may have baked an older interpreter in before the host got upgraded.
+if [[ -x "$VENV_PY" ]]; then
+    if ! "$VENV_PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)' 2>/dev/null; then
+        echo "Existing venv uses $("$VENV_PY" --version 2>&1) (need 3.11+). Rebuilding."
+        rm -rf "$VENV"
+    fi
+fi
 if [[ ! -d "$VENV" ]]; then
     echo "Creating venv at $VENV"
     "$PY" -m venv "$VENV"
 fi
-VENV_PY="$VENV/bin/python"
 VENV_PIP="$VENV/bin/pip"
 WORKER_BIN="$VENV/bin/localforge-worker"
 
@@ -152,11 +168,8 @@ EOF
 chmod 600 "$PLIST"
 
 # --- 7. Bootstrap --------------------------------------------------------
-# macOS 11+: prefer launchctl bootstrap; older: launchctl load
-UID_NUM=$(id -u)
-if launchctl print "gui/$UID_NUM/com.localforge.worker" >/dev/null 2>&1; then
-    launchctl bootout "gui/$UID_NUM/com.localforge.worker" 2>/dev/null || true
-fi
+# macOS 11+: prefer launchctl bootstrap; older: launchctl load.
+# $UID_NUM was set above before we pip-installed, so it's already in scope.
 launchctl bootstrap "gui/$UID_NUM" "$PLIST"
 launchctl enable "gui/$UID_NUM/com.localforge.worker"
 
