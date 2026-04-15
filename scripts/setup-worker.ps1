@@ -7,10 +7,13 @@
 # What this does:
 #   1. Checks / installs Python 3.11+ via winget
 #   2. Creates a venv at $env:LOCALAPPDATA\LocalForge\venv
-#   3. pip-installs localforge (editable from git for now — switch to PyPI once published)
-#   4. Calls POST /api/mesh/register, stores the returned worker API key 0600-equivalent
-#   5. Downloads NSSM, registers "LocalForgeWorker" Windows service
-#   6. Starts the service
+#   3. pip-installs localforge[worker] from the public git repo
+#   4. Detects hardware + calls POST /api/mesh/register (enrollment token)
+#   5. Downloads llama-server.exe (llama.cpp latest) + a VRAM-sized default
+#      GGUF so the worker can host chat on its own GPU (-SkipModel to skip;
+#      -Model <path> to use an existing GGUF)
+#   6. Writes ACL-restricted env file, registers "LocalForgeWorker" NSSM service
+#   7. Starts the service (service auto-starts llama-server when --model set)
 #
 # Firewall note: the worker listens on :8200 and should only be reachable over
 # the Tailscale interface. Add a rule restricting inbound to the Tailscale NIC.
@@ -23,8 +26,17 @@ param(
     [string]$Hub = "%%LOCALFORGE_HUB_URL%%",
     [string]$Token = "%%LOCALFORGE_ENROLLMENT_TOKEN%%",
     [int]$Port = 8200,
+    [int]$LlamaPort = 5050,
     [string]$InstallDir = "$env:LOCALAPPDATA\LocalForge",
-    [string]$GitRepo = "https://github.com/2BitwiseBard/localforge"
+    [string]$GitRepo = "https://github.com/2BitwiseBard/localforge",
+    # Local inference stack: downloads llama-server.exe + a right-sized default
+    # GGUF so the worker can host chat/completions on its own GPU. Use -Model
+    # to point at an existing GGUF (skips the download), or -SkipModel to
+    # install a task-receiver only (embeddings/rerank via ai-hub backend).
+    [string]$Model = "",
+    [switch]$SkipModel,
+    [ValidateSet("auto", "vulkan", "cuda", "cpu")]
+    [string]$LlamaBackend = "auto"
 )
 
 # If placeholders weren't substituted (manual run), try env-var fallback.
@@ -48,6 +60,31 @@ if ([string]::IsNullOrWhiteSpace($Token)) {
 function Write-Step { param([string]$Msg) Write-Host "[+] $Msg" -ForegroundColor Cyan }
 function Write-Warn { param([string]$Msg) Write-Host "[!] $Msg" -ForegroundColor Yellow }
 function Write-Err  { param([string]$Msg) Write-Host "[x] $Msg" -ForegroundColor Red }
+
+# nssm.cc + github.com are old-school HTTP and sometimes trip TLS negotiation
+# on stock PowerShell 5. Force TLS 1.2, use -UseBasicParsing (avoids spawning
+# the IE engine), and fall back to curl.exe if IWR still fails. Shared by the
+# llama-server, model, and NSSM download steps so they all benefit.
+function Invoke-Download {
+    param([string]$Url, [string]$OutFile, [int]$TimeoutSec = 300)
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = `
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch { }
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -TimeoutSec $TimeoutSec
+        return $true
+    } catch {
+        Write-Warn "Invoke-WebRequest failed: $($_.Exception.Message). Trying curl.exe."
+    }
+    $curl = (Get-Command curl.exe -ErrorAction SilentlyContinue)
+    if ($curl) {
+        & curl.exe -fsSL --retry 3 --retry-delay 2 -o $OutFile $Url
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $OutFile)) { return $true }
+        Write-Warn "curl.exe also failed (exit $LASTEXITCODE)."
+    }
+    return $false
+}
 
 # Keep the (likely elevated) console window open at the end so users can read
 # success/error output before it closes. Register for both normal and fault exits.
@@ -199,12 +236,128 @@ $workerKey = $registerResp.api_key
 $workerId  = $registerResp.worker_id
 Write-Host "    Registered as: $workerId"
 
-# --- 4. Persist env file (ACL restricted) --------------------------------
+# --- 4. llama-server + default model -------------------------------------
+# device_worker.py spawns llama-server.exe as a subprocess when --model is
+# passed. We stage both here so the NSSM service can start the full stack
+# on first boot. Everything lives under $InstallDir so an uninstall is
+# rm -rf of that directory plus `nssm remove LocalForgeWorker confirm`.
+$llamaDir = Join-Path $InstallDir "llama-server"
+$modelsDir = Join-Path $InstallDir "models"
+
+if ($SkipModel) {
+    Write-Step "Skipping llama-server + model install (-SkipModel set)"
+    Write-Host "    Worker will be a task-receiver only (embeddings/rerank/classify)."
+    Write-Host "    Chat tasks routed to this node will proxy back to the hub backend."
+    $Model = ""
+} else {
+    # 4a. Backend auto-select. Vulkan is the safest default — works on any
+    # modern GPU with stock drivers; no CUDA runtime required. CPU fallback
+    # when hardware detect found no GPU.
+    if ($LlamaBackend -eq "auto") {
+        if ($hw.gpu_type -eq "none") { $LlamaBackend = "cpu" }
+        else { $LlamaBackend = "vulkan" }
+    }
+    Write-Host "    llama-server backend: $LlamaBackend"
+
+    # 4b. Download llama-server binary from the latest llama.cpp release.
+    # Asset name pattern: llama-b<N>-bin-win-<backend>-x64.zip. We query the
+    # release API so we track upstream automatically; Vulkan fallback covers
+    # the case where a tag drops the CUDA/HIP asset momentarily.
+    $llamaBin = Join-Path $llamaDir "llama-server.exe"
+    if (-not (Test-Path $llamaBin)) {
+        Write-Step "Fetching llama.cpp latest release metadata"
+        $release = $null
+        try {
+            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest" `
+                                         -Headers @{ 'User-Agent' = 'LocalForge-Setup' } `
+                                         -UseBasicParsing -TimeoutSec 30
+        } catch {
+            Write-Err "Could not reach GitHub to list llama.cpp releases: $_"
+            exit 1
+        }
+        $pattern = "*bin-win-$LlamaBackend-x64.zip"
+        $asset = $release.assets | Where-Object { $_.name -like $pattern } | Select-Object -First 1
+        if (-not $asset) {
+            Write-Warn "No '$LlamaBackend' asset in $($release.tag_name). Falling back to vulkan."
+            $asset = $release.assets | Where-Object { $_.name -like '*bin-win-vulkan-x64.zip' } | Select-Object -First 1
+            $LlamaBackend = "vulkan"
+        }
+        if (-not $asset) { Write-Err "No usable llama.cpp asset found"; exit 1 }
+
+        $zipPath = Join-Path $env:TEMP $asset.name
+        Write-Step "Downloading $($asset.name) ($([math]::Round($asset.size/1MB)) MB)"
+        if (-not (Invoke-Download -Url $asset.browser_download_url -OutFile $zipPath)) {
+            Write-Err "llama-server download failed."
+            exit 1
+        }
+        New-Item -ItemType Directory -Force -Path $llamaDir | Out-Null
+        Expand-Archive -Path $zipPath -DestinationPath $llamaDir -Force
+        Remove-Item $zipPath
+        if (-not (Test-Path $llamaBin)) {
+            # Some release zips nest into a subfolder; hoist the exe up one level.
+            $found = Get-ChildItem -Path $llamaDir -Recurse -Filter "llama-server.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { Copy-Item $found.FullName $llamaBin -Force }
+        }
+        if (-not (Test-Path $llamaBin)) {
+            Write-Err "Extracted zip but llama-server.exe not found under $llamaDir"
+            exit 1
+        }
+        Write-Host "    llama-server installed: $llamaBin"
+    } else {
+        Write-Host "    llama-server already present at $llamaBin"
+    }
+
+    # 4c. Pick a default GGUF sized to detected VRAM. Users with a specific
+    # model in mind pass -Model and skip this entirely. Tier thresholds are
+    # intentionally conservative so Q4 weights + 4k ctx fit alongside the
+    # desktop compositor's own ~500MB VRAM draw.
+    if (-not $Model) {
+        New-Item -ItemType Directory -Force -Path $modelsDir | Out-Null
+        $vram = [int]$hw.vram_mb
+        if ($vram -ge 8000) {
+            $modelFile = "qwen2.5-7b-instruct-q4_k_m.gguf"
+            $modelUrl  = "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/$modelFile"
+            $approxGb  = "4.5"
+        } elseif ($vram -ge 4000) {
+            $modelFile = "qwen2.5-3b-instruct-q4_k_m.gguf"
+            $modelUrl  = "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/$modelFile"
+            $approxGb  = "1.9"
+        } else {
+            $modelFile = "qwen2.5-1.5b-instruct-q5_k_m.gguf"
+            $modelUrl  = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/$modelFile"
+            $approxGb  = "1.1"
+        }
+        $Model = Join-Path $modelsDir $modelFile
+        if (Test-Path $Model) {
+            Write-Host "    Default model already present: $Model"
+        } else {
+            Write-Step "Downloading default model $modelFile (~$approxGb GB, first run only)"
+            # Large download — bump timeout so a slow link doesn't abort us.
+            $tmpModel = "$Model.partial"
+            if (-not (Invoke-Download -Url $modelUrl -OutFile $tmpModel -TimeoutSec 1800)) {
+                Write-Err "Model download failed. Fix network and re-run, or pass -Model <path> with a local GGUF."
+                if (Test-Path $tmpModel) { Remove-Item $tmpModel -Force }
+                exit 1
+            }
+            Move-Item -Path $tmpModel -Destination $Model -Force
+            Write-Host "    Model installed: $Model"
+        }
+    } else {
+        if (-not (Test-Path $Model)) {
+            Write-Err "-Model path does not exist: $Model"
+            exit 1
+        }
+        Write-Host "    Using supplied model: $Model"
+    }
+}
+
+# --- 5. Persist env file (ACL restricted) --------------------------------
 $envFile = Join-Path $InstallDir "env.ps1"
 @"
 `$env:LOCALFORGE_HUB_URL = '$Hub'
 `$env:LOCALFORGE_API_KEY = '$workerKey'
 `$env:LOCALFORGE_WORKER_PORT = '$Port'
+`$env:LOCALFORGE_MODEL_PATH = '$Model'
 "@ | Set-Content -Path $envFile -Encoding UTF8
 
 Write-Step "Restricting env file ACL to current user"
@@ -217,30 +370,7 @@ $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
 $acl.AddAccessRule($rule)
 Set-Acl -Path $envFile -AclObject $acl
 
-# --- 5. NSSM -------------------------------------------------------------
-# nssm.cc is old-school HTTP and sometimes times out or trips TLS negotiation
-# on stock Windows PowerShell 5. Force TLS 1.2, use -UseBasicParsing (avoids
-# spawning the IE engine), and fall back to curl.exe if IWR still fails.
-function Invoke-Download {
-    param([string]$Url, [string]$OutFile)
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = `
-            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    } catch { }
-    try {
-        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -TimeoutSec 60
-        return $true
-    } catch {
-        Write-Warn "Invoke-WebRequest failed: $($_.Exception.Message). Trying curl.exe."
-    }
-    $curl = (Get-Command curl.exe -ErrorAction SilentlyContinue)
-    if ($curl) {
-        & curl.exe -fsSL --retry 3 --retry-delay 2 -o $OutFile $Url
-        if ($LASTEXITCODE -eq 0 -and (Test-Path $OutFile)) { return $true }
-        Write-Warn "curl.exe also failed (exit $LASTEXITCODE)."
-    }
-    return $false
-}
+# --- 6. NSSM -------------------------------------------------------------
 
 $nssmExe = Join-Path $InstallDir "nssm.exe"
 if (-not (Test-Path $nssmExe)) {
@@ -257,17 +387,44 @@ if (-not (Test-Path $nssmExe)) {
     Remove-Item $tmp
 }
 
+# Build the arg list once so install + reconfigure share the same source of
+# truth. `--model` is only appended when a GGUF is actually present, so
+# -SkipModel cleanly downgrades the worker to task-receiver mode.
+$svcArgs = @("-m", "localforge.workers.device_worker",
+             "--port", "$Port",
+             "--hub",  "$Hub",
+             "--llama-port", "$LlamaPort")
+if ($Model) {
+    $svcArgs += @("--model", $Model)
+}
+
 $serviceName = "LocalForgeWorker"
 $existing = & $nssmExe status $serviceName 2>&1
 if ($LASTEXITCODE -eq 0) {
     Write-Step "Reconfiguring existing $serviceName service"
     & $nssmExe stop $serviceName | Out-Null
+    # Replace the command + args on reconfigure so a prior install without
+    # --model picks up the new model arg (and vice versa for -SkipModel).
+    & $nssmExe set $serviceName Application $venvPy | Out-Null
+    & $nssmExe set $serviceName AppParameters ($svcArgs -join ' ') | Out-Null
 } else {
     Write-Step "Installing $serviceName service"
-    & $nssmExe install $serviceName $venvPy "-m" "localforge.workers.device_worker" "--port" "$Port" "--hub" "$Hub"
+    & $nssmExe install $serviceName $venvPy @svcArgs
 }
 
-& $nssmExe set $serviceName AppEnvironmentExtra "LOCALFORGE_API_KEY=$workerKey" "LOCALFORGE_HUB_URL=$Hub"
+# Env extras. LOCALFORGE_LLAMA_BIN points device_worker at the vendored
+# binary without touching the service's inherited PATH — NSSM's
+# AppEnvironmentExtra REPLACES (not appends) any listed var, so setting
+# PATH here would shadow System32 and the venv Scripts dir.
+$envExtras = @(
+    "LOCALFORGE_API_KEY=$workerKey",
+    "LOCALFORGE_HUB_URL=$Hub"
+)
+if (-not $SkipModel) {
+    $llamaBin = Join-Path $llamaDir "llama-server.exe"
+    if (Test-Path $llamaBin) { $envExtras += "LOCALFORGE_LLAMA_BIN=$llamaBin" }
+}
+& $nssmExe set $serviceName AppEnvironmentExtra @envExtras
 & $nssmExe set $serviceName Start SERVICE_AUTO_START
 & $nssmExe set $serviceName AppStdout (Join-Path $InstallDir "worker.out.log")
 & $nssmExe set $serviceName AppStderr (Join-Path $InstallDir "worker.err.log")
@@ -281,18 +438,23 @@ Start-Sleep -Seconds 2
 $status = & $nssmExe status $serviceName
 Write-Host "    Service status: $status"
 
-# --- 6. Firewall hint ----------------------------------------------------
+# --- 7. Firewall hint ----------------------------------------------------
 Write-Host ""
 Write-Warn "FIREWALL: Ensure inbound TCP $Port is ONLY allowed on the Tailscale interface."
 Write-Host "  New-NetFirewallRule -DisplayName 'LocalForge Worker' -Direction Inbound ```
              -Action Allow -Protocol TCP -LocalPort $Port ```
              -InterfaceAlias 'Tailscale'"
+if (-not $SkipModel) {
+    Write-Host ""
+    Write-Host "llama-server ($LlamaBackend) listens on 127.0.0.1:$LlamaPort — loopback only, no rule needed."
+}
 
 Write-Host ""
 Write-Host "=== Setup Complete ===" -ForegroundColor Green
-Write-Host "Logs:   $InstallDir\worker.*.log"
-Write-Host "Stop:   $nssmExe stop $serviceName"
-Write-Host "Start:  $nssmExe start $serviceName"
-Write-Host "Status: curl http://localhost:$Port/health"
-Write-Host "Hub:    $Hub/api/mesh/status (should show $workerId within 30s)"
+Write-Host "Logs:      $InstallDir\worker.*.log"
+if ($Model) { Write-Host "Model:     $Model" }
+Write-Host "Stop:      $nssmExe stop $serviceName"
+Write-Host "Start:     $nssmExe start $serviceName"
+Write-Host "Health:    curl http://localhost:$Port/health"
+Write-Host "Hub view:  $Hub/api/mesh/status (expect $workerId within 30s)"
 Invoke-PauseOnExit

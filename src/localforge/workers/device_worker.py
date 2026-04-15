@@ -118,9 +118,15 @@ class LlamaServerManager:
     async def start(self) -> bool:
         """Launch llama-server and wait for it to be healthy."""
         import shutil
-        llama_bin = shutil.which("llama-server")
+        # LOCALFORGE_LLAMA_BIN lets the bootstrapper point at a vendored binary
+        # without mutating the service PATH (NSSM's AppEnvironmentExtra
+        # replaces PATH rather than prepending, which would break System32).
+        llama_bin = os.environ.get("LOCALFORGE_LLAMA_BIN") or shutil.which("llama-server")
+        if llama_bin and not os.path.exists(llama_bin):
+            log.warning("LOCALFORGE_LLAMA_BIN points at missing path: %s", llama_bin)
+            llama_bin = shutil.which("llama-server")
         if not llama_bin:
-            log.error("llama-server not found in PATH")
+            log.error("llama-server not found (set LOCALFORGE_LLAMA_BIN or add to PATH)")
             return False
 
         if not os.path.exists(self.model_path):
