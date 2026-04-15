@@ -34,7 +34,16 @@ from localforge.paths import config_path
 log = logging.getLogger("localforge.auth")
 
 # Paths that don't require auth
-PUBLIC_PATHS = {"/health", "/", ""}
+# /api/mesh/register and /api/mesh/install-script are public because they
+# authenticate via a short-lived enrollment token (validated inside the handler),
+# not via a bearer API key.
+PUBLIC_PATHS = {
+    "/health",
+    "/",
+    "",
+    "/api/mesh/register",
+    "/api/mesh/install-script",
+}
 
 # ---------------------------------------------------------------------------
 # Rate limiter — token bucket per IP
@@ -102,6 +111,7 @@ def _load_and_check_key(token: str) -> str | None:
       2. LOCAL_AI_KEY_OLD env var (rotation — accepts old key during transition)
       3. gateway.api_keys from config.yaml
       4. users.*.api_key from config.yaml
+      5. Worker registry (workers.json — bcrypt-hashed, scoped to mesh)
     """
     # 1-2. Environment variable keys (fast path, no config parse)
     for env_name in ("LOCAL_AI_KEY", "LOCAL_AI_KEY_OLD"):
@@ -122,11 +132,23 @@ def _load_and_check_key(token: str) -> str | None:
         if key and _check_key(token, key):
             return key
 
+    # 5. Worker registry — long-lived, scoped mesh-only keys
+    try:
+        from localforge.enrollment import worker_registry
+        if worker_registry().find_by_key(token) is not None:
+            return token  # sentinel: worker key lookup handled by _resolve_user
+    except Exception as e:  # pragma: no cover — don't let optional lookup break auth
+        log.debug("worker registry lookup failed: %s", e)
+
     return None
 
 
 def _resolve_user(token: str) -> dict:
-    """Resolve an API key to a user profile."""
+    """Resolve an API key to a user profile.
+
+    Users get full scope implicitly; workers get an explicit ``scopes`` list
+    restricting them to mesh endpoints.
+    """
     cfg = _load_config()
 
     # Check users section first (has richest profile)
@@ -137,20 +159,65 @@ def _resolve_user(token: str) -> dict:
                 "id": user_id,
                 "name": user_cfg.get("name", user_id),
                 "role": user_cfg.get("role", "user"),
+                "scopes": ["*"],
             }
 
     # Env var keys → admin
     for env_name in ("LOCAL_AI_KEY", "LOCAL_AI_KEY_OLD"):
         env_key = os.environ.get(env_name, "")
         if env_key and _check_key(token, env_key):
-            return {"id": "admin", "name": "Admin (env)", "role": "admin"}
+            return {"id": "admin", "name": "Admin (env)", "role": "admin", "scopes": ["*"]}
 
-    # Fallback: gateway.api_keys match → default admin user
+    # gateway.api_keys match → default admin user
     for key in cfg.get("gateway", {}).get("api_keys", []):
         if key and _check_key(token, key):
-            return {"id": "admin", "name": "Admin", "role": "admin"}
+            return {"id": "admin", "name": "Admin", "role": "admin", "scopes": ["*"]}
 
-    return {"id": "anonymous", "name": "Anonymous", "role": "user"}
+    # Worker registry — scoped to mesh
+    try:
+        from localforge.enrollment import worker_registry
+        record = worker_registry().find_by_key(token)
+        if record is not None:
+            return {
+                "id": record["worker_id"],
+                "name": record.get("hostname", record["worker_id"]),
+                "role": record.get("role", "worker"),
+                "scopes": record.get("scopes", ["mesh"]),
+                "platform": record.get("platform", "unknown"),
+            }
+    except Exception as e:  # pragma: no cover
+        log.debug("worker registry resolve failed: %s", e)
+
+    return {"id": "anonymous", "name": "Anonymous", "role": "user", "scopes": []}
+
+
+def require_scope(request: Request, scope: str) -> JSONResponse | None:
+    """Return a 403 JSONResponse if ``request.state.user`` lacks the given scope,
+    or ``None`` if the check passes. Handlers use it like::
+
+        denied = require_scope(request, "mesh")
+        if denied:
+            return denied
+    """
+    user = getattr(request.state, "user", None) or {}
+    scopes = user.get("scopes", [])
+    if "*" in scopes or scope in scopes:
+        return None
+    return JSONResponse(
+        {"error": f"Missing required scope: {scope}", "user": user.get("id", "anonymous")},
+        status_code=403,
+    )
+
+
+def require_role(request: Request, role: str) -> JSONResponse | None:
+    """Return a 403 if the authenticated user doesn't match ``role``."""
+    user = getattr(request.state, "user", None) or {}
+    if user.get("role") == role:
+        return None
+    return JSONResponse(
+        {"error": f"Requires role: {role}", "user": user.get("id", "anonymous")},
+        status_code=403,
+    )
 
 
 # ---------------------------------------------------------------------------

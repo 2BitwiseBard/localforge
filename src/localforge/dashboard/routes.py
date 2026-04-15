@@ -1877,6 +1877,11 @@ _gpu_pool_ref = None  # Set by gateway.py
 
 async def api_mesh_heartbeat(request: Request) -> JSONResponse:
     """Receive heartbeat from a worker node and update the mesh registry."""
+    from localforge.auth import require_scope
+    denied = require_scope(request, "mesh")
+    if denied is not None:
+        return denied
+
     # Body size guard — reject oversized payloads
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > 65536:  # 64KB max for heartbeat
@@ -1886,6 +1891,15 @@ async def api_mesh_heartbeat(request: Request) -> JSONResponse:
     hostname = body.get("hostname", "")
     if not hostname:
         return JSONResponse({"error": "hostname required"}, status_code=400)
+
+    # Touch worker registry so last_seen stays fresh.
+    user = _get_user(request)
+    if user.get("role") == "worker":
+        try:
+            from localforge.enrollment import worker_registry
+            worker_registry().touch(user["id"])
+        except Exception:
+            pass
 
     if _gpu_pool_ref is not None:
         key, accepted = _gpu_pool_ref.register_heartbeat(body)
@@ -1899,10 +1913,228 @@ async def api_mesh_heartbeat(request: Request) -> JSONResponse:
 
 async def api_mesh_status(request: Request) -> JSONResponse:
     """Return all registered mesh workers and their status."""
+    workers: list[dict] = []
     if _gpu_pool_ref is not None:
-        workers = _gpu_pool_ref.get_mesh_workers()
-        return JSONResponse({"workers": workers, "count": len(workers)})
-    return JSONResponse({"workers": [], "count": 0})
+        workers = list(_gpu_pool_ref.get_mesh_workers())
+
+    # Merge in workers that have registered but haven't checked in yet.
+    try:
+        from localforge.enrollment import worker_registry
+        seen_ids = {w.get("worker_id") or w.get("hostname") for w in workers}
+        for rec in worker_registry().list_workers():
+            if rec["worker_id"] in seen_ids or rec["hostname"] in seen_ids:
+                continue
+            workers.append({
+                "worker_id": rec["worker_id"],
+                "hostname": rec["hostname"],
+                "platform": rec.get("platform"),
+                "registered_at": rec.get("registered_at"),
+                "last_seen": rec.get("last_seen"),
+                "status": "registered (awaiting first heartbeat)",
+            })
+    except Exception:
+        pass
+
+    return JSONResponse({"workers": workers, "count": len(workers)})
+
+
+# --- Onboarding: enrollment token, install scripts, register ---------------
+
+_PLATFORM_SCRIPTS: dict[str, tuple[str, str]] = {
+    # platform -> (script_path_relative_to_repo_root, content_type)
+    "linux":   ("scripts/setup-worker.sh",         "text/x-shellscript"),
+    "darwin":  ("scripts/setup-worker-darwin.sh",  "text/x-shellscript"),
+    "win32":   ("scripts/setup-worker.ps1",        "text/plain"),
+    "android": ("scripts/setup-worker-termux.sh",  "text/x-shellscript"),
+}
+
+
+def _repo_root() -> Path:
+    """Best-effort locate the installed-source or checkout root."""
+    here = Path(__file__).resolve()
+    for candidate in [here.parents[3], here.parents[2]]:
+        if (candidate / "scripts").is_dir():
+            return candidate
+    return here.parents[3]
+
+
+def _install_oneliners(token: str, hub_url: str) -> dict[str, str]:
+    """Return per-platform copy/paste install commands with token + hub pre-baked."""
+    base = f"{hub_url.rstrip('/')}/api/mesh/install-script"
+    return {
+        "linux":
+            f"curl -fsSL '{base}?platform=linux&token={token}' | "
+            f"bash -s -- --hub {hub_url} --token {token}",
+        "darwin":
+            f"curl -fsSL '{base}?platform=darwin&token={token}' | "
+            f"bash -s -- --hub {hub_url} --token {token}",
+        "win32":
+            f"powershell -ExecutionPolicy Bypass -Command "
+            f"\"iwr -useb '{base}?platform=win32&token={token}' | iex\"",
+        "android":
+            f"curl -fsSL '{base}?platform=android&token={token}' | "
+            f"bash -s -- --hub {hub_url} --token {token}",
+    }
+
+
+async def api_mesh_enrollment_token(request: Request) -> JSONResponse:
+    """Admin: mint a short-lived enrollment token + return install commands."""
+    from localforge.auth import require_role
+    denied = require_role(request, "admin")
+    if denied is not None:
+        return denied
+
+    body: dict = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    note = (body.get("note") or "")[:200]
+
+    user = _get_user(request)
+    hub_url = body.get("hub_url") or _default_hub_url(request)
+
+    try:
+        from localforge.enrollment import enrollment_store
+        token_info = enrollment_store().mint(issued_by=user.get("id", "admin"), note=note)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+
+    return JSONResponse({
+        **token_info,
+        "hub_url": hub_url,
+        "install_commands": _install_oneliners(token_info["token"], hub_url),
+    })
+
+
+def _default_hub_url(request: Request) -> str:
+    """Derive the hub URL a worker should call back to."""
+    cfg = _load_config()
+    configured = cfg.get("gateway", {}).get("public_url")
+    if configured:
+        return configured.rstrip("/")
+    host = request.headers.get("host")
+    if host:
+        scheme = request.url.scheme or "http"
+        return f"{scheme}://{host}"
+    return "http://ai-hub:8100"
+
+
+async def api_mesh_install_script(request: Request) -> JSONResponse | StreamingResponse:
+    """Stream the per-platform bootstrapper. Auth via ?token= enrollment token.
+
+    Listed in auth.PUBLIC_PATHS so curl one-liners work without a bearer header.
+    """
+    from localforge.enrollment import enrollment_store
+    from starlette.responses import Response
+
+    platform = (request.query_params.get("platform") or "").lower()
+    token = request.query_params.get("token", "")
+    if platform not in _PLATFORM_SCRIPTS:
+        return JSONResponse(
+            {"error": f"Unknown platform. Choose one of: {sorted(_PLATFORM_SCRIPTS)}"},
+            status_code=400,
+        )
+    if not token or enrollment_store().peek(token) is None:
+        return JSONResponse({"error": "Invalid or expired enrollment token"}, status_code=401)
+
+    rel, content_type = _PLATFORM_SCRIPTS[platform]
+    script_path = _repo_root() / rel
+    if not script_path.is_file():
+        return JSONResponse(
+            {"error": f"Bootstrapper not yet shipped for platform={platform}",
+             "expected_path": str(script_path)},
+            status_code=404,
+        )
+    try:
+        body = script_path.read_bytes()
+    except OSError as e:
+        return JSONResponse({"error": f"Failed to read script: {e}"}, status_code=500)
+
+    return Response(
+        body,
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{script_path.name}"'},
+    )
+
+
+async def api_mesh_register(request: Request) -> JSONResponse:
+    """Exchange an enrollment token + hardware info for a long-lived worker API key.
+
+    Public endpoint — the enrollment token IS the auth. On success returns
+    ``{worker_id, api_key, scopes}`` where the api_key is shown exactly once.
+    """
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > 65536:
+        return JSONResponse({"error": "Payload too large"}, status_code=413)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+    enrollment_token = body.get("enrollment_token", "")
+    hostname = (body.get("hostname") or "").strip()
+    platform = (body.get("platform") or "").lower()
+    hardware = body.get("hardware") or {}
+
+    if not enrollment_token:
+        return JSONResponse({"error": "enrollment_token required"}, status_code=400)
+    if not hostname:
+        return JSONResponse({"error": "hostname required"}, status_code=400)
+    if platform not in _PLATFORM_SCRIPTS:
+        return JSONResponse({"error": f"platform must be one of {sorted(_PLATFORM_SCRIPTS)}"}, status_code=400)
+    if not isinstance(hardware, dict):
+        return JSONResponse({"error": "hardware must be an object"}, status_code=400)
+
+    from localforge.enrollment import enrollment_store, worker_registry
+    record = enrollment_store().consume(enrollment_token)
+    if record is None:
+        return JSONResponse({"error": "Invalid or expired enrollment token"}, status_code=401)
+
+    try:
+        worker_id, plaintext_key = worker_registry().register(
+            hostname=hostname,
+            platform=platform,
+            hardware=hardware,
+            enrolled_by=record.get("issued_by", "admin"),
+        )
+    except ImportError:
+        return JSONResponse({"error": "bcrypt not installed — cannot register workers"}, status_code=500)
+
+    return JSONResponse({
+        "status": "registered",
+        "worker_id": worker_id,
+        "api_key": plaintext_key,
+        "role": "worker",
+        "scopes": ["mesh"],
+        "note": "Store this key securely — it is not recoverable.",
+    })
+
+
+async def api_mesh_workers_list(request: Request) -> JSONResponse:
+    """Admin: list registered workers (no plaintext keys)."""
+    from localforge.auth import require_role
+    denied = require_role(request, "admin")
+    if denied is not None:
+        return denied
+    from localforge.enrollment import worker_registry
+    return JSONResponse({"workers": worker_registry().list_workers()})
+
+
+async def api_mesh_workers_revoke(request: Request) -> JSONResponse:
+    """Admin: revoke a worker's API key by worker_id."""
+    from localforge.auth import require_role
+    denied = require_role(request, "admin")
+    if denied is not None:
+        return denied
+    body = await request.json()
+    worker_id = body.get("worker_id", "")
+    if not worker_id:
+        return JSONResponse({"error": "worker_id required"}, status_code=400)
+    from localforge.enrollment import worker_registry
+    ok = worker_registry().revoke(worker_id)
+    return JSONResponse({"status": "ok" if ok else "not_found"}, status_code=200 if ok else 404)
 
 
 # ---------------------------------------------------------------------------
@@ -2194,6 +2426,11 @@ dashboard_routes = [
     # Compute mesh
     Route("/mesh/heartbeat", api_mesh_heartbeat, methods=["POST"]),
     Route("/mesh/status", api_mesh_status, methods=["GET"]),
+    Route("/mesh/enrollment-token", api_mesh_enrollment_token, methods=["POST"]),
+    Route("/mesh/install-script", api_mesh_install_script, methods=["GET"]),
+    Route("/mesh/register", api_mesh_register, methods=["POST"]),
+    Route("/mesh/workers", api_mesh_workers_list, methods=["GET"]),
+    Route("/mesh/workers/revoke", api_mesh_workers_revoke, methods=["POST"]),
     # Model sync
     Route("/sync-models", api_sync_models, methods=["POST"]),
     # Training pipeline
