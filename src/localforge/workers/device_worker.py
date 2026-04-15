@@ -24,10 +24,17 @@ import asyncio
 import logging
 import os
 import signal
+import sys
 import time
 import uuid
 
 from localforge.workers.detect import HardwareInfo, detect
+
+try:
+    import psutil  # type: ignore
+    _HAS_PSUTIL = True
+except ImportError:  # pragma: no cover — worker dep group
+    _HAS_PSUTIL = False
 
 log = logging.getLogger("localforge.worker")
 
@@ -89,14 +96,23 @@ class LlamaServerManager:
 
     def _auto_ctx_size(self) -> int:
         """Pick a ctx_size that fits in available RAM."""
-        try:
-            with open("/proc/meminfo") as f:
-                for line in f:
-                    if line.startswith("MemAvailable:"):
-                        avail_mb = int(line.split()[1]) // 1024
-                        return min(8192, max(2048, (avail_mb - 2000) // 2))
-        except Exception:
-            pass
+        avail_mb = 0
+        if _HAS_PSUTIL:
+            try:
+                avail_mb = psutil.virtual_memory().available // (1024 * 1024)
+            except Exception:
+                pass
+        if avail_mb == 0:
+            try:
+                with open("/proc/meminfo") as f:
+                    for line in f:
+                        if line.startswith("MemAvailable:"):
+                            avail_mb = int(line.split()[1]) // 1024
+                            break
+            except Exception:
+                pass
+        if avail_mb:
+            return min(8192, max(2048, (avail_mb - 2000) // 2))
         return 4096
 
     async def start(self) -> bool:
@@ -472,31 +488,52 @@ def system_metrics() -> dict:
         "uptime_s": int(time.time() - _start_time),
     }
 
-    # CPU load average
+    # CPU load — getloadavg is POSIX-only; psutil provides it on Windows too
+    # by sampling CPU percent over a rolling window.
     try:
-        load1, load5, load15 = os.getloadavg()
+        if hasattr(psutil, "getloadavg") if _HAS_PSUTIL else False:
+            load1, load5, load15 = psutil.getloadavg()
+        else:
+            load1, load5, load15 = os.getloadavg()
         metrics["cpu_load"] = {"1m": round(load1, 2), "5m": round(load5, 2), "15m": round(load15, 2)}
-    except OSError:
-        pass
+    except (OSError, AttributeError):
+        # Pure-Windows with old psutil — synthesize from instantaneous CPU%.
+        if _HAS_PSUTIL:
+            try:
+                pct = psutil.cpu_percent(interval=None) / 100 * (os.cpu_count() or 1)
+                metrics["cpu_load"] = {"1m": round(pct, 2), "5m": round(pct, 2), "15m": round(pct, 2)}
+            except Exception:
+                pass
 
-    # Memory usage from /proc/meminfo
-    try:
-        with open("/proc/meminfo") as f:
-            meminfo = {}
-            for line in f:
-                parts = line.split()
-                if len(parts) >= 2:
-                    meminfo[parts[0].rstrip(":")] = int(parts[1])
-            total = meminfo.get("MemTotal", 0)
-            avail = meminfo.get("MemAvailable", 0)
-            if total:
-                metrics["ram"] = {
-                    "total_mb": total // 1024,
-                    "available_mb": avail // 1024,
-                    "used_pct": round((1 - avail / total) * 100, 1),
-                }
-    except Exception:
-        pass
+    # Memory — psutil is cross-platform; /proc/meminfo is the Linux/Android fallback
+    if _HAS_PSUTIL:
+        try:
+            vm = psutil.virtual_memory()
+            metrics["ram"] = {
+                "total_mb": vm.total // (1024 * 1024),
+                "available_mb": vm.available // (1024 * 1024),
+                "used_pct": round(vm.percent, 1),
+            }
+        except Exception:
+            pass
+    if "ram" not in metrics:
+        try:
+            with open("/proc/meminfo") as f:
+                meminfo = {}
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        meminfo[parts[0].rstrip(":")] = int(parts[1])
+                total = meminfo.get("MemTotal", 0)
+                avail = meminfo.get("MemAvailable", 0)
+                if total:
+                    metrics["ram"] = {
+                        "total_mb": total // 1024,
+                        "available_mb": avail // 1024,
+                        "used_pct": round((1 - avail / total) * 100, 1),
+                    }
+        except Exception:
+            pass
 
     # GPU metrics via nvidia-smi
     try:
@@ -518,8 +555,8 @@ def system_metrics() -> dict:
     except Exception:
         pass
 
-    # macOS memory (fallback when /proc/meminfo doesn't exist)
-    if "ram" not in metrics:
+    # macOS memory (final fallback for environments without psutil or /proc)
+    if "ram" not in metrics and sys.platform == "darwin":
         try:
             import subprocess
             result = subprocess.run(
@@ -832,7 +869,15 @@ def main():
                         help="Minimum available RAM in MB to accept tasks (default: 500)")
     parser.add_argument("--battery-floor", type=int, default=15,
                         help="Minimum battery %% to accept tasks when not charging (default: 15)")
+    parser.add_argument("--platform", type=str, default="auto",
+                        choices=["auto", "linux", "darwin", "win32", "android"],
+                        help="Override auto-detected platform (default: auto)")
     args = parser.parse_args()
+
+    # Platform override — written to HardwareInfo after detect() runs.
+    # Primarily for testing and for devices where autodetect gets confused
+    # (e.g., a Chromebook crouton env that looks linux-ish but needs android routing).
+    _platform_override = args.platform if args.platform != "auto" else ""
 
     _worker_port = args.port
     _max_concurrent = args.max_concurrent
@@ -846,8 +891,10 @@ def main():
 
     # Detect and log hardware
     hw = get_hardware()
+    if _platform_override:
+        hw.platform = _platform_override
     print(f"LocalForge Worker starting on :{args.port}")
-    print(f"  Platform: {hw.platform}")
+    print(f"  Platform: {hw.platform}{' (override)' if _platform_override else ''}")
     print(f"  GPU: {hw.gpu_name or 'none'} ({hw.gpu_type})")
     print(f"  VRAM: {hw.vram_mb} MB | RAM: {hw.ram_mb} MB | CPU: {hw.cpu_cores} cores")
     print(f"  Tier: {hw.tier()}")

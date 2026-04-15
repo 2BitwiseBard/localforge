@@ -1,15 +1,27 @@
 """Hardware auto-detection for compute mesh worker agents.
 
 Detects GPU, RAM, CPU, and available capabilities.
-Supports: NVIDIA, Apple Silicon, Adreno (Android), AMD Radeon, Vulkan fallback.
+Supports: NVIDIA, Apple Silicon (MLX-aware), Adreno (Android/Termux),
+AMD Radeon (Linux + macOS Intel), Intel/AMD on Windows (via WMI),
+Vulkan fallback.
+
+RAM/battery/thermal use psutil when available (cross-platform) with
+OS-specific raw-file fallbacks for environments without psutil.
 """
 
+import importlib.util
 import os
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from typing import Optional
+
+try:
+    import psutil  # type: ignore
+    _HAS_PSUTIL = True
+except ImportError:  # pragma: no cover - psutil is listed as worker dep
+    _HAS_PSUTIL = False
 
 
 # Adreno GPU → estimated usable VRAM (MB) for inference
@@ -47,6 +59,8 @@ class HardwareInfo:
     stt: bool = False
     vision: bool = False
     max_model_params: int = 0      # Estimated max model size (B)
+    # Backend hints
+    mlx_available: bool = False    # Apple Silicon — prefer MLX over llama.cpp
     # Thermal/battery (mobile + laptop)
     battery_pct: int = -1          # -1 = not available
     battery_charging: bool = False
@@ -98,6 +112,7 @@ class HardwareInfo:
             "stt": self.stt,
             "vision": self.vision,
             "max_model_params": self.max_model_params,
+            "mlx_available": self.mlx_available,
             "battery_pct": self.battery_pct,
             "battery_charging": self.battery_charging,
             "thermal_throttled": self.thermal_throttled,
@@ -130,26 +145,36 @@ def detect() -> HardwareInfo:
     info.cpu_cores = os.cpu_count() or 1
 
     # --- Android / Termux ---
-    if os.path.exists("/data/data/com.termux"):
+    # Check both the Termux install path and the TERMUX_VERSION env var
+    # (set automatically inside any Termux shell).
+    if os.path.exists("/data/data/com.termux") or os.environ.get("TERMUX_VERSION"):
         info.platform = "android"
 
     # --- RAM ---
-    try:
-        if info.platform in ("linux", "android"):
-            with open("/proc/meminfo") as f:
-                for line in f:
-                    if line.startswith("MemTotal:"):
-                        info.ram_mb = int(line.split()[1]) // 1024
-                        break
-        elif sys.platform == "darwin":
-            result = subprocess.run(
-                ["sysctl", "-n", "hw.memsize"],
-                capture_output=True, text=True,
-            )
-            if result.returncode == 0:
-                info.ram_mb = int(result.stdout.strip()) // (1024 * 1024)
-    except Exception:
-        pass
+    # Prefer psutil (cross-platform, no subprocess cost) and fall back to
+    # raw filesystem/subprocess on environments where psutil isn't installed.
+    if _HAS_PSUTIL:
+        try:
+            info.ram_mb = psutil.virtual_memory().total // (1024 * 1024)
+        except Exception:
+            pass
+    if info.ram_mb == 0:
+        try:
+            if info.platform in ("linux", "android"):
+                with open("/proc/meminfo") as f:
+                    for line in f:
+                        if line.startswith("MemTotal:"):
+                            info.ram_mb = int(line.split()[1]) // 1024
+                            break
+            elif sys.platform == "darwin":
+                result = subprocess.run(
+                    ["sysctl", "-n", "hw.memsize"],
+                    capture_output=True, text=True,
+                )
+                if result.returncode == 0:
+                    info.ram_mb = int(result.stdout.strip()) // (1024 * 1024)
+        except Exception:
+            pass
 
     # --- NVIDIA GPU ---
     try:
@@ -185,6 +210,10 @@ def detect() -> HardwareInfo:
                 info.inference = True
                 info.vision = info.ram_mb >= 16000
                 info.max_model_params = _estimate_max_params(int(info.ram_mb * 0.7))
+                # MLX is the preferred inference backend on Apple Silicon.
+                # Detect without importing (side effects on first import can
+                # spawn a Metal context); bootstrapper records the choice.
+                info.mlx_available = importlib.util.find_spec("mlx") is not None
         except Exception:
             pass
 
@@ -288,6 +317,35 @@ def detect() -> HardwareInfo:
         except Exception:
             pass
 
+    # --- Windows GPU (AMD/Intel via WMI; NVIDIA already handled via nvidia-smi) ---
+    if info.gpu_type == "none" and sys.platform == "win32":
+        try:
+            import wmi  # type: ignore
+            c = wmi.WMI()
+            for gpu in c.Win32_VideoController():
+                name = (gpu.Name or "").strip()
+                if not name:
+                    continue
+                lname = name.lower()
+                if "amd" in lname or "radeon" in lname:
+                    info.gpu_type = "amd"
+                elif "intel" in lname:
+                    info.gpu_type = "intel"
+                else:
+                    continue
+                info.gpu_name = name
+                # AdapterRAM is in bytes; unreliable above 4 GB on 32-bit WMI.
+                adapter_ram = getattr(gpu, "AdapterRAM", 0) or 0
+                info.vram_mb = max(1024, int(adapter_ram) // (1024 * 1024))
+                info.inference = info.gpu_type == "amd" and info.vram_mb >= 4000
+                info.vision = info.vram_mb >= 8000
+                info.max_model_params = _estimate_max_params(info.vram_mb)
+                break
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
     # --- Vulkan fallback ---
     if info.gpu_type == "none" and shutil.which("vulkaninfo"):
         try:
@@ -340,25 +398,40 @@ def detect() -> HardwareInfo:
 
 
 def _detect_thermal_battery(info: HardwareInfo) -> None:
-    """Populate battery and thermal fields."""
-    # Linux / Android battery
-    for bat_path in ["/sys/class/power_supply/battery",
-                     "/sys/class/power_supply/BAT0",
-                     "/sys/class/power_supply/BAT1"]:
-        cap_file = os.path.join(bat_path, "capacity")
-        status_file = os.path.join(bat_path, "status")
-        if os.path.exists(cap_file):
-            try:
-                with open(cap_file) as f:
-                    info.battery_pct = int(f.read().strip())
-                if os.path.exists(status_file):
-                    with open(status_file) as f:
-                        info.battery_charging = f.read().strip().lower() in ("charging", "full")
-            except Exception:
-                pass
-            break
+    """Populate battery and thermal fields.
 
-    # macOS battery
+    Tries psutil first (covers Linux/macOS/Windows), then falls back to raw
+    /sys and subprocess paths for environments without psutil.
+    """
+    # --- Battery (psutil) ---
+    if _HAS_PSUTIL and info.battery_pct == -1:
+        try:
+            batt = psutil.sensors_battery()
+            if batt is not None:
+                info.battery_pct = int(batt.percent)
+                info.battery_charging = bool(batt.power_plugged)
+        except Exception:
+            pass
+
+    # --- Battery (Linux / Android sysfs fallback) ---
+    if info.battery_pct == -1:
+        for bat_path in ["/sys/class/power_supply/battery",
+                         "/sys/class/power_supply/BAT0",
+                         "/sys/class/power_supply/BAT1"]:
+            cap_file = os.path.join(bat_path, "capacity")
+            status_file = os.path.join(bat_path, "status")
+            if os.path.exists(cap_file):
+                try:
+                    with open(cap_file) as f:
+                        info.battery_pct = int(f.read().strip())
+                    if os.path.exists(status_file):
+                        with open(status_file) as f:
+                            info.battery_charging = f.read().strip().lower() in ("charging", "full")
+                except Exception:
+                    pass
+                break
+
+    # --- Battery (macOS pmset fallback) ---
     if sys.platform == "darwin" and info.battery_pct == -1:
         try:
             result = subprocess.run(
@@ -366,9 +439,7 @@ def _detect_thermal_battery(info: HardwareInfo) -> None:
                 capture_output=True, text=True,
             )
             if result.returncode == 0:
-                output = result.stdout
-                # Parse "InternalBattery-0 (id=...)	85%; charging;"
-                for line in output.splitlines():
+                for line in result.stdout.splitlines():
                     if "InternalBattery" in line:
                         parts = line.split("\t")
                         if len(parts) >= 2:
@@ -381,20 +452,36 @@ def _detect_thermal_battery(info: HardwareInfo) -> None:
         except Exception:
             pass
 
-    # Thermal throttling (Linux / Android)
-    thermal_zones = "/sys/class/thermal"
-    if os.path.isdir(thermal_zones):
+    # --- Thermal throttling (psutil sensors_temperatures) ---
+    if _HAS_PSUTIL and not info.thermal_throttled:
         try:
-            for tz in os.listdir(thermal_zones):
-                temp_file = os.path.join(thermal_zones, tz, "temp")
-                if os.path.exists(temp_file):
-                    with open(temp_file) as f:
-                        temp_mc = int(f.read().strip())  # millidegrees C
-                        if temp_mc > 45000:  # >45°C
-                            info.thermal_throttled = True
-                            break
+            temps = getattr(psutil, "sensors_temperatures", lambda: {})()
+            for readings in (temps or {}).values():
+                for reading in readings:
+                    current = getattr(reading, "current", 0) or 0
+                    if current > 85:  # °C — broad throttle threshold for CPU/GPU sensors
+                        info.thermal_throttled = True
+                        break
+                if info.thermal_throttled:
+                    break
         except Exception:
             pass
+
+    # --- Thermal (Linux / Android /sys fallback) ---
+    if not info.thermal_throttled:
+        thermal_zones = "/sys/class/thermal"
+        if os.path.isdir(thermal_zones):
+            try:
+                for tz in os.listdir(thermal_zones):
+                    temp_file = os.path.join(thermal_zones, tz, "temp")
+                    if os.path.exists(temp_file):
+                        with open(temp_file) as f:
+                            temp_mc = int(f.read().strip())  # millidegrees C
+                            if temp_mc > 45000:  # >45°C
+                                info.thermal_throttled = True
+                                break
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

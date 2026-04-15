@@ -72,9 +72,15 @@ media = [
     "Pillow~=10.0",
 ]
 
+# Device worker (mesh compute node)
+worker = [
+    "psutil~=5.9",
+    "wmi~=1.5 ; sys_platform == 'win32'",
+]
+
 # All optional features
 all = [
-    "localforge[gateway,embeddings,search,agents,web,media,auth]",
+    "localforge[gateway,embeddings,search,agents,web,media,auth,worker]",
 ]
 
 # Development tools
