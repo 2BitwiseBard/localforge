@@ -481,27 +481,40 @@
 
   <!-- Workflows Tab -->
   <section id="tab-workflows" class="tab-content" role="tabpanel" aria-label="Workflows">
-    <div class="card">
-      <h2>Workflow Engine</h2>
-      <p class="agent-subtitle">DAG-based workflows with parallel execution, conditions, and loops.</p>
-      <div class="workflow-controls">
-        <button id="wf-new-btn" class="btn-primary">New Workflow</button>
-        <button id="wf-executions-btn" class="btn-small">Executions</button>
-      </div>
-      <div id="workflow-list">Loading...</div>
+    <div class="wf-toolbar card">
+      <select id="wf-select" class="wf-select" aria-label="Select workflow"><option value="">Loading&hellip;</option></select>
+      <input type="text" id="wf-name" class="wf-name-input" placeholder="Workflow name" aria-label="Workflow name">
+      <button id="wf-new-btn" class="btn-primary" title="Create a blank workflow">+ New</button>
+      <button id="wf-save-btn" class="btn-primary" title="Save to data_dir/pipelines/workflows/">Save</button>
+      <button id="wf-run-btn" class="btn-small" title="Run the current workflow">&#9654; Run</button>
+      <button id="wf-delete-btn" class="btn-small" title="Delete this workflow">&#128465; Delete</button>
+      <span id="wf-status" class="config-status"></span>
+      <button id="wf-executions-btn" class="btn-small" title="Recent executions">Executions</button>
     </div>
-    <div class="card" id="wf-editor-card" style="display:none">
-      <h2>Workflow Editor</h2>
-      <textarea id="wf-editor" class="wf-editor" rows="15" placeholder="Paste workflow YAML here..."></textarea>
-      <div class="wf-editor-actions">
-        <button id="wf-save-btn" class="btn-primary">Save</button>
-        <button id="wf-run-btn" class="btn-secondary">Run</button>
-        <input type="text" id="wf-input" placeholder="Initial input..." class="wf-input">
-        <span id="wf-status" class="config-status"></span>
+    <div class="wf-editor-grid">
+      <aside id="wf-palette" class="wf-palette card" aria-label="Node palette">
+        <h3 class="wf-panel-h">Palette</h3>
+        <p class="param-subtitle">Click a node type to add it to the canvas.</p>
+        <div id="wf-palette-body">Loading&hellip;</div>
+      </aside>
+      <div class="wf-canvas-wrap card">
+        <h3 class="wf-panel-h">Canvas</h3>
+        <p class="param-subtitle">Click a node to inspect it. Drag to reposition.</p>
+        <svg id="wf-canvas" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Workflow canvas"></svg>
+        <div id="wf-canvas-empty" class="empty-state" hidden>Pick a workflow from the dropdown or click <strong>+ New</strong> to start.</div>
       </div>
+      <aside id="wf-inspector" class="wf-inspector card" aria-label="Node inspector">
+        <h3 class="wf-panel-h">Inspector</h3>
+        <div id="wf-inspector-body">
+          <div class="loading-placeholder">Select a node to edit its config.</div>
+        </div>
+      </aside>
     </div>
     <div class="card" id="wf-execution-card" style="display:none">
-      <h2>Execution Monitor</h2>
+      <div class="card-header-row">
+        <h2>Executions</h2>
+        <button id="wf-executions-close" class="btn-small">Close</button>
+      </div>
       <div id="wf-execution-detail"></div>
     </div>
   </section>
@@ -691,5 +704,6 @@
 </div>
 
 <script src="/static/app.js"></script>
+<script type="module" src="/static/js/workflow_editor.js"></script>
 </body>
 </html>

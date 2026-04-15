@@ -1700,6 +1700,45 @@ async def api_workflow_run(request: Request) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+async def api_workflow_create(request: Request) -> JSONResponse:
+    """POST /api/workflows — create or upsert. Auto-generates id if absent."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid_json"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "object_required"}, status_code=400)
+    wf_id = body.get("id") or uuid.uuid4().hex[:12]
+    body["id"] = wf_id
+    body.setdefault("name", "Untitled workflow")
+    body.setdefault("description", "")
+    body.setdefault("nodes", [])
+    body.setdefault("edges", [])
+    body.setdefault("variables", {})
+    body["updated_at"] = time.time()
+    body.setdefault("created_at", body["updated_at"])
+    wf_path = _get_workflow_dir() / f"{wf_id}.json"
+    wf_path.write_text(json.dumps(body, indent=2))
+    return JSONResponse({"id": wf_id, "workflow": body})
+
+
+async def api_workflow_delete(request: Request) -> JSONResponse:
+    wf_id = request.path_params.get("workflow_id", "")
+    if not wf_id or "/" in wf_id or ".." in wf_id:
+        return JSONResponse({"error": "invalid_id"}, status_code=400)
+    wf_path = _get_workflow_dir() / f"{wf_id}.json"
+    if not wf_path.exists():
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    wf_path.unlink()
+    return JSONResponse({"id": wf_id, "status": "deleted"})
+
+
+async def api_workflow_node_specs(request: Request) -> JSONResponse:
+    """Returns the per-node-type form schemas the visual editor renders."""
+    from localforge.workflows.node_specs import NODE_SPECS, categories
+    return JSONResponse({"specs": NODE_SPECS, "categories": categories()})
+
+
 async def api_workflow_executions(request: Request) -> JSONResponse:
     from localforge.workflows.engine import list_executions
     return JSONResponse({"executions": list_executions()})
@@ -2457,11 +2496,14 @@ dashboard_routes = [
     Route("/research/start", api_research_start, methods=["POST"]),
     # Workflows
     Route("/workflows", api_workflows_list, methods=["GET"]),
+    Route("/workflows", api_workflow_create, methods=["POST"]),
+    Route("/workflows/node-specs", api_workflow_node_specs, methods=["GET"]),
     Route("/workflows/run", api_workflow_run, methods=["POST"]),
     Route("/workflows/executions", api_workflow_executions, methods=["GET"]),
     Route("/workflows/executions/{execution_id}", api_workflow_execution_get, methods=["GET"]),
     Route("/workflows/{workflow_id}", api_workflow_get, methods=["GET"]),
     Route("/workflows/{workflow_id}", api_workflow_save, methods=["PUT"]),
+    Route("/workflows/{workflow_id}", api_workflow_delete, methods=["DELETE"]),
     # KG graph visualization
     Route("/kg/graph", api_kg_graph, methods=["POST"]),
     # Approval queue

@@ -86,7 +86,7 @@ function activateTab(tabName) {
   if (tabName === 'media') loadPhotos();
   if (tabName === 'config') { loadGenParams(); loadPresets(); loadLoras(); }
   if (tabName === 'research') loadResearchSessions();
-  if (tabName === 'workflows') loadWorkflows();
+  if (tabName === 'workflows') window.__wfEditor?.onTabOpen();
   if (tabName === 'mesh') loadMeshTab();
   // Close mobile sidebar + "more" sheet after navigation
   document.getElementById('sidebar')?.classList.remove('open');
@@ -2097,87 +2097,9 @@ document.getElementById('research-start-btn')?.addEventListener('click', async()
 });
 
 // =====================================================================
-// Workflows
+// Workflows — visual editor lives in /static/js/workflow_editor.js (ES module).
+// The activateTab handler above calls window.__wfEditor.onTabOpen().
 // =====================================================================
-async function loadWorkflows() {
-  const el = document.getElementById('workflow-list');
-  try {
-    const data = await authFetch(API+'/workflows').then(r=>r.json());
-    const wfs = data.workflows||[];
-    if(!wfs.length){el.innerHTML='<div class="empty-state">No workflows defined. Create one!</div>';return;}
-    el.innerHTML = wfs.map(w=>`
-      <div class="workflow-item" data-id="${escapeAttr(w.id)}">
-        <div class="workflow-name">${escapeHtml(w.name)}</div>
-        <div class="workflow-desc">${escapeHtml((w.description||'').substring(0,100))}</div>
-        <div class="workflow-meta">${w.node_count||0} nodes</div>
-      </div>
-    `).join('');
-    el.querySelectorAll('.workflow-item').forEach(item=>{
-      item.addEventListener('click',async()=>{
-        try{
-          const data=await authFetch(API+'/workflows/'+item.dataset.id).then(r=>r.json());
-          document.getElementById('wf-editor-card').style.display='block';
-          document.getElementById('wf-editor').value=JSON.stringify(data.workflow,null,2);
-        }catch(e){showToast('Failed to load workflow','error');}
-      });
-    });
-  } catch(e) { el.innerHTML='<div class="error-msg">'+e.message+'</div>'; }
-}
-
-document.getElementById('wf-new-btn')?.addEventListener('click',()=>{
-  document.getElementById('wf-editor-card').style.display='block';
-  document.getElementById('wf-editor').value=JSON.stringify({
-    id:'',name:'New Workflow',description:'',
-    nodes:[{id:'start',type:'prompt',config:{template:'{input}',system:''}}],
-    edges:[],variables:{}
-  },null,2);
-});
-
-document.getElementById('wf-save-btn')?.addEventListener('click',async()=>{
-  const status=document.getElementById('wf-status');
-  try{
-    const wf=JSON.parse(document.getElementById('wf-editor').value);
-    const data=await authFetch(API+'/workflows',{method:'POST',headers:{'Content-Type':'application/json',...authHeaders()},body:JSON.stringify(wf)}).then(r=>r.json());
-    if(data.error){status.textContent=data.error;status.className='config-status config-status-error';}
-    else{status.textContent='Saved!';status.className='config-status config-status-ok';loadWorkflows();}
-  }catch(e){status.textContent='Invalid JSON';status.className='config-status config-status-error';}
-});
-
-document.getElementById('wf-run-btn')?.addEventListener('click',async()=>{
-  const status=document.getElementById('wf-status');
-  try{
-    const wf=JSON.parse(document.getElementById('wf-editor').value);
-    const input=document.getElementById('wf-input').value.trim();
-    status.textContent='Running...';status.className='config-status';
-    const data=await authFetch(API+'/workflows/run',{method:'POST',headers:{'Content-Type':'application/json',...authHeaders()},body:JSON.stringify({workflow:wf,initial_input:input})}).then(r=>r.json());
-    if(data.error){status.textContent=data.error;status.className='config-status config-status-error';}
-    else{
-      status.textContent='Running: '+data.execution_id;status.className='config-status config-status-ok';
-      setTimeout(()=>loadExecutionDetail(data.execution_id),3000);
-    }
-  }catch(e){status.textContent='Error: '+e.message;status.className='config-status config-status-error';}
-});
-
-document.getElementById('wf-executions-btn')?.addEventListener('click',async()=>{
-  const card=document.getElementById('wf-execution-card');
-  card.style.display='block';
-  const el=document.getElementById('wf-execution-detail');
-  el.innerHTML='<div class="loading">Loading...</div>';
-  try{
-    const data=await authFetch(API+'/workflows/executions').then(r=>r.json());
-    const execs=data.executions||[];
-    if(!execs.length){el.innerHTML='<div class="empty-state">No executions yet</div>';return;}
-    el.innerHTML=execs.map(e=>`
-      <div class="exec-item exec-${e.status}" onclick="loadExecutionDetail('${e.execution_id}')">
-        <span class="exec-id">${e.execution_id}</span>
-        <span class="badge badge-${e.status}">${e.status}</span>
-        <span>${e.node_count} nodes</span>
-        <span>${timeAgo(e.started_at)}</span>
-      </div>
-    `).join('');
-  }catch(e){el.innerHTML='<div class="error-msg">'+e.message+'</div>';}
-});
-
 async function loadExecutionDetail(execId) {
   const card=document.getElementById('wf-execution-card');
   card.style.display='block';
