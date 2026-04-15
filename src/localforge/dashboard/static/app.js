@@ -68,23 +68,82 @@ async function initUser() {
 }
 
 // =====================================================================
-// Tabs
+// Tabs — supports desktop sidebar, mobile bottom bar, and "more" sheet.
+// Any button with [data-tab="foo"] toggles the active tab; all buttons
+// sharing the same data-tab stay visually synced.
 // =====================================================================
-document.querySelectorAll('.tab').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-    const tab = btn.dataset.tab;
-    if (tab === 'search') { loadIndexes(); loadIndexMgmt(); }
-    if (tab === 'knowledge') loadKGStats();
-    if (tab === 'media') loadPhotos();
-    if (tab === 'config') { loadGenParams(); loadPresets(); loadLoras(); }
-    if (tab === 'research') loadResearchSessions();
-    if (tab === 'workflows') loadWorkflows();
+function activateTab(tabName) {
+  if (!tabName) return;
+  document.querySelectorAll('.tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tabName);
   });
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  const panel = document.getElementById('tab-' + tabName);
+  if (panel) panel.classList.add('active');
+  // Lazy-loaders per tab
+  if (tabName === 'search') { loadIndexes(); loadIndexMgmt(); }
+  if (tabName === 'knowledge') loadKGStats();
+  if (tabName === 'media') loadPhotos();
+  if (tabName === 'config') { loadGenParams(); loadPresets(); loadLoras(); }
+  if (tabName === 'research') loadResearchSessions();
+  if (tabName === 'workflows') loadWorkflows();
+  if (tabName === 'mesh') loadMeshTab();
+  // Close mobile sidebar + "more" sheet after navigation
+  document.getElementById('sidebar')?.classList.remove('open');
+  document.getElementById('sidebar-backdrop')?.setAttribute('hidden', '');
+  const sheet = document.getElementById('mobile-more-sheet');
+  if (sheet) sheet.hidden = true;
+}
+
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.tab[data-tab]');
+  if (btn) {
+    activateTab(btn.dataset.tab);
+    return;
+  }
+  const moreBtn = e.target.closest('#mobile-more-btn');
+  if (moreBtn) {
+    const sheet = document.getElementById('mobile-more-sheet');
+    if (sheet) sheet.hidden = !sheet.hidden;
+    return;
+  }
+  const collapse = e.target.closest('#sidebar-collapse-btn');
+  if (collapse) {
+    document.body.classList.toggle('sidebar-collapsed');
+    try { localStorage.setItem('sidebar-collapsed', document.body.classList.contains('sidebar-collapsed') ? '1' : '0'); } catch {}
+    return;
+  }
+  const mobileToggle = e.target.closest('#sidebar-mobile-toggle');
+  if (mobileToggle) {
+    document.getElementById('sidebar')?.classList.toggle('open');
+    const bd = document.getElementById('sidebar-backdrop');
+    if (bd) bd.hidden = !document.getElementById('sidebar').classList.contains('open');
+    return;
+  }
+  if (e.target.id === 'sidebar-backdrop') {
+    document.getElementById('sidebar')?.classList.remove('open');
+    e.target.hidden = true;
+    return;
+  }
 });
+
+// Keyboard shortcuts: 1-9 / 0 / - to jump tabs
+const _TAB_ORDER = ['status','chat','search','mesh','media','config','agents','research','workflows','training','notes','knowledge'];
+document.addEventListener('keydown', (e) => {
+  if (e.target.matches('input, textarea, select, [contenteditable]')) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const idx = '123456789'.indexOf(e.key);
+  if (idx >= 0 && idx < _TAB_ORDER.length) { activateTab(_TAB_ORDER[idx]); e.preventDefault(); }
+  else if (e.key === '0' && _TAB_ORDER[9]) { activateTab(_TAB_ORDER[9]); e.preventDefault(); }
+  else if (e.key === '-' && _TAB_ORDER[10]) { activateTab(_TAB_ORDER[10]); e.preventDefault(); }
+});
+
+// Restore persisted collapsed state
+try {
+  if (localStorage.getItem('sidebar-collapsed') === '1') {
+    document.body.classList.add('sidebar-collapsed');
+  }
+} catch {}
 
 // =====================================================================
 // Status + GPU Metrics
@@ -246,47 +305,310 @@ function meshStatusPill(w) {
   return '<span class="status-pill ok">online</span>';
 }
 
-async function loadMeshStatus() {
-  const el = document.getElementById('mesh-info');
+// Cached worker list so loadMeshStatus + loadMeshTab share data.
+let _meshCache = { workers: [], fetchedAt: 0 };
+
+async function fetchMeshWorkers() {
   try {
     const data = await authFetch(API + '/mesh/status').then(r => r.json());
-    const workers = data.workers || [];
-    if (workers.length === 0) {
-      el.innerHTML = `<div class="empty-state">
-        No worker nodes yet. Click <strong>+ Add Node</strong> above to enroll one.
-      </div>`;
-      return;
-    }
-    const rows = workers.map(w => {
-      const caps = w.capabilities || {};
-      const vram = caps.vram_mb ? `${(caps.vram_mb / 1024).toFixed(1)} GB` : '—';
-      const tasks = (typeof w.active_tasks === 'number')
-        ? `${w.active_tasks}/${(w.stats?.tasks_completed || 0)}`
-        : '—';
-      const hb = (typeof w.heartbeat_age_s === 'number')
-        ? `${w.heartbeat_age_s}s ago`
-        : (w.last_seen ? `${Math.round((Date.now() / 1000) - w.last_seen)}s ago` : '—');
-      const name = w.hostname || w.worker_id || 'unknown';
-      const platform = w.platform || (caps.platform) || 'unknown';
-      return `<tr>
-        <td><span class="platform-icon" title="${platform}">${platformGlyph(platform)}</span> ${name}</td>
-        <td>${w.tier || caps.tier || '—'}</td>
-        <td>${vram}</td>
-        <td>${tasks}</td>
-        <td>${hb}</td>
-        <td class="col-status">${meshStatusPill(w)}</td>
-      </tr>`;
-    }).join('');
-    el.innerHTML = `<table class="mesh-table">
-      <thead>
-        <tr><th>Node</th><th>Tier</th><th>VRAM</th><th>Tasks</th><th>Heartbeat</th><th>Status</th></tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>`;
-  } catch(e) {
-    el.textContent = 'Mesh status unavailable';
+    _meshCache = { workers: data.workers || [], fetchedAt: Date.now() };
+    return _meshCache.workers;
+  } catch (e) {
+    return null;
   }
 }
+
+function _fmtHeartbeat(w) {
+  if (typeof w.heartbeat_age_s === 'number') return `${w.heartbeat_age_s}s ago`;
+  if (w.last_seen) return `${Math.round((Date.now() / 1000) - w.last_seen)}s ago`;
+  return '—';
+}
+
+async function loadMeshStatus() {
+  // Compact summary for the Status tab: hub + worker count + top 3 by tier.
+  const el = document.getElementById('mesh-summary');
+  if (!el) return;
+  const workers = await fetchMeshWorkers();
+  if (workers === null) { el.textContent = 'Mesh status unavailable'; return; }
+  if (workers.length === 0) {
+    el.innerHTML = `<div class="empty-state">
+      No workers yet. Open the <a href="#" data-tab="mesh">Mesh</a> tab to enroll one.
+    </div>`;
+    return;
+  }
+  const online = workers.filter(w => !w.offline && (typeof w.heartbeat_age_s !== 'number' || w.heartbeat_age_s < 60)).length;
+  const chips = workers.slice(0, 6).map(w => {
+    const platform = w.platform || (w.capabilities?.platform) || 'unknown';
+    const name = w.hostname || w.worker_id || 'unknown';
+    return `<span class="mesh-chip" title="${name}">${platformGlyph(platform)} ${name}</span>`;
+  }).join('');
+  el.innerHTML = `
+    <div class="mesh-summary-row">
+      <div class="stat-tile">
+        <div class="stat-tile-num">${online}/${workers.length}</div>
+        <div class="stat-tile-label">workers online</div>
+      </div>
+      <div class="mesh-chips">${chips}</div>
+    </div>`;
+}
+
+async function loadMeshTab() {
+  const el = document.getElementById('mesh-workers-table');
+  if (!el) return;
+  el.innerHTML = '<div class="loading-placeholder">Loading workers&hellip;</div>';
+  const workers = await fetchMeshWorkers();
+  if (workers === null) { el.textContent = 'Mesh status unavailable'; return; }
+  if (workers.length === 0) {
+    el.innerHTML = `<div class="empty-state">
+      No worker nodes yet. Click <strong>+ Add Node</strong> to enroll one.
+    </div>`;
+    renderMeshTopology([]);
+    return;
+  }
+  const rows = workers.map(w => {
+    const caps = w.capabilities || {};
+    const vram = caps.vram_mb ? `${(caps.vram_mb / 1024).toFixed(1)} GB` : '—';
+    const tasks = (typeof w.active_tasks === 'number')
+      ? `${w.active_tasks}/${(w.stats?.tasks_completed || 0)}`
+      : '—';
+    const name = w.hostname || w.worker_id || 'unknown';
+    const platform = w.platform || caps.platform || 'unknown';
+    const nickname = (w.config?.nickname) ? ` <span class="mesh-nickname">(${escapeHtml(w.config.nickname)})</span>` : '';
+    return `<tr class="mesh-row" data-worker-id="${encodeURIComponent(w.worker_id)}">
+      <td><span class="platform-icon" title="${platform}">${platformGlyph(platform)}</span> ${escapeHtml(name)}${nickname}</td>
+      <td>${w.tier || caps.tier || '—'}</td>
+      <td>${vram}</td>
+      <td>${tasks}</td>
+      <td>${_fmtHeartbeat(w)}</td>
+      <td class="col-status">${meshStatusPill(w)}</td>
+      <td><button class="btn-small mesh-detail-btn" data-worker-id="${encodeURIComponent(w.worker_id)}">Details</button></td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = `<table class="mesh-table mesh-table-full">
+    <thead>
+      <tr><th>Node</th><th>Tier</th><th>VRAM</th><th>Tasks</th><th>Heartbeat</th><th>Status</th><th></th></tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+  renderMeshTopology(workers);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ---------------------------------------------------------------------------
+// Topology SVG: hub center, workers on a circle, line for each edge.
+// ---------------------------------------------------------------------------
+function renderMeshTopology(workers) {
+  const svg = document.getElementById('mesh-topology');
+  if (!svg) return;
+  const cx = 300, cy = 160, rHub = 28;
+  if (!workers.length) {
+    svg.innerHTML = `<circle cx="${cx}" cy="${cy}" r="${rHub}" class="topo-hub"/>
+      <text x="${cx}" y="${cy + 4}" text-anchor="middle" class="topo-hub-label">hub</text>
+      <text x="${cx}" y="${cy + 70}" text-anchor="middle" class="topo-empty">No workers connected</text>`;
+    return;
+  }
+  const radius = Math.min(120 + workers.length * 6, 240);
+  const count = workers.length;
+  const parts = [];
+  // edges first so nodes draw on top
+  workers.forEach((w, i) => {
+    const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
+    const x = cx + Math.cos(angle) * radius;
+    const y = cy + Math.sin(angle) * radius;
+    const status = meshStatusClass(w);
+    parts.push(`<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" class="topo-edge topo-edge-${status}"/>`);
+  });
+  // hub
+  parts.push(`<circle cx="${cx}" cy="${cy}" r="${rHub}" class="topo-hub"/>`);
+  parts.push(`<text x="${cx}" y="${cy + 4}" text-anchor="middle" class="topo-hub-label">hub</text>`);
+  // nodes
+  workers.forEach((w, i) => {
+    const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
+    const x = cx + Math.cos(angle) * radius;
+    const y = cy + Math.sin(angle) * radius;
+    const status = meshStatusClass(w);
+    const name = (w.config?.nickname) || w.hostname || w.worker_id || 'node';
+    const platform = w.platform || (w.capabilities?.platform) || 'unknown';
+    const short = name.length > 14 ? name.slice(0, 13) + '…' : name;
+    parts.push(`<g class="topo-node topo-node-${status}" data-worker-id="${encodeURIComponent(w.worker_id)}">
+      <circle cx="${x}" cy="${y}" r="22"/>
+      <text x="${x}" y="${y + 4}" text-anchor="middle" class="topo-node-glyph">${platformGlyph(platform)}</text>
+      <text x="${x}" y="${y + 38}" text-anchor="middle" class="topo-node-label">${escapeHtml(short)}</text>
+    </g>`);
+  });
+  svg.innerHTML = parts.join('');
+}
+
+function meshStatusClass(w) {
+  if (w.offline) return 'offline';
+  if (typeof w.heartbeat_age_s === 'number' && w.heartbeat_age_s > 60) return 'stale';
+  return 'online';
+}
+
+// ---------------------------------------------------------------------------
+// Worker detail drawer
+// ---------------------------------------------------------------------------
+async function openMeshNodeDrawer(workerId) {
+  const drawer = document.getElementById('mesh-node-drawer');
+  const backdrop = document.getElementById('mesh-node-drawer-backdrop');
+  const body = document.getElementById('mesh-node-drawer-body');
+  if (!drawer || !body) return;
+  drawer.hidden = false;
+  drawer.setAttribute('aria-hidden', 'false');
+  if (backdrop) backdrop.hidden = false;
+  body.innerHTML = '<div class="loading-placeholder">Loading worker details&hellip;</div>';
+  try {
+    const w = await authFetch(`${API}/mesh/workers/${encodeURIComponent(workerId)}`).then(r => {
+      if (!r.ok) throw new Error('not found');
+      return r.json();
+    });
+    renderMeshNodeDrawer(w);
+  } catch (e) {
+    body.innerHTML = `<div class="error-box">Failed to load: ${escapeHtml(e.message || 'unknown error')}</div>`;
+  }
+}
+
+function closeMeshNodeDrawer() {
+  const drawer = document.getElementById('mesh-node-drawer');
+  const backdrop = document.getElementById('mesh-node-drawer-backdrop');
+  if (drawer) { drawer.hidden = true; drawer.setAttribute('aria-hidden', 'true'); }
+  if (backdrop) backdrop.hidden = true;
+}
+
+function renderMeshNodeDrawer(w) {
+  const body = document.getElementById('mesh-node-drawer-body');
+  const cfg = w.config || {};
+  const hw = w.hardware || {};
+  const caps = Array.isArray(cfg.allowed_tasks) ? cfg.allowed_tasks : [];
+  const capOptions = ['embeddings','rerank','classification','autocomplete','llm_inference','vision','tts','stt'];
+  const capBoxes = capOptions.map(c => `
+    <label class="checkbox-inline">
+      <input type="checkbox" name="allowed_tasks" value="${c}" ${caps.includes(c) ? 'checked' : ''}>
+      <span>${c}</span>
+    </label>`).join('');
+  body.innerHTML = `
+    <div class="drawer-section">
+      <div class="drawer-meta">
+        <div><strong>Worker ID:</strong> <code>${escapeHtml(w.worker_id)}</code></div>
+        <div><strong>Hostname:</strong> ${escapeHtml(w.hostname || '—')}</div>
+        <div><strong>Platform:</strong> ${platformGlyph(w.platform)} ${escapeHtml(w.platform || '—')}</div>
+        <div><strong>Role:</strong> ${escapeHtml(w.role || 'worker')}</div>
+        <div><strong>Enrolled by:</strong> ${escapeHtml(w.enrolled_by || '—')}</div>
+        <div><strong>Registered:</strong> ${w.registered_at ? new Date(w.registered_at * 1000).toLocaleString() : '—'}</div>
+        <div><strong>Last seen:</strong> ${w.last_seen ? new Date(w.last_seen * 1000).toLocaleString() : '—'}</div>
+      </div>
+      <details class="drawer-hw">
+        <summary>Hardware</summary>
+        <pre>${escapeHtml(JSON.stringify(hw, null, 2))}</pre>
+      </details>
+    </div>
+    <form class="drawer-section" id="mesh-node-config-form" data-worker-id="${encodeURIComponent(w.worker_id)}">
+      <h4>Configuration</h4>
+      <label class="param-label">Nickname</label>
+      <input type="text" name="nickname" maxlength="60" value="${escapeHtml(cfg.nickname || '')}" placeholder="friendly name">
+
+      <label class="param-label">Allowed tasks</label>
+      <div class="checkbox-grid">${capBoxes}</div>
+
+      <div class="drawer-grid">
+        <div>
+          <label class="param-label">Priority <small>(lower = preferred)</small></label>
+          <input type="number" name="priority" min="0" max="100" value="${cfg.priority ?? 50}">
+        </div>
+        <div>
+          <label class="param-label">Max concurrent</label>
+          <input type="number" name="max_concurrent" min="1" max="16" value="${cfg.max_concurrent ?? 1}">
+        </div>
+        <div>
+          <label class="param-label">Min battery %</label>
+          <input type="number" name="min_battery_pct" min="0" max="100" value="${cfg.min_battery_pct ?? 25}">
+        </div>
+      </div>
+      <div class="drawer-actions">
+        <button type="submit" class="btn-primary">Save config</button>
+        <button type="button" class="btn-small danger" id="mesh-node-revoke">Revoke worker</button>
+        <span id="mesh-node-save-status" class="param-subtitle"></span>
+      </div>
+    </form>`;
+
+  document.getElementById('mesh-node-config-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await saveMeshNodeConfig(w.worker_id, e.currentTarget);
+  });
+  document.getElementById('mesh-node-revoke').addEventListener('click', async () => {
+    if (!confirm(`Revoke worker "${w.worker_id}"? It will need to re-enroll.`)) return;
+    try {
+      const r = await authFetch(`${API}/mesh/workers/revoke`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ worker_id: w.worker_id }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      closeMeshNodeDrawer();
+      loadMeshTab();
+    } catch (err) {
+      alert('Revoke failed: ' + err.message);
+    }
+  });
+}
+
+async function saveMeshNodeConfig(workerId, form) {
+  const fd = new FormData(form);
+  const allowed = Array.from(form.querySelectorAll('input[name="allowed_tasks"]:checked')).map(i => i.value);
+  const payload = {
+    nickname: (fd.get('nickname') || '').toString().trim() || null,
+    allowed_tasks: allowed,
+    priority: Number(fd.get('priority')),
+    max_concurrent: Number(fd.get('max_concurrent')),
+    min_battery_pct: Number(fd.get('min_battery_pct')),
+  };
+  if (!payload.nickname) delete payload.nickname;
+  const status = document.getElementById('mesh-node-save-status');
+  status.textContent = 'Saving…';
+  try {
+    const r = await authFetch(`${API}/mesh/workers/${encodeURIComponent(workerId)}/config`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    status.textContent = 'Saved.';
+    setTimeout(() => status.textContent = '', 2000);
+    loadMeshTab();
+  } catch (e) {
+    status.textContent = 'Failed: ' + e.message;
+  }
+}
+
+// Click delegation for mesh table + topology nodes + drawer close.
+document.addEventListener('click', (e) => {
+  const detailBtn = e.target.closest('.mesh-detail-btn');
+  if (detailBtn) {
+    openMeshNodeDrawer(decodeURIComponent(detailBtn.dataset.workerId));
+    return;
+  }
+  const row = e.target.closest('.mesh-row');
+  if (row && !e.target.closest('button')) {
+    openMeshNodeDrawer(decodeURIComponent(row.dataset.workerId));
+    return;
+  }
+  const topoNode = e.target.closest('.topo-node[data-worker-id]');
+  if (topoNode) {
+    openMeshNodeDrawer(decodeURIComponent(topoNode.dataset.workerId));
+    return;
+  }
+  if (e.target.id === 'mesh-node-drawer-close' || e.target.id === 'mesh-node-drawer-backdrop') {
+    closeMeshNodeDrawer();
+    return;
+  }
+  if (e.target.id === 'mesh-refresh-btn') {
+    loadMeshTab();
+    return;
+  }
+});
 
 // =====================================================================
 // Add Node modal — enrollment token + per-platform one-liner
@@ -294,32 +616,69 @@ async function loadMeshStatus() {
 
 let _enrollmentTokenData = null;          // { token, expires_at, install_commands, hub_url }
 let _selectedPlatform = 'linux';
+let _enrollmentCountdownTimer = null;
+
+function _autoDetectPlatform() {
+  const ua = (navigator.userAgent || '').toLowerCase();
+  if (ua.includes('windows')) return 'win32';
+  if (ua.includes('mac os') || ua.includes('macintosh')) return 'darwin';
+  if (ua.includes('android')) return 'android';
+  return 'linux';
+}
+
+function _updateExpiryCountdown() {
+  const expiryEl = document.getElementById('enrollment-expiry');
+  if (!expiryEl || !_enrollmentTokenData) return;
+  const secs = Math.max(0, Math.floor(_enrollmentTokenData.expires_at - Date.now() / 1000));
+  if (secs <= 0) {
+    expiryEl.innerHTML = `<span class="expiry-expired">Token expired — click "Mint another" below.</span>`;
+    if (_enrollmentCountdownTimer) { clearInterval(_enrollmentCountdownTimer); _enrollmentCountdownTimer = null; }
+    return;
+  }
+  const mins = Math.floor(secs / 60);
+  const rem = secs % 60;
+  const cls = secs < 60 ? 'expiry-soon' : '';
+  expiryEl.innerHTML = `<span class="${cls}">Expires in ${mins}:${String(rem).padStart(2, '0')}</span> · single-use token`;
+}
 
 function _setAddNodeCommand() {
   const pre = document.getElementById('enrollment-command');
   const copyBtn = document.getElementById('copy-enrollment-cmd');
   const expiryEl = document.getElementById('enrollment-expiry');
   if (!_enrollmentTokenData) {
-    pre.innerHTML = '<em>Click "Mint token &amp; generate command" below.</em>';
+    pre.innerHTML = '<em>Auto-generating enrollment command&hellip;</em>';
     copyBtn.disabled = true;
-    expiryEl.textContent = '';
+    if (expiryEl) expiryEl.textContent = '';
     return;
   }
   const cmd = (_enrollmentTokenData.install_commands || {})[_selectedPlatform] || '(no command available)';
   pre.textContent = cmd;
   copyBtn.disabled = false;
-  const exp = new Date(_enrollmentTokenData.expires_at * 1000);
-  expiryEl.textContent = `Token expires ${exp.toLocaleTimeString()} (single-use).`;
+  _updateExpiryCountdown();
+  if (_enrollmentCountdownTimer) clearInterval(_enrollmentCountdownTimer);
+  _enrollmentCountdownTimer = setInterval(_updateExpiryCountdown, 1000);
 }
 
 function openAddNodeModal() {
   const modal = document.getElementById('add-node-modal');
   modal.hidden = false;
-  _setAddNodeCommand();
+  // Auto-select the platform based on the browser UA (can still switch).
+  const detected = _autoDetectPlatform();
+  _selectedPlatform = detected;
+  document.querySelectorAll('.platform-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.platform === detected);
+  });
+  // Auto-mint on open if we don't have a fresh token yet.
+  if (!_enrollmentTokenData || _enrollmentTokenData.expires_at < Date.now() / 1000 + 30) {
+    mintEnrollmentToken();
+  } else {
+    _setAddNodeCommand();
+  }
 }
 
 function closeAddNodeModal() {
   document.getElementById('add-node-modal').hidden = true;
+  if (_enrollmentCountdownTimer) { clearInterval(_enrollmentCountdownTimer); _enrollmentCountdownTimer = null; }
 }
 
 async function mintEnrollmentToken() {

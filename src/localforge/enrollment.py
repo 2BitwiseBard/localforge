@@ -232,6 +232,38 @@ class WorkerRegistry:
         log.info("Worker revoked: %s", worker_id)
         return True
 
+    def get_worker(self, worker_id: str) -> dict | None:
+        """Return a single worker record (without bcrypt hash), or None."""
+        with self._lock:
+            data = self._load()
+            record = data["workers"].get(worker_id)
+            if record is None:
+                return None
+            return {k: v for k, v in record.items() if k != "api_key_hash"}
+
+    def update_config(self, worker_id: str, config: dict) -> bool:
+        """Merge a per-worker config dict into the record.
+
+        Expected keys (all optional):
+          nickname          str  — friendly display name
+          allowed_tasks     list — e.g. ["embeddings", "rerank", "llm_inference"]
+          priority          int  — lower = preferred
+          max_concurrent    int
+          min_battery_pct   int  — phones only
+        """
+        allowed = {"nickname", "allowed_tasks", "priority",
+                   "max_concurrent", "min_battery_pct"}
+        clean = {k: v for k, v in config.items() if k in allowed}
+        with self._lock:
+            data = self._load()
+            record = data["workers"].get(worker_id)
+            if record is None:
+                return False
+            record.setdefault("config", {}).update(clean)
+            self._save(data)
+        log.info("Worker config updated: %s -> %s", worker_id, list(clean))
+        return True
+
     # -- helpers -------------------------------------------------------------
 
     def _mint_worker_id(self, hostname: str) -> str:

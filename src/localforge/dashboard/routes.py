@@ -1969,6 +1969,9 @@ def _install_oneliners(token: str, hub_url: str) -> dict[str, str]:
             f"curl -fsSL '{base}?platform=darwin&token={token}' | "
             f"bash -s -- --hub {hub_url} --token {token}",
         "win32":
+            # Server-side templates Hub + Token into the script body, so
+            # the one-liner can stay `iwr URL | iex` with zero args —
+            # avoiding PowerShell's nested-quote interpolation nightmare.
             f"powershell -ExecutionPolicy Bypass -Command "
             f"\"iwr -useb '{base}?platform=win32&token={token}' | iex\"",
         "android":
@@ -2050,6 +2053,14 @@ async def api_mesh_install_script(request: Request) -> JSONResponse | StreamingR
         body = script_path.read_bytes()
     except OSError as e:
         return JSONResponse({"error": f"Failed to read script: {e}"}, status_code=500)
+
+    # Server-side templating: substitute %%LOCALFORGE_HUB_URL%% and
+    # %%LOCALFORGE_ENROLLMENT_TOKEN%% placeholders in the script body so
+    # the one-liner doesn't have to push args through multiple shell layers.
+    hub = _default_hub_url(request).encode()
+    tok = token.encode()
+    body = body.replace(b"%%LOCALFORGE_HUB_URL%%", hub)
+    body = body.replace(b"%%LOCALFORGE_ENROLLMENT_TOKEN%%", tok)
 
     return Response(
         body,
@@ -2135,6 +2146,40 @@ async def api_mesh_workers_revoke(request: Request) -> JSONResponse:
     from localforge.enrollment import worker_registry
     ok = worker_registry().revoke(worker_id)
     return JSONResponse({"status": "ok" if ok else "not_found"}, status_code=200 if ok else 404)
+
+
+async def api_mesh_worker_detail(request: Request) -> JSONResponse:
+    """Admin: full detail for a single worker (no plaintext key)."""
+    from localforge.auth import require_role
+    denied = require_role(request, "admin")
+    if denied is not None:
+        return denied
+    worker_id = request.path_params.get("worker_id", "")
+    from localforge.enrollment import worker_registry
+    record = worker_registry().get_worker(worker_id)
+    if record is None:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    return JSONResponse(record)
+
+
+async def api_mesh_worker_config(request: Request) -> JSONResponse:
+    """Admin: update per-worker config (nickname, allowed_tasks, etc.)."""
+    from localforge.auth import require_role
+    denied = require_role(request, "admin")
+    if denied is not None:
+        return denied
+    worker_id = request.path_params.get("worker_id", "")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid_json"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "object_required"}, status_code=400)
+    from localforge.enrollment import worker_registry
+    ok = worker_registry().update_config(worker_id, body)
+    if not ok:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    return JSONResponse(worker_registry().get_worker(worker_id))
 
 
 # ---------------------------------------------------------------------------
@@ -2431,6 +2476,8 @@ dashboard_routes = [
     Route("/mesh/register", api_mesh_register, methods=["POST"]),
     Route("/mesh/workers", api_mesh_workers_list, methods=["GET"]),
     Route("/mesh/workers/revoke", api_mesh_workers_revoke, methods=["POST"]),
+    Route("/mesh/workers/{worker_id}", api_mesh_worker_detail, methods=["GET"]),
+    Route("/mesh/workers/{worker_id}/config", api_mesh_worker_config, methods=["POST"]),
     # Model sync
     Route("/sync-models", api_sync_models, methods=["POST"]),
     # Training pipeline

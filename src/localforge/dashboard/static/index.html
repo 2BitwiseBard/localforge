@@ -15,6 +15,7 @@
 </head>
 <body>
 <header>
+  <button id="sidebar-mobile-toggle" class="icon-btn sidebar-mobile-toggle" aria-label="Open menu" title="Menu">&#9776;</button>
   <h1>AI Hub</h1>
   <div class="header-controls">
     <span id="conn-dot" class="conn-dot conn-unknown" title="Backend status"></span>
@@ -24,19 +25,48 @@
   </div>
 </header>
 
-<nav role="navigation" aria-label="Dashboard tabs">
-  <button class="tab active" data-tab="status" role="tab" aria-selected="true" aria-controls="tab-status">Status</button>
-  <button class="tab" data-tab="chat" role="tab" aria-selected="false" aria-controls="tab-chat">Chat</button>
-  <button class="tab" data-tab="search" role="tab" aria-selected="false" aria-controls="tab-search">Search</button>
-  <button class="tab" data-tab="media" role="tab" aria-selected="false" aria-controls="tab-media">Media</button>
-  <button class="tab" data-tab="config" role="tab" aria-selected="false" aria-controls="tab-config">Config</button>
-  <button class="tab" data-tab="agents" role="tab" aria-selected="false" aria-controls="tab-agents">Agents</button>
-  <button class="tab" data-tab="research" role="tab" aria-selected="false" aria-controls="tab-research">Research</button>
-  <button class="tab" data-tab="workflows" role="tab" aria-selected="false" aria-controls="tab-workflows">Workflows</button>
-  <button class="tab" data-tab="training" role="tab" aria-selected="false" aria-controls="tab-training">Training</button>
-  <button class="tab" data-tab="notes" role="tab" aria-selected="false" aria-controls="tab-notes">Notes</button>
-  <button class="tab" data-tab="knowledge" role="tab" aria-selected="false" aria-controls="tab-knowledge">Knowledge</button>
+<aside id="sidebar" class="sidebar" role="navigation" aria-label="Primary navigation">
+  <div class="sidebar-tabs" role="tablist">
+    <button class="tab active" data-tab="status" role="tab" aria-selected="true" aria-controls="tab-status" title="Status"><span class="tab-icon" aria-hidden="true">&#9889;</span><span class="tab-label">Status</span></button>
+    <button class="tab" data-tab="chat" role="tab" aria-selected="false" aria-controls="tab-chat" title="Chat"><span class="tab-icon" aria-hidden="true">&#128172;</span><span class="tab-label">Chat</span></button>
+    <button class="tab" data-tab="search" role="tab" aria-selected="false" aria-controls="tab-search" title="Search"><span class="tab-icon" aria-hidden="true">&#128269;</span><span class="tab-label">Search</span></button>
+    <button class="tab" data-tab="mesh" role="tab" aria-selected="false" aria-controls="tab-mesh" title="Mesh"><span class="tab-icon" aria-hidden="true">&#127760;</span><span class="tab-label">Mesh</span></button>
+    <button class="tab" data-tab="media" role="tab" aria-selected="false" aria-controls="tab-media" title="Media"><span class="tab-icon" aria-hidden="true">&#127912;</span><span class="tab-label">Media</span></button>
+    <button class="tab" data-tab="config" role="tab" aria-selected="false" aria-controls="tab-config" title="Config"><span class="tab-icon" aria-hidden="true">&#9881;</span><span class="tab-label">Config</span></button>
+    <button class="tab" data-tab="agents" role="tab" aria-selected="false" aria-controls="tab-agents" title="Agents"><span class="tab-icon" aria-hidden="true">&#129302;</span><span class="tab-label">Agents</span></button>
+    <button class="tab" data-tab="research" role="tab" aria-selected="false" aria-controls="tab-research" title="Research"><span class="tab-icon" aria-hidden="true">&#128300;</span><span class="tab-label">Research</span></button>
+    <button class="tab" data-tab="workflows" role="tab" aria-selected="false" aria-controls="tab-workflows" title="Workflows"><span class="tab-icon" aria-hidden="true">&#128260;</span><span class="tab-label">Workflows</span></button>
+    <button class="tab" data-tab="training" role="tab" aria-selected="false" aria-controls="tab-training" title="Training"><span class="tab-icon" aria-hidden="true">&#127891;</span><span class="tab-label">Training</span></button>
+    <button class="tab" data-tab="notes" role="tab" aria-selected="false" aria-controls="tab-notes" title="Notes"><span class="tab-icon" aria-hidden="true">&#128221;</span><span class="tab-label">Notes</span></button>
+    <button class="tab" data-tab="knowledge" role="tab" aria-selected="false" aria-controls="tab-knowledge" title="Knowledge"><span class="tab-icon" aria-hidden="true">&#129504;</span><span class="tab-label">Knowledge</span></button>
+  </div>
+  <div class="sidebar-footer">
+    <button id="sidebar-collapse-btn" class="sidebar-collapse" aria-label="Collapse sidebar" title="Collapse sidebar">&#9664;</button>
+  </div>
+</aside>
+
+<div id="sidebar-backdrop" class="sidebar-backdrop" hidden></div>
+
+<nav class="mobile-nav" role="navigation" aria-label="Mobile tabs">
+  <button class="tab mobile-tab active" data-tab="status" aria-label="Status"><span class="tab-icon" aria-hidden="true">&#9889;</span><span class="tab-label">Status</span></button>
+  <button class="tab mobile-tab" data-tab="chat" aria-label="Chat"><span class="tab-icon" aria-hidden="true">&#128172;</span><span class="tab-label">Chat</span></button>
+  <button class="tab mobile-tab" data-tab="search" aria-label="Search"><span class="tab-icon" aria-hidden="true">&#128269;</span><span class="tab-label">Search</span></button>
+  <button class="tab mobile-tab" data-tab="agents" aria-label="Agents"><span class="tab-icon" aria-hidden="true">&#129302;</span><span class="tab-label">Agents</span></button>
+  <button id="mobile-more-btn" class="mobile-tab" aria-label="More tabs"><span class="tab-icon" aria-hidden="true">&#8943;</span><span class="tab-label">More</span></button>
 </nav>
+
+<div id="mobile-more-sheet" class="mobile-more-sheet" hidden role="dialog" aria-label="More tabs">
+  <div class="mobile-more-grid">
+    <button class="tab mobile-more-item" data-tab="mesh"><span class="tab-icon" aria-hidden="true">&#127760;</span><span>Mesh</span></button>
+    <button class="tab mobile-more-item" data-tab="media"><span class="tab-icon" aria-hidden="true">&#127912;</span><span>Media</span></button>
+    <button class="tab mobile-more-item" data-tab="config"><span class="tab-icon" aria-hidden="true">&#9881;</span><span>Config</span></button>
+    <button class="tab mobile-more-item" data-tab="research"><span class="tab-icon" aria-hidden="true">&#128300;</span><span>Research</span></button>
+    <button class="tab mobile-more-item" data-tab="workflows"><span class="tab-icon" aria-hidden="true">&#128260;</span><span>Workflows</span></button>
+    <button class="tab mobile-more-item" data-tab="training"><span class="tab-icon" aria-hidden="true">&#127891;</span><span>Training</span></button>
+    <button class="tab mobile-more-item" data-tab="notes"><span class="tab-icon" aria-hidden="true">&#128221;</span><span>Notes</span></button>
+    <button class="tab mobile-more-item" data-tab="knowledge"><span class="tab-icon" aria-hidden="true">&#129504;</span><span>Knowledge</span></button>
+  </div>
+</div>
 
 <main role="main">
   <!-- Status Tab -->
@@ -69,9 +99,9 @@
     <div class="card">
       <div class="card-header-row">
         <h2>Compute Mesh</h2>
-        <button id="add-node-btn" class="btn-primary" title="Enroll a new worker">+ Add Node</button>
+        <button class="btn-small" data-tab="mesh" title="Open full mesh view">Open Mesh &rsaquo;</button>
       </div>
-      <div id="mesh-info">Loading...</div>
+      <div id="mesh-summary" class="mesh-summary">Loading...</div>
     </div>
 
     <!-- Add Node modal (hidden by default) -->
@@ -127,6 +157,40 @@
       </div>
       <pre id="sync-models-result" style="display:none;margin-top:12px;white-space:pre-wrap;font-size:0.85em;color:#c9d1d9;max-height:200px;overflow:auto;"></pre>
     </div>
+  </section>
+
+  <!-- Mesh Tab -->
+  <section id="tab-mesh" class="tab-content" role="tabpanel" aria-label="Compute mesh">
+    <div class="card">
+      <div class="card-header-row">
+        <h2>Mesh Workers</h2>
+        <div style="display:flex;gap:8px;">
+          <button id="mesh-refresh-btn" class="btn-small" title="Refresh">&#x21bb; Refresh</button>
+          <button id="add-node-btn" class="btn-primary" title="Enroll a new worker">+ Add Node</button>
+        </div>
+      </div>
+      <div id="mesh-workers-table">Loading...</div>
+    </div>
+
+    <div class="card">
+      <h2>Topology</h2>
+      <p class="param-subtitle">Hub and connected workers. Click a node to inspect it.</p>
+      <div class="mesh-topology-wrap">
+        <svg id="mesh-topology" viewBox="0 0 600 320" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Mesh topology"></svg>
+      </div>
+    </div>
+
+    <!-- Side drawer for per-node detail & config -->
+    <div id="mesh-node-drawer" class="side-drawer" hidden aria-hidden="true" role="dialog" aria-labelledby="mesh-node-drawer-title">
+      <div class="side-drawer-header">
+        <h3 id="mesh-node-drawer-title">Worker detail</h3>
+        <button class="icon-btn" id="mesh-node-drawer-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="side-drawer-body" id="mesh-node-drawer-body">
+        <div class="loading-placeholder">Select a worker to view details.</div>
+      </div>
+    </div>
+    <div id="mesh-node-drawer-backdrop" class="side-drawer-backdrop" hidden></div>
   </section>
 
   <!-- Chat Tab -->
