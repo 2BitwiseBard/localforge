@@ -1593,7 +1593,6 @@ input:checked + .toggle-slider:before { transform: translateX(16px); background:
   header { padding: 10px 14px; }
   header h1 { font-size: 1rem; }
   main { padding: 12px; }
-  nav { top: 43px; }
   .msg-user { margin-left: 10%; }
   .msg-assistant { margin-right: 10%; }
 
