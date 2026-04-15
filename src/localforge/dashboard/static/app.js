@@ -96,8 +96,11 @@ function activateTab(tabName) {
 }
 
 document.addEventListener('click', (e) => {
-  const btn = e.target.closest('.tab[data-tab]');
+  // Any element with data-tab="<name>" switches to that tab (nav buttons,
+  // empty-state links, "Open Mesh" shortcut, etc.).
+  const btn = e.target.closest('[data-tab]');
   if (btn) {
+    e.preventDefault();
     activateTab(btn.dataset.tab);
     return;
   }
@@ -706,9 +709,10 @@ async function mintEnrollmentToken() {
 }
 
 function initAddNodeModal() {
-  const btn = document.getElementById('add-node-btn');
-  if (!btn) return;
-  btn.addEventListener('click', openAddNodeModal);
+  // Open buttons exist on both the Mesh tab and Status tab — wire all of them.
+  document.querySelectorAll('#add-node-btn, #status-add-node-btn').forEach(b =>
+    b.addEventListener('click', openAddNodeModal)
+  );
   document.getElementById('add-node-close').addEventListener('click', closeAddNodeModal);
   document.getElementById('add-node-modal').addEventListener('click', (e) => {
     if (e.target.id === 'add-node-modal') closeAddNodeModal();

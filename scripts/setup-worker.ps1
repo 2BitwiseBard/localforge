@@ -194,11 +194,39 @@ $acl.AddAccessRule($rule)
 Set-Acl -Path $envFile -AclObject $acl
 
 # --- 5. NSSM -------------------------------------------------------------
+# nssm.cc is old-school HTTP and sometimes times out or trips TLS negotiation
+# on stock Windows PowerShell 5. Force TLS 1.2, use -UseBasicParsing (avoids
+# spawning the IE engine), and fall back to curl.exe if IWR still fails.
+function Invoke-Download {
+    param([string]$Url, [string]$OutFile)
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = `
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch { }
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -TimeoutSec 60
+        return $true
+    } catch {
+        Write-Warn "Invoke-WebRequest failed: $($_.Exception.Message). Trying curl.exe."
+    }
+    $curl = (Get-Command curl.exe -ErrorAction SilentlyContinue)
+    if ($curl) {
+        & curl.exe -fsSL --retry 3 --retry-delay 2 -o $OutFile $Url
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $OutFile)) { return $true }
+        Write-Warn "curl.exe also failed (exit $LASTEXITCODE)."
+    }
+    return $false
+}
+
 $nssmExe = Join-Path $InstallDir "nssm.exe"
 if (-not (Test-Path $nssmExe)) {
     Write-Step "Downloading NSSM"
     $tmp = Join-Path $env:TEMP "nssm.zip"
-    Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" -OutFile $tmp
+    if (-not (Invoke-Download -Url "https://nssm.cc/release/nssm-2.24.zip" -OutFile $tmp)) {
+        Write-Err "Could not download NSSM from nssm.cc."
+        Write-Err "Manual fix: download https://nssm.cc/release/nssm-2.24.zip, extract, and place nssm.exe at $nssmExe"
+        exit 1
+    }
     Expand-Archive -Path $tmp -DestinationPath $env:TEMP -Force
     $arch = if ([Environment]::Is64BitOperatingSystem) { "win64" } else { "win32" }
     Copy-Item (Join-Path $env:TEMP "nssm-2.24\$arch\nssm.exe") $nssmExe

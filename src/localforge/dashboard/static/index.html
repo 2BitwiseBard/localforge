@@ -99,55 +99,14 @@
     <div class="card">
       <div class="card-header-row">
         <h2>Compute Mesh</h2>
-        <button class="btn-small" data-tab="mesh" title="Open full mesh view">Open Mesh &rsaquo;</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn-small" id="status-add-node-btn" title="Enroll a new worker">+ Add Node</button>
+          <button class="btn-small" data-tab="mesh" title="Open full mesh view">Open Mesh &rsaquo;</button>
+        </div>
       </div>
       <div id="mesh-summary" class="mesh-summary">Loading...</div>
     </div>
 
-    <!-- Add Node modal (hidden by default) -->
-    <div id="add-node-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="add-node-title" hidden>
-      <div class="modal">
-        <div class="modal-header">
-          <h3 id="add-node-title">Add a Mesh Worker</h3>
-          <button class="icon-btn modal-close" id="add-node-close" aria-label="Close">&times;</button>
-        </div>
-        <div class="modal-body">
-          <p class="param-subtitle">
-            Pick the platform, copy the one-liner, and run it on the new device.
-            The enrollment token is single-use and expires in 10 minutes.
-          </p>
-          <div class="platform-tabs" role="tablist">
-            <button class="platform-tab active" data-platform="linux"   role="tab">Linux</button>
-            <button class="platform-tab"        data-platform="darwin"  role="tab">macOS</button>
-            <button class="platform-tab"        data-platform="win32"   role="tab">Windows</button>
-            <button class="platform-tab"        data-platform="android" role="tab">Android</button>
-          </div>
-          <div class="enrollment-note">
-            <label for="enrollment-note-input" class="param-label">Note (optional — helps track which device got this token)</label>
-            <input id="enrollment-note-input" type="text" maxlength="200" placeholder="e.g. tyler's windows laptop">
-          </div>
-          <div class="enrollment-command-block">
-            <label class="param-label">Run this on the new device</label>
-            <pre id="enrollment-command"><em>Click "Mint token &amp; generate command" below.</em></pre>
-            <div style="display:flex;gap:8px;margin-top:8px;">
-              <button id="mint-token-btn" class="btn-primary">Mint token &amp; generate command</button>
-              <button id="copy-enrollment-cmd" class="btn-small" disabled>Copy</button>
-            </div>
-            <div id="enrollment-expiry" class="param-subtitle" style="margin-top:8px;"></div>
-          </div>
-          <details class="enrollment-help">
-            <summary>What this does</summary>
-            <ul>
-              <li>Installs <code>localforge[worker]</code> on the target device.</li>
-              <li>Detects hardware (CPU / RAM / GPU / tier).</li>
-              <li>Exchanges the enrollment token for a long-lived, mesh-scoped API key.</li>
-              <li>Registers a native service (systemd / NSSM / launchd / Termux:Boot).</li>
-              <li>Starts heartbeating to this hub on port 8200.</li>
-            </ul>
-          </details>
-        </div>
-      </div>
-    </div>
     <div class="card">
       <h2>Model Management</h2>
       <p class="param-subtitle">Sync new models from external drives</p>
@@ -685,6 +644,51 @@
 
 <!-- Toast notifications -->
 <div id="toast-container" class="toast-container"></div>
+
+<!-- Add Node modal (top-level so it's visible from any tab) -->
+<div id="add-node-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="add-node-title" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="add-node-title">Add a Mesh Worker</h3>
+      <button class="icon-btn modal-close" id="add-node-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="param-subtitle">
+        Pick the platform, copy the one-liner, and run it on the new device.
+        The enrollment token is single-use and expires in 10 minutes.
+      </p>
+      <div class="platform-tabs" role="tablist">
+        <button class="platform-tab active" data-platform="linux"   role="tab">Linux</button>
+        <button class="platform-tab"        data-platform="darwin"  role="tab">macOS</button>
+        <button class="platform-tab"        data-platform="win32"   role="tab">Windows</button>
+        <button class="platform-tab"        data-platform="android" role="tab">Android</button>
+      </div>
+      <div class="enrollment-note">
+        <label for="enrollment-note-input" class="param-label">Note (optional — helps track which device got this token)</label>
+        <input id="enrollment-note-input" type="text" maxlength="200" placeholder="e.g. tyler's windows laptop">
+      </div>
+      <div class="enrollment-command-block">
+        <label class="param-label">Run this on the new device</label>
+        <pre id="enrollment-command"><em>Click "Mint token &amp; generate command" below.</em></pre>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button id="mint-token-btn" class="btn-primary">Mint token &amp; generate command</button>
+          <button id="copy-enrollment-cmd" class="btn-small" disabled>Copy</button>
+        </div>
+        <div id="enrollment-expiry" class="param-subtitle" style="margin-top:8px;"></div>
+      </div>
+      <details class="enrollment-help">
+        <summary>What this does</summary>
+        <ul>
+          <li>Installs <code>localforge[worker]</code> on the target device.</li>
+          <li>Detects hardware (CPU / RAM / GPU / tier).</li>
+          <li>Exchanges the enrollment token for a long-lived, mesh-scoped API key.</li>
+          <li>Registers a native service (systemd / NSSM / launchd / Termux:Boot).</li>
+          <li>Starts heartbeating to this hub on port 8200.</li>
+        </ul>
+      </details>
+    </div>
+  </div>
+</div>
 
 <script src="/static/app.js"></script>
 </body>
