@@ -1,94 +1,109 @@
 #!/bin/bash
-# Setup a new device as a LocalForge mesh worker.
+# Setup a new Linux device as a LocalForge mesh worker.
 #
-# Usage:
-#   curl -fsSL https://raw.githubusercontent.com/bitwisebard/localforge/main/scripts/setup-worker.sh | bash
-#   # or locally:
-#   ./scripts/setup-worker.sh [--hub ai-hub:8100] [--key YOUR_API_KEY] [--port 8200]
+# Recommended (enrollment flow):
+#   curl -fsSL 'http://ai-hub:8100/api/mesh/install-script?platform=linux&token=<TOK>' | \
+#       bash -s -- --hub http://ai-hub:8100 --token <TOK>
+#
+# Direct (legacy, already have a worker key):
+#   ./scripts/setup-worker.sh --hub http://ai-hub:8100 --key <WORKER_KEY>
 #
 # What this does:
-#   1. Installs localforge with gateway deps (pip)
-#   2. Detects hardware capabilities
-#   3. Creates systemd user service for the worker
-#   4. Optionally enables auto-start on boot
-
+#   1. Installs localforge[worker] (pip from git until PyPI publish)
+#   2. If --token: exchanges enrollment token for a long-lived worker API key
+#   3. Detects hardware, creates systemd --user service
+#   4. Enables + starts the service
 set -euo pipefail
 
-# Defaults
 HUB_URL=""
 API_KEY=""
+ENROLL_TOKEN=""
 WORKER_PORT=8200
-INSTALL_DIR="$HOME/.local"
+GIT_REPO="https://github.com/bitwisebard/localforge"
 
-# Parse args
 while [[ $# -gt 0 ]]; do
     case $1 in
         --hub)     HUB_URL="$2"; shift 2 ;;
         --key)     API_KEY="$2"; shift 2 ;;
+        --token)   ENROLL_TOKEN="$2"; shift 2 ;;
         --port)    WORKER_PORT="$2"; shift 2 ;;
-        --help|-h) echo "Usage: $0 [--hub HOST:PORT] [--key API_KEY] [--port PORT]"; exit 0 ;;
-        *)         echo "Unknown option: $1"; exit 1 ;;
+        --repo)    GIT_REPO="$2"; shift 2 ;;
+        --help|-h)
+            echo "Usage: $0 --hub HOST:PORT (--token TOK | --key API_KEY) [--port PORT]"
+            exit 0 ;;
+        *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
 
-echo "=== LocalForge Worker Setup ==="
+echo "=== LocalForge Linux Worker Setup ==="
+[[ -z "$HUB_URL" ]]  && { echo "Error: --hub required"; exit 1; }
+[[ -z "$API_KEY" && -z "$ENROLL_TOKEN" ]] && { echo "Error: --token or --key required"; exit 1; }
+
+command -v python3 >/dev/null || { echo "Error: python3 not found."; exit 1; }
+echo "Python: $(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+
+# --- 1. Install localforge[worker] ---------------------------------------
 echo ""
-
-# Check Python
-if ! command -v python3 &>/dev/null; then
-    echo "Error: python3 not found. Install Python 3.11+ first."
-    exit 1
-fi
-
-PY_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-echo "Python: $PY_VERSION"
-
-# Install localforge
-echo ""
-echo "Installing localforge..."
-if command -v uv &>/dev/null; then
-    uv pip install --user "localforge[gateway]"
-elif command -v pip3 &>/dev/null; then
-    pip3 install --user "localforge[gateway]"
+echo "Installing localforge[worker]..."
+if command -v uv >/dev/null; then
+    uv pip install --user "localforge[worker] @ git+$GIT_REPO"
 else
-    echo "Error: Neither uv nor pip3 found."
-    exit 1
+    python3 -m pip install --user --upgrade pip
+    python3 -m pip install --user "localforge[worker] @ git+$GIT_REPO"
 fi
 
-# Detect hardware
+# Ensure ~/.local/bin is on PATH for this shell (the service uses an absolute path anyway)
+export PATH="$HOME/.local/bin:$PATH"
+WORKER_BIN="$(command -v localforge-worker || echo "$HOME/.local/bin/localforge-worker")"
+[[ -x "$WORKER_BIN" ]] || { echo "Error: localforge-worker not on PATH after install"; exit 1; }
+
+# --- 2. Detect hardware --------------------------------------------------
 echo ""
 echo "Detecting hardware..."
-python3 -c "
-from localforge.workers.detect import detect
-hw = detect()
-print(f'  Platform:     {hw.platform}')
-print(f'  GPU:          {hw.gpu_name or \"none\"} ({hw.gpu_type})')
-print(f'  VRAM:         {hw.vram_mb} MB')
-print(f'  RAM:          {hw.ram_mb} MB')
-print(f'  CPU cores:    {hw.cpu_cores}')
-print(f'  Tier:         {hw.tier()}')
-caps = [k for k in ('inference','embeddings','tts','stt','vision','reranking') if getattr(hw, k)]
-print(f'  Capabilities: {\", \".join(caps)}')
-"
+HW_JSON=$(python3 -c "import json; from localforge.workers.detect import detect; print(json.dumps(detect().to_dict()))")
+PLATFORM=$(echo "$HW_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['platform'])")
+TIER=$(echo "$HW_JSON"     | python3 -c "import sys,json; print(json.load(sys.stdin)['tier'])")
+echo "  Platform: $PLATFORM"
+echo "  Tier:     $TIER"
 
-# Create systemd service
+# --- 3. Exchange enrollment token for worker API key ---------------------
+if [[ -n "$ENROLL_TOKEN" ]]; then
+    echo ""
+    echo "Registering with hub..."
+    REG_BODY=$(python3 - <<EOF
+import json, os
+print(json.dumps({
+    "enrollment_token": "$ENROLL_TOKEN",
+    "hostname": os.uname().nodename,
+    "platform": "linux",
+    "hardware": json.loads('''$HW_JSON'''),
+}))
+EOF
+)
+    REG_RESP=$(curl -fsSL -X POST "$HUB_URL/api/mesh/register" \
+                    -H "Content-Type: application/json" \
+                    -d "$REG_BODY")
+    API_KEY=$(echo "$REG_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['api_key'])")
+    WORKER_ID=$(echo "$REG_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['worker_id'])")
+    echo "  Registered as: $WORKER_ID"
+fi
+
+# --- 4. Persist env file (0600) ------------------------------------------
+ENV_DIR="$HOME/.config/localforge"
+mkdir -p "$ENV_DIR"
+ENV_FILE="$ENV_DIR/worker.env"
+cat > "$ENV_FILE" <<EOF
+LOCALFORGE_HUB_URL=$HUB_URL
+LOCALFORGE_API_KEY=$API_KEY
+LOCALFORGE_WORKER_PORT=$WORKER_PORT
+EOF
+chmod 600 "$ENV_FILE"
+
+# --- 5. systemd --user service ------------------------------------------
 echo ""
-echo "Creating systemd service..."
+echo "Installing systemd service..."
 mkdir -p "$HOME/.config/systemd/user"
-
-WORKER_BIN=$(command -v localforge-worker 2>/dev/null || echo "$HOME/.local/bin/localforge-worker")
-
-HUB_FLAG=""
-if [ -n "$HUB_URL" ]; then
-    HUB_FLAG="--hub $HUB_URL"
-fi
-
-KEY_FLAG=""
-if [ -n "$API_KEY" ]; then
-    KEY_FLAG="--key $API_KEY"
-fi
-
-cat > "$HOME/.config/systemd/user/localforge-worker.service" << EOF
+cat > "$HOME/.config/systemd/user/localforge-worker.service" <<EOF
 [Unit]
 Description=LocalForge Mesh Worker
 After=network-online.target
@@ -96,12 +111,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=$WORKER_BIN --port $WORKER_PORT $HUB_FLAG $KEY_FLAG
+EnvironmentFile=$ENV_FILE
+ExecStart=$WORKER_BIN --port \${LOCALFORGE_WORKER_PORT} --hub \${LOCALFORGE_HUB_URL}
 Restart=on-failure
 RestartSec=5s
 StartLimitIntervalSec=60
 StartLimitBurst=3
-Environment=LOCALFORGE_API_KEY=${API_KEY}
 
 # Security hardening
 PrivateTmp=true
@@ -113,30 +128,14 @@ ReadWritePaths=%h
 WantedBy=default.target
 EOF
 
-echo "  Service file: ~/.config/systemd/user/localforge-worker.service"
-
-# Reload systemd
 systemctl --user daemon-reload
+systemctl --user enable --now localforge-worker
+sleep 2
 
 echo ""
 echo "=== Setup Complete ==="
+systemctl --user status localforge-worker --no-pager || true
 echo ""
-echo "Commands:"
-echo "  Start:   systemctl --user start localforge-worker"
-echo "  Enable:  systemctl --user enable localforge-worker   (auto-start on boot)"
-echo "  Status:  systemctl --user status localforge-worker"
-echo "  Logs:    journalctl --user -u localforge-worker -f"
-echo ""
-echo "Test:    curl http://localhost:$WORKER_PORT/health"
-if [ -n "$HUB_URL" ]; then
-    echo "Hub:     $HUB_URL (heartbeats every 30s)"
-fi
-echo ""
-
-read -p "Start the worker now? [Y/n] " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-    systemctl --user start localforge-worker
-    sleep 2
-    systemctl --user status localforge-worker --no-pager || true
-fi
+echo "Logs:    journalctl --user -u localforge-worker -f"
+echo "Health:  curl http://localhost:$WORKER_PORT/health"
+echo "Hub:     $HUB_URL/api/mesh/status  (worker should appear within 30s)"

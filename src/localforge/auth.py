@@ -265,10 +265,14 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
 
         if matched_key is None:
             cfg = _load_config()
-            has_keys = bool(cfg.get("gateway", {}).get("api_keys")) or bool(cfg.get("users"))
+            has_keys = (
+                bool(os.environ.get("LOCAL_AI_KEY"))
+                or bool(cfg.get("gateway", {}).get("api_keys"))
+                or bool(cfg.get("users"))
+            )
             if not has_keys:
                 return JSONResponse(
-                    {"error": "No API keys configured in config.yaml gateway.api_keys"},
+                    {"error": "No API keys configured. Set LOCAL_AI_KEY or config.yaml gateway.api_keys"},
                     status_code=500,
                 )
             log.warning("Failed auth attempt from %s (path: %s)", client_ip, path)
