@@ -19,7 +19,7 @@ HUB_URL=""
 API_KEY=""
 ENROLL_TOKEN=""
 WORKER_PORT=8200
-GIT_REPO="https://github.com/bitwisebard/localforge"
+GIT_REPO="https://github.com/2BitwiseBard/localforge"
 
 while [[ $# -gt 0 ]]; do
     case $1 in

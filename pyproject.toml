@@ -97,9 +97,9 @@ localforge-gateway = "localforge.gateway:main"
 localforge-worker = "localforge.workers.device_worker:main"
 
 [project.urls]
-Homepage = "https://github.com/bitwisebard/localforge"
-Repository = "https://github.com/bitwisebard/localforge"
-Issues = "https://github.com/bitwisebard/localforge/issues"
+Homepage = "https://github.com/2BitwiseBard/localforge"
+Repository = "https://github.com/2BitwiseBard/localforge"
+Issues = "https://github.com/2BitwiseBard/localforge/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/localforge"]

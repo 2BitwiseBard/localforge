@@ -18,7 +18,7 @@ HUB_URL=""
 API_KEY=""
 ENROLL_TOKEN=""
 WORKER_PORT=8200
-GIT_REPO="https://github.com/bitwisebard/localforge"
+GIT_REPO="https://github.com/2BitwiseBard/localforge"
 APP_SUPPORT="$HOME/Library/Application Support/LocalForge"
 
 while [[ $# -gt 0 ]]; do

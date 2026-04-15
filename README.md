@@ -56,7 +56,7 @@ You / Claude Code / IDE
 
 ```bash
 # Clone
-git clone https://github.com/bitwisebard/localforge.git
+git clone https://github.com/2BitwiseBard/localforge.git
 cd localforge
 
 # Install (core only)

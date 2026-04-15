@@ -24,7 +24,7 @@ param(
     [string]$Token = "%%LOCALFORGE_ENROLLMENT_TOKEN%%",
     [int]$Port = 8200,
     [string]$InstallDir = "$env:LOCALAPPDATA\LocalForge",
-    [string]$GitRepo = "https://github.com/bitwisebard/localforge"
+    [string]$GitRepo = "https://github.com/2BitwiseBard/localforge"
 )
 
 # If placeholders weren't substituted (manual run), try env-var fallback.

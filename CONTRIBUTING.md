@@ -5,7 +5,7 @@ Thanks for your interest in contributing! This document covers the basics.
 ## Development Setup
 
 ```bash
-git clone https://github.com/bitwisebard/localforge.git
+git clone https://github.com/2BitwiseBard/localforge.git
 cd localforge
 
 # Install with dev dependencies
