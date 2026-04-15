@@ -105,13 +105,33 @@ Write-Host "    Python launcher: $pythonExe"
 # --- 2. Venv + install ----------------------------------------------------
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $venv = Join-Path $InstallDir "venv"
-if (-not (Test-Path $venv)) {
+$venvPy = Join-Path $venv "Scripts\python.exe"
+
+# If an existing venv is pinned to Python <3.11, nuke and recreate.
+# localforge requires >=3.11 (pyproject.toml); prior failed runs may have
+# baked an older interpreter into the venv before we upgraded detection.
+$needsCreate = -not (Test-Path $venvPy)
+if (-not $needsCreate) {
+    $venvVer = & $venvPy --version 2>&1
+    if ($venvVer -match "Python (\d+)\.(\d+)") {
+        $vmaj = [int]$Matches[1]; $vmin = [int]$Matches[2]
+        if ($vmaj -lt 3 -or ($vmaj -eq 3 -and $vmin -lt 11)) {
+            Write-Warn "Existing venv uses $venvVer (need 3.11+). Recreating."
+            Remove-Item -Recurse -Force $venv
+            $needsCreate = $true
+        }
+    } else {
+        Write-Warn "Could not determine venv Python version. Recreating."
+        Remove-Item -Recurse -Force $venv
+        $needsCreate = $true
+    }
+}
+if ($needsCreate) {
     Write-Step "Creating venv at $venv"
     # $pythonExe may contain args (e.g. "py -3.12"), so delegate to cmd.
     & cmd /c "$pythonExe -m venv `"$venv`""
     if ($LASTEXITCODE -ne 0) { Write-Err "venv creation failed"; exit 1 }
 }
-$venvPy = Join-Path $venv "Scripts\python.exe"
 
 if (-not (Test-Path $venvPy)) {
     Write-Err "venv python missing at $venvPy"
