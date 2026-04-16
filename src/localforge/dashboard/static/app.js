@@ -151,6 +151,25 @@ try {
 // =====================================================================
 // Status + GPU Metrics
 // =====================================================================
+function arcGauge(pct, label, value, color) {
+  const r = 38, cx = 50, cy = 50, sw = 7;
+  const c = 2 * Math.PI * r;
+  const dash = c * Math.min(pct, 100) / 100;
+  const col = color || (pct > 90 ? 'var(--red,#f85149)' : pct > 70 ? 'var(--yellow,#d29922)' : 'var(--green,#3fb950)');
+  return `<div class="arc-gauge">
+    <svg viewBox="0 0 100 100">
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--border,#30363d)" stroke-width="${sw}" stroke-linecap="round"
+        stroke-dasharray="${c * 0.75} ${c * 0.25}" stroke-dashoffset="${-c * 0.125}" />
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${col}" stroke-width="${sw}" stroke-linecap="round"
+        stroke-dasharray="${dash * 0.75} ${c}" stroke-dashoffset="${-c * 0.125}" class="arc-fill" />
+    </svg>
+    <div class="arc-center">
+      <div class="arc-value">${value}</div>
+      <div class="arc-label">${label}</div>
+    </div>
+  </div>`;
+}
+
 async function loadStatus() {
   try {
     const [health, status, metrics] = await Promise.all([
@@ -158,41 +177,56 @@ async function loadStatus() {
       authFetch(API + '/status').then(r => r.json()),
       authFetch(API + '/metrics').then(r => r.json()).catch(() => ({})),
     ]);
+
+    // Model badge in sidebar
     const badge = document.getElementById('model-badge');
     const modelName = health.model?.model_name || status.model?.name || '--';
     badge.textContent = modelName.replace('.gguf', '').substring(0, 30);
 
-    const si = document.getElementById('status-info');
-    si.innerHTML = statusRow('Model', modelName, health.model?.status === 'loaded' ? 'ok' : 'error')
-      + statusRow('Uptime', formatUptime(health.uptime_seconds), 'ok')
-      + statusRow('LoRA', (health.model?.lora_names || []).join(', ') || 'none');
+    // Service health pills
+    const gw = document.getElementById('hp-gateway');
+    const be = document.getElementById('hp-backend');
+    const ll = document.getElementById('hp-litellm');
+    gw.className = 'health-pill ' + (health.status === 'ok' ? 'up' : 'down');
+    be.className = 'health-pill ' + (health.model?.status === 'loaded' ? 'up' : 'down');
+    ll.className = 'health-pill ' + (health.litellm?.status === 'ok' ? 'up' : health.litellm ? 'down' : 'unknown');
 
-    // Slot & server config info from status endpoint
+    // Model card
+    const mc = document.getElementById('status-model');
+    const loras = (health.model?.lora_names || []).join(', ');
+    mc.innerHTML = `
+      <div class="model-card-name">${escapeHtml(modelName.replace('.gguf', ''))}</div>
+      ${status.slots ? `<div class="model-card-detail">
+        <span>ctx: ${(status.slots.ctx_total || 0).toLocaleString()}</span>
+        <span>slots: ${status.slots.active}/${status.slots.total}</span>
+        ${status.server_config?.gpu_layers ? `<span>layers: ${status.server_config.gpu_layers}</span>` : ''}
+      </div>` : ''}
+      ${loras ? `<div class="model-card-detail"><span>LoRA: ${escapeHtml(loras)}</span></div>` : ''}
+      <div class="model-card-detail"><span>uptime: ${formatUptime(health.uptime_seconds)}</span></div>`;
+
+    // GPU gauges
+    renderGPUGauges(metrics);
+
+    // System info
+    const si = document.getElementById('status-info');
+    let rows = '';
     if (status.slots) {
-      const s = status.slots;
-      si.innerHTML += statusRow('Parallel Slots', `${s.active} / ${s.total} active`)
-        + statusRow('Context / Slot', s.ctx_per_slot?.toLocaleString() || '--')
-        + statusRow('Total Context', s.ctx_total?.toLocaleString() || '--');
+      rows += statusRow('Context / Slot', status.slots.ctx_per_slot?.toLocaleString() || '--');
     }
     if (status.server_config) {
       const sc = status.server_config;
-      if (sc.gpu_layers) si.innerHTML += statusRow('GPU Layers', sc.gpu_layers);
-      if (sc.batch_size) si.innerHTML += statusRow('Batch Size', sc.batch_size);
-      if (sc.flash_attn) si.innerHTML += statusRow('Flash Attn', sc.flash_attn);
+      if (sc.batch_size) rows += statusRow('Batch Size', sc.batch_size);
+      if (sc.flash_attn) rows += statusRow('Flash Attn', sc.flash_attn);
     }
+    rows += statusRow('Backend', health.model?.status || 'unknown',
+        health.model?.status === 'loaded' ? 'ok' : 'error');
+    si.innerHTML = rows;
 
-    const hi = document.getElementById('health-info');
-    hi.innerHTML = statusRow('Gateway', health.status, health.status === 'ok' ? 'ok' : 'error')
-      + statusRow('Backend', health.model?.status || 'unknown',
-          health.model?.status === 'loaded' ? 'ok' : 'error');
-
-    renderGPUMetrics(metrics);
   } catch (e) {
     document.getElementById('status-info').textContent = 'Failed to load: ' + e.message;
   }
 }
 
-// Auto-refresh status tab every 30s when visible
 let _statusInterval = null;
 function startStatusRefresh() {
   if (_statusInterval) return;
@@ -205,21 +239,28 @@ function startStatusRefresh() {
 }
 startStatusRefresh();
 
-function renderGPUMetrics(metrics) {
-  const el = document.getElementById('gpu-metrics');
-  if (!metrics.gpu) { el.textContent = 'GPU metrics unavailable'; return; }
+function renderGPUGauges(metrics) {
+  const el = document.getElementById('gpu-gauges');
+  if (!metrics.gpu) {
+    el.innerHTML = '<p class="param-subtitle">GPU metrics unavailable</p>';
+    return;
+  }
   const g = metrics.gpu;
-  const usedPct = Math.round((g.vram_used_mb / g.vram_total_mb) * 100);
+  const vramPct = Math.round((g.vram_used_mb / g.vram_total_mb) * 100);
+  const vramLabel = `${(g.vram_used_mb/1024).toFixed(1)}/${(g.vram_total_mb/1024).toFixed(1)} GB`;
   el.innerHTML = `
-    ${statusRow('GPU', g.name)}
-    ${statusRow('VRAM', `${(g.vram_used_mb/1024).toFixed(1)} / ${(g.vram_total_mb/1024).toFixed(1)} GB`)}
-    <div class="vram-bar-container">
-      <div class="vram-bar" style="width:${usedPct}%;background:${usedPct>90?'var(--red)':usedPct>70?'var(--yellow)':'var(--green)'}"></div>
-      <span class="vram-label">${usedPct}%</span>
+    <div class="gpu-name">${escapeHtml(g.name || 'GPU')}</div>
+    <div class="gauge-row">
+      ${arcGauge(vramPct, 'VRAM', `${vramPct}%`)}
+      ${arcGauge(g.utilization_pct || 0, 'Util', `${g.utilization_pct || 0}%`)}
+      ${arcGauge(
+        g.temperature_c ? Math.min(100, Math.round(g.temperature_c / 100 * 100)) : 0,
+        'Temp',
+        g.temperature_c ? `${g.temperature_c}°` : '--',
+        g.temperature_c > 80 ? 'var(--red,#f85149)' : g.temperature_c > 65 ? 'var(--yellow,#d29922)' : undefined
+      )}
     </div>
-    ${statusRow('GPU Util', g.utilization_pct + '%')}
-    ${statusRow('Temp', g.temperature_c + '°C', g.temperature_c > 80 ? 'error' : '')}
-  `;
+    <div class="vram-detail">${vramLabel}</div>`;
 }
 
 function statusRow(label, value, cls) {
@@ -534,6 +575,7 @@ function renderMeshNodeDrawer(w) {
         <pre>${escapeHtml(JSON.stringify(hw, null, 2))}</pre>
       </details>
     </div>
+    ${!isPending ? '<div class="drawer-section" id="mesh-node-models"><div class="loading-placeholder">Loading models&hellip;</div></div>' : ''}
     <form class="drawer-section" id="mesh-node-config-form" data-worker-id="${encodeURIComponent(w.worker_id)}">
       <h4>Configuration</h4>
       <label class="param-label">Nickname</label>
@@ -613,6 +655,7 @@ function renderMeshNodeDrawer(w) {
       }
     });
   }
+  if (!isPending) loadWorkerModels(w.worker_id);
 }
 
 async function saveMeshNodeConfig(workerId, form) {
@@ -640,6 +683,136 @@ async function saveMeshNodeConfig(workerId, form) {
     loadMeshTab();
   } catch (e) {
     status.textContent = 'Failed: ' + e.message;
+  }
+}
+
+// =====================================================================
+// Worker model management (drawer sub-panel)
+// =====================================================================
+let _catalogCache = null;
+
+async function fetchCatalog() {
+  if (_catalogCache) return _catalogCache;
+  const r = await authFetch(`${API}/mesh/models/catalog`);
+  if (!r.ok) return null;
+  _catalogCache = await r.json();
+  return _catalogCache;
+}
+
+async function loadWorkerModels(workerId) {
+  const container = document.getElementById('mesh-node-models');
+  if (!container) return;
+  try {
+    const [modelsResp, catalog] = await Promise.all([
+      authFetch(`${API}/mesh/workers/${encodeURIComponent(workerId)}/models`).then(r => r.ok ? r.json() : null),
+      fetchCatalog(),
+    ]);
+    if (!modelsResp) {
+      container.innerHTML = '<h4>Models</h4><p class="param-subtitle">Could not reach worker — it may still be starting up.</p>';
+      return;
+    }
+    renderWorkerModels(container, workerId, modelsResp, catalog);
+  } catch (err) {
+    container.innerHTML = `<h4>Models</h4><p class="param-subtitle">Error: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderWorkerModels(container, workerId, data, catalog) {
+  const active = data.active?.model_name || '';
+  const models = data.files || [];
+  const catalogModels = catalog?.models || [];
+  const onDisk = new Set(models.map(m => m.filename || m));
+
+  const modelRows = models.map(m => {
+    const name = typeof m === 'string' ? m : (m.filename || m.name || '');
+    const size = m.size_gb ? `${m.size_gb.toFixed(1)} GB` : '';
+    const isActive = name === active;
+    return `<div class="model-row ${isActive ? 'model-active' : ''}">
+      <div class="model-info">
+        <span class="model-name">${escapeHtml(name.replace('.gguf', ''))}</span>
+        ${size ? `<span class="model-size">${size}</span>` : ''}
+        ${isActive ? '<span class="status-pill ok">active</span>' : ''}
+      </div>
+      ${!isActive ? `<button class="btn-small model-activate-btn" data-filename="${encodeURIComponent(name)}">Activate</button>` : ''}
+    </div>`;
+  });
+
+  const catalogRows = catalogModels.map(m => {
+    const have = onDisk.has(m.filename);
+    return `<div class="model-row catalog-row">
+      <div class="model-info">
+        <span class="model-name">${escapeHtml(m.name)}</span>
+        <span class="model-size">${m.size_gb} GB</span>
+        <span class="model-tier">${m.tier}</span>
+        ${m.tags?.includes('moe') ? '<span class="model-tag">MoE</span>' : ''}
+        ${m.tags?.includes('code') ? '<span class="model-tag">code</span>' : ''}
+      </div>
+      ${have
+        ? '<span class="param-subtitle">on disk</span>'
+        : `<button class="btn-small model-download-btn" data-model-id="${encodeURIComponent(m.id)}" data-model-name="${escapeHtml(m.name)}"
+             data-size="${m.size_gb}">Download</button>`}
+    </div>`;
+  });
+
+  container.innerHTML = `
+    <h4>Models</h4>
+    ${active
+      ? `<div class="model-active-banner">Running: <strong>${escapeHtml(active.replace('.gguf', ''))}</strong></div>`
+      : '<div class="model-active-banner warn">No model loaded</div>'}
+    ${models.length ? `<div class="model-list">${modelRows.join('')}</div>` : '<p class="param-subtitle">No GGUFs on this worker yet.</p>'}
+    <details class="catalog-browser">
+      <summary>Browse catalog (${catalogModels.length} models)</summary>
+      <div class="catalog-list">${catalogRows.join('')}</div>
+    </details>
+    <span id="model-action-status" class="param-subtitle"></span>`;
+
+  container.querySelectorAll('.model-activate-btn').forEach(btn => {
+    btn.addEventListener('click', () => activateWorkerModel(workerId, decodeURIComponent(btn.dataset.filename)));
+  });
+  container.querySelectorAll('.model-download-btn').forEach(btn => {
+    btn.addEventListener('click', () => downloadWorkerModel(workerId, decodeURIComponent(btn.dataset.modelId), btn));
+  });
+}
+
+async function activateWorkerModel(workerId, filename) {
+  const status = document.getElementById('model-action-status');
+  if (status) status.textContent = `Activating ${filename}…`;
+  try {
+    const r = await authFetch(`${API}/mesh/workers/${encodeURIComponent(workerId)}/models/activate`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ filename }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Activate failed');
+    if (status) status.textContent = `Activated: ${data.model || filename}`;
+    setTimeout(() => loadWorkerModels(workerId), 1000);
+  } catch (err) {
+    if (status) status.textContent = `Failed: ${err.message}`;
+  }
+}
+
+async function downloadWorkerModel(workerId, modelId, btn) {
+  const status = document.getElementById('model-action-status');
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Downloading…';
+  if (status) status.textContent = `Downloading ${modelId}… (this may take several minutes)`;
+  try {
+    const r = await authFetch(`${API}/mesh/workers/${encodeURIComponent(workerId)}/models/download`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ model_id: modelId }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Download failed');
+    btn.textContent = 'Done';
+    if (status) status.textContent = `Downloaded: ${data.filename || modelId}`;
+    setTimeout(() => loadWorkerModels(workerId), 1000);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = origText;
+    if (status) status.textContent = `Download failed: ${err.message}`;
   }
 }
 
@@ -2318,7 +2491,6 @@ function showToast(msg, type = 'info') {
 // =====================================================================
 // Utilities
 // =====================================================================
-function escapeHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 function escapeAttr(s){return(s||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function debounce(fn,ms=300){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);}}
 // =====================================================================

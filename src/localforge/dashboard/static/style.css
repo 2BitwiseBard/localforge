@@ -195,7 +195,64 @@ main {
 
 .card h2 { font-size: 0.95rem; margin-bottom: 10px; color: var(--text-dim); }
 
-/* Status */
+/* Service health bar */
+.status-health-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 16px; margin-bottom: 12px;
+  background: var(--surface, #161b22); border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.health-pill {
+  font-size: 0.78rem; padding: 3px 10px; border-radius: 12px;
+  font-weight: 500;
+}
+.health-pill.up { background: rgba(63,185,80,0.15); color: #3fb950; }
+.health-pill.down { background: rgba(248,81,73,0.15); color: #f85149; }
+.health-pill.unknown { background: rgba(139,148,158,0.15); color: #8b949e; }
+.health-pill.loading { background: rgba(139,148,158,0.1); color: #8b949e; }
+
+/* Status grid */
+.status-grid-2 {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;
+}
+@media (max-width: 768px) {
+  .status-grid-2 { grid-template-columns: 1fr; }
+}
+
+/* Model card */
+.model-card-name {
+  font-size: 1.05rem; font-weight: 600; color: #c9d1d9;
+  margin-bottom: 8px; word-break: break-word;
+}
+.model-card-detail {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  font-size: 0.82rem; color: #8b949e; margin-top: 4px;
+}
+.model-card-detail span { white-space: nowrap; }
+
+/* Arc gauges */
+.gauge-row { display: flex; justify-content: center; gap: 8px; }
+.arc-gauge {
+  position: relative; width: 90px; height: 90px;
+}
+.arc-gauge svg { width: 100%; height: 100%; transform: rotate(135deg); }
+.arc-fill { transition: stroke-dasharray 0.6s ease; }
+.arc-center {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+}
+.arc-value { font-size: 0.95rem; font-weight: 700; color: #c9d1d9; }
+.arc-label { font-size: 0.68rem; color: #8b949e; margin-top: -2px; }
+.gpu-name {
+  font-size: 0.82rem; color: #8b949e; text-align: center;
+  margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vram-detail {
+  text-align: center; font-size: 0.78rem; color: #8b949e; margin-top: 2px;
+}
+
+/* Status rows */
 .status-row {
   display: flex;
   justify-content: space-between;
@@ -210,19 +267,6 @@ main {
 .status-ok { color: var(--green); }
 .status-error { color: var(--red); }
 .status-warn { color: var(--yellow); }
-
-/* VRAM bar */
-.vram-bar-container {
-  position: relative;
-  height: 18px;
-  background: var(--border);
-  border-radius: 4px;
-  margin: 6px 0;
-  overflow: hidden;
-}
-
-.vram-bar { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
-.vram-label { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 0.7rem; font-weight: 600; }
 
 /* Chat */
 .chat-container { display: flex; flex-direction: column; min-height: 400px; max-height: calc(100dvh - 140px); }
@@ -2215,6 +2259,44 @@ a:focus-visible {
   padding: 14px; color: #8b949e; text-align: center;
 }
 .error-box { color: #f85149; }
+
+/* Model management in worker drawer */
+.model-active-banner {
+  padding: 8px 12px; border-radius: 4px; font-size: 0.85rem;
+  background: rgba(63, 185, 80, 0.1); border: 1px solid rgba(63, 185, 80, 0.3);
+  color: #3fb950; margin-bottom: 12px;
+}
+.model-active-banner.warn {
+  background: rgba(210, 153, 34, 0.1); border-color: rgba(210, 153, 34, 0.3);
+  color: #d29922;
+}
+.model-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.model-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px; border-radius: 4px;
+  background: var(--surface, #161b22); border: 1px solid var(--border);
+}
+.model-row.model-active { border-color: rgba(63, 185, 80, 0.4); }
+.model-info { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.model-name {
+  font-size: 0.85rem; color: #c9d1d9; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.model-size { font-size: 0.78rem; color: #8b949e; white-space: nowrap; }
+.model-tier {
+  font-size: 0.7rem; padding: 1px 6px; border-radius: 3px;
+  background: rgba(136, 132, 216, 0.15); color: #a5a0e4; white-space: nowrap;
+}
+.model-tag {
+  font-size: 0.7rem; padding: 1px 6px; border-radius: 3px;
+  background: rgba(56, 166, 222, 0.15); color: #58a6ff; white-space: nowrap;
+}
+.catalog-browser { margin-top: 8px; }
+.catalog-browser summary {
+  cursor: pointer; color: #58a6ff; font-size: 0.85rem; padding: 4px 0;
+}
+.catalog-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.catalog-row { background: transparent; border-color: var(--border); }
 
 @media (max-width: 768px) {
   .side-drawer { width: 100%; }

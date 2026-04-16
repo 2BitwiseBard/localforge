@@ -71,31 +71,44 @@
 <main role="main">
   <!-- Status Tab -->
   <section id="tab-status" class="tab-content active" role="tabpanel" aria-label="System status">
-    <div class="card">
-      <h2>System Status <span id="refresh-indicator" class="refresh-indicator" title="Auto-refreshes every 30s"></span></h2>
-      <div id="status-info" aria-live="polite">Loading...</div>
+    <!-- Service health pills -->
+    <div class="status-health-bar" id="service-health-bar">
+      <span class="health-pill loading" id="hp-gateway">Gateway</span>
+      <span class="health-pill loading" id="hp-backend">Backend</span>
+      <span class="health-pill loading" id="hp-litellm">LiteLLM</span>
+      <span id="refresh-indicator" class="refresh-indicator" title="Auto-refreshes every 30s"></span>
     </div>
-    <div class="card">
-      <h2>GPU Metrics</h2>
-      <div id="gpu-metrics">Loading...</div>
-    </div>
-    <div class="card">
-      <h2>Hub Mode</h2>
-      <div class="mode-controls">
-        <select id="mode-select" class="param-select">
-          <option value="">loading...</option>
-        </select>
-        <select id="character-select" class="param-select">
-          <option value="">loading...</option>
-        </select>
-        <button id="mode-apply" class="btn-primary">Apply</button>
+
+    <!-- Model card + GPU gauges side by side -->
+    <div class="status-grid-2">
+      <div class="card status-model-card">
+        <h2>Active Model</h2>
+        <div id="status-model">Loading&hellip;</div>
       </div>
-      <div id="mode-info" class="mode-info"></div>
+      <div class="card status-gpu-card">
+        <h2>GPU</h2>
+        <div id="gpu-gauges">Loading&hellip;</div>
+      </div>
     </div>
-    <div class="card">
-      <h2>Gateway Health</h2>
-      <div id="health-info">Loading...</div>
+
+    <!-- System info row -->
+    <div class="status-grid-2">
+      <div class="card">
+        <h2>System</h2>
+        <div id="status-info" aria-live="polite">Loading&hellip;</div>
+      </div>
+      <div class="card">
+        <h2>Hub Mode</h2>
+        <div class="mode-controls">
+          <select id="mode-select" class="param-select"><option value="">loading...</option></select>
+          <select id="character-select" class="param-select"><option value="">loading...</option></select>
+          <button id="mode-apply" class="btn-primary">Apply</button>
+        </div>
+        <div id="mode-info" class="mode-info"></div>
+      </div>
     </div>
+
+    <!-- Mesh summary -->
     <div class="card">
       <div class="card-header-row">
         <h2>Compute Mesh</h2>
@@ -104,17 +117,17 @@
           <button class="btn-small" data-tab="mesh" title="Open full mesh view">Open Mesh &rsaquo;</button>
         </div>
       </div>
-      <div id="mesh-summary" class="mesh-summary">Loading...</div>
+      <div id="mesh-summary" class="mesh-summary">Loading&hellip;</div>
     </div>
 
+    <!-- Model sync -->
     <div class="card">
-      <h2>Model Management</h2>
-      <p class="param-subtitle">Sync new models from external drives</p>
-      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
-        <button id="sync-models-btn" class="btn-primary">Sync Models</button>
-        <span id="sync-models-status" style="color:#8b949e;font-size:0.85em;"></span>
+      <div class="card-header-row">
+        <h2>Model Sync</h2>
+        <button id="sync-models-btn" class="btn-small">Sync</button>
       </div>
-      <pre id="sync-models-result" style="display:none;margin-top:12px;white-space:pre-wrap;font-size:0.85em;color:#c9d1d9;max-height:200px;overflow:auto;"></pre>
+      <span id="sync-models-status" class="param-subtitle"></span>
+      <pre id="sync-models-result" style="display:none;margin-top:8px;white-space:pre-wrap;font-size:0.82em;color:#c9d1d9;max-height:180px;overflow:auto;"></pre>
     </div>
   </section>
 
