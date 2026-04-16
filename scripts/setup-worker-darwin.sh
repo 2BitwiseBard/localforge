@@ -67,6 +67,16 @@ if launchctl print "gui/$UID_NUM/com.localforge.worker" >/dev/null 2>&1; then
 fi
 
 # --- 2. Venv + install ---------------------------------------------------
+# pip installs from a git URL — ensure git is present.
+# On macOS, `git --version` without Xcode CLT pops a system install dialog;
+# running `xcode-select --install` first makes that explicit.
+if ! command -v git >/dev/null 2>&1; then
+    echo "git not found. Requesting Xcode Command Line Tools install..."
+    xcode-select --install 2>/dev/null || true
+    echo "Error: Install Xcode CLT when prompted, then re-run this script."
+    exit 1
+fi
+
 mkdir -p "$APP_SUPPORT"
 VENV="$APP_SUPPORT/venv"
 VENV_PY="$VENV/bin/python"

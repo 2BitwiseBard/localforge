@@ -66,6 +66,16 @@ if systemctl --user is-active --quiet localforge-worker 2>/dev/null; then
 fi
 
 # --- 1. Install localforge[worker] ---------------------------------------
+# pip installs from a git URL — ensure git is present first.
+if ! command -v git >/dev/null 2>&1; then
+    echo "git not found. Installing..."
+    if   command -v apt-get >/dev/null 2>&1; then sudo apt-get install -y git
+    elif command -v dnf     >/dev/null 2>&1; then sudo dnf     install -y git
+    elif command -v pacman  >/dev/null 2>&1; then sudo pacman  -Sy --noconfirm git
+    else echo "Error: git is required but could not be auto-installed. Install git and re-run."; exit 1
+    fi
+fi
+
 echo ""
 echo "Installing localforge[worker]..."
 if command -v uv >/dev/null; then

@@ -59,13 +59,26 @@ try {
 } catch { }
 
 # Elevated windows spawned via Start-Process -Verb RunAs close IMMEDIATELY
-# on `exit N` (which bypasses PowerShell's `trap` handler). Two defenses so
+# on `exit N` (which bypasses PowerShell's `trap` handler). Three defenses so
 # the user can always see what happened:
-#   1. Start-Transcript to a well-known path so the parent (non-elevated)
-#      console can `type` the log after the elevated window closes.
-#   2. Register a PowerShell.Exiting engine event — unlike `trap`, this
+#   1. Log under $env:ProgramData (not $env:TEMP) — when UAC prompts for
+#      admin credentials rather than consent, the elevated shell runs under
+#      a DIFFERENT user whose $env:TEMP is elsewhere, so the parent can't
+#      find the log. ProgramData is the same absolute path for all users.
+#   2. Write a sentinel file BEFORE Start-Transcript so the parent can
+#      distinguish "script never ran" from "script ran but transcript failed".
+#   3. Register a PowerShell.Exiting engine event — unlike `trap`, this
 #      DOES fire on `exit N`, giving us a reliable pause.
-$script:TranscriptPath = Join-Path $env:TEMP "localforge-setup.log"
+$script:LogDir = Join-Path $env:ProgramData "LocalForge"
+$script:TranscriptPath = Join-Path $script:LogDir "setup.log"
+$script:SentinelPath = Join-Path $script:LogDir "setup.started"
+try {
+    New-Item -ItemType Directory -Force -Path $script:LogDir -ErrorAction Stop | Out-Null
+} catch { }
+try {
+    "started $(Get-Date -Format o) as $env:USERDOMAIN\$env:USERNAME pid=$PID" |
+        Out-File -FilePath $script:SentinelPath -Encoding UTF8 -ErrorAction Stop
+} catch { }
 try {
     if (Test-Path $script:TranscriptPath) { Remove-Item -Force $script:TranscriptPath }
     Start-Transcript -Path $script:TranscriptPath -Force | Out-Null

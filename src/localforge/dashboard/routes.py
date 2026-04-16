@@ -2013,24 +2013,42 @@ def _install_oneliners(token: str, hub_url: str) -> dict[str, str]:
             # UAC (Start-Process -Verb RunAs). Server-side templates Hub + Token
             # into the script body so no args need to cross the UAC boundary.
             #
-            # The elevated PowerShell window closes IMMEDIATELY on `exit N`
-            # (PowerShell's `trap` handler is skipped on explicit exits), so
-            # without extra help the user sees nothing when the installer
-            # fails. Fix: the elevated script writes a transcript to a
-            # known path, and after Start-Process -Wait returns we `type`
-            # that transcript into the (visible) parent console so the user
-            # always sees success or failure output.
+            # Log lives under $env:ProgramData (NOT $env:TEMP) because when UAC
+            # prompts for admin credentials (not just consent), the elevated shell
+            # runs as a DIFFERENT user whose $env:TEMP resolves to a different
+            # directory — the parent can't find the log. ProgramData is the same
+            # absolute path for every user on the machine.
+            #
+            # The elevated script also writes a sentinel file at the very top
+            # (before Start-Transcript) so the parent can distinguish:
+            #   - sentinel missing      → script never started (UAC denied / GPO block)
+            #   - sentinel present, no log → script started but transcript failed
+            #   - log present           → script ran (check exit code)
             f"powershell -ExecutionPolicy Bypass -NoProfile -Command "
             f"\"$s=$env:TEMP+'\\localforge-setup.ps1'; "
-            f"$log=$env:TEMP+'\\localforge-setup.log'; "
+            f"$d=$env:ProgramData+'\\LocalForge'; "
+            f"$log=Join-Path $d 'setup.log'; "
+            f"$sentinel=Join-Path $d 'setup.started'; "
+            f"New-Item -ItemType Directory -Force -Path $d | Out-Null; "
             f"iwr -useb '{base}?platform=win32&token={token}' -OutFile $s; "
             f"if(Test-Path $log){{Remove-Item -Force $log}}; "
-            f"Start-Process powershell -Verb RunAs -Wait -ArgumentList "
-            f"'-ExecutionPolicy','Bypass','-NoProfile','-File',$s; "
-            f"if(Test-Path $log){{Write-Host '--- installer log ---' -ForegroundColor Cyan; "
+            f"if(Test-Path $sentinel){{Remove-Item -Force $sentinel}}; "
+            f"$proc=Start-Process powershell -Verb RunAs -PassThru -Wait "
+            f"-ArgumentList '-ExecutionPolicy','Bypass','-NoProfile','-File',$s; "
+            f"if(Test-Path $log){{"
+            f"Write-Host '--- installer log ---' -ForegroundColor Cyan; "
             f"Get-Content $log | Write-Host; "
-            f"Write-Host ('--- end log: '+$log+' ---') -ForegroundColor Cyan}} "
-            f"else{{Write-Host 'No log produced. The elevated window may have been blocked by UAC.' -ForegroundColor Yellow}}\"",
+            f"Write-Host ('--- exit code: '+$proc.ExitCode+' ---') -ForegroundColor Cyan"
+            f"}} elseif(Test-Path $sentinel){{"
+            f"Write-Host 'Script started but transcript was never written.' -ForegroundColor Yellow; "
+            f"Write-Host ('Sentinel: '+(Get-Content $sentinel -Raw).Trim()) -ForegroundColor Yellow; "
+            f"Write-Host ('Exit code: '+$proc.ExitCode) -ForegroundColor Yellow"
+            f"}} else{{"
+            f"Write-Host 'Elevated shell never ran the script (UAC denied, GPO, or PowerShell blocked).' -ForegroundColor Red; "
+            f"Write-Host 'Manual fix: open Admin PowerShell and run:' -ForegroundColor Yellow; "
+            f"Write-Host ('  powershell -ExecutionPolicy Bypass -File '+$s) -ForegroundColor Yellow; "
+            f"Write-Host ('Exit code: '+$proc.ExitCode) -ForegroundColor Red"
+            f"}}\"",
         "android":
             f"curl -fsSL '{base}?platform=android&token={token}' | "
             f"bash -s -- --hub {hub_url} --token {token}",
