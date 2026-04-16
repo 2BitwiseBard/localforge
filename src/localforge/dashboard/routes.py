@@ -107,7 +107,7 @@ def _user_dir(base: str, user_id: str) -> Path:
 # ---------------------------------------------------------------------------
 
 async def notify_user(user_id: str, title: str, body: str, tag: str = "ai-hub"):
-    """Send notification to a user via SSE."""
+    """Send notification to a user via SSE and Web Push (if subscribed)."""
     queues = _sse_clients.get(user_id, [])
     event = json.dumps({"title": title, "body": body, "tag": tag, "timestamp": time.time()})
     for q in queues:
@@ -115,12 +115,144 @@ async def notify_user(user_id: str, title: str, body: str, tag: str = "ai-hub"):
             q.put_nowait(event)
         except asyncio.QueueFull:
             pass
+    # Fire-and-forget web push; don't let failures block the SSE path.
+    asyncio.get_event_loop().create_task(
+        _send_webpush(user_id, title, body, tag)
+    )
 
 
 async def notify_all(title: str, body: str, tag: str = "ai-hub"):
     """Send notification to all connected users."""
     for user_id in _sse_clients:
         await notify_user(user_id, title, body, tag)
+
+
+# ---------------------------------------------------------------------------
+# Web Push helpers
+# ---------------------------------------------------------------------------
+
+_push_subs_loaded: bool = False
+
+
+def _ensure_push_subs_loaded() -> None:
+    global _push_subs_loaded
+    if _push_subs_loaded:
+        return
+    _push_subs_loaded = True
+    try:
+        data = json.loads(_push_subs_file.read_text())
+        _push_subscriptions.update(data)
+    except (OSError, json.JSONDecodeError):
+        pass
+
+
+def _save_push_subs() -> None:
+    try:
+        _push_subs_file.write_text(json.dumps(_push_subscriptions))
+    except OSError:
+        pass
+
+
+def _load_vapid_keys() -> tuple[str, str]:
+    """Return (public_key_b64url, private_key_pem). Empty strings if not configured."""
+    cfg = _load_config()
+    gw = cfg.get("gateway", {})
+    pub = gw.get("vapid_public_key", "")
+    priv_b64 = gw.get("vapid_private_key", "")
+    if not pub or not priv_b64:
+        return "", ""
+    import base64 as _b64
+    try:
+        # private key stored as base64-encoded PEM
+        priv_pem = _b64.urlsafe_b64decode(priv_b64 + "==").decode()
+    except Exception:
+        priv_pem = priv_b64  # assume already raw PEM
+    return pub, priv_pem
+
+
+async def _send_webpush(user_id: str, title: str, body: str, tag: str) -> None:
+    """Deliver a Web Push notification to all push endpoints registered for user_id.
+
+    Runs pywebpush in a thread executor so it doesn't block the event loop.
+    Silently degrades when:
+      - no push subscriptions for user
+      - VAPID keys not in config
+      - pywebpush not installed
+    Subscriptions that return HTTP 410 (Gone) are automatically purged.
+    """
+    _ensure_push_subs_loaded()
+    subs = _push_subscriptions.get(user_id, [])
+    if not subs:
+        return
+    pub_key, priv_pem = _load_vapid_keys()
+    if not pub_key or not priv_pem:
+        return
+    try:
+        from pywebpush import webpush, WebPushException
+    except ImportError:
+        return
+
+    payload = json.dumps({"title": title, "body": body, "tag": tag})
+    to_remove: list[dict] = []
+
+    def _send_one(sub: dict) -> bool:
+        try:
+            webpush(
+                subscription_info=sub,
+                data=payload,
+                vapid_private_key=priv_pem,
+                vapid_claims={"sub": "mailto:localforge@localhost"},
+            )
+            return True
+        except Exception as exc:
+            # 410 = subscription expired/unsubscribed → clean up
+            resp = getattr(exc, "response", None)
+            if resp is not None and getattr(resp, "status_code", None) == 410:
+                return False
+            return True
+
+    loop = asyncio.get_event_loop()
+    results = await asyncio.gather(
+        *[loop.run_in_executor(None, _send_one, s) for s in subs],
+        return_exceptions=True,
+    )
+    expired = [s for s, keep in zip(subs, results) if keep is False]
+    if expired:
+        _push_subscriptions[user_id] = [s for s in subs if s not in expired]
+        _save_push_subs()
+
+
+async def api_push_vapid_key(request: Request) -> JSONResponse:
+    """Return the VAPID public key so browsers can set up push subscriptions.
+
+    Listed in PUBLIC_PATHS so it works before the user has authenticated.
+    """
+    pub, _ = _load_vapid_keys()
+    if not pub:
+        return JSONResponse({"error": "Push notifications not configured on this hub"}, status_code=503)
+    return JSONResponse({"public_key": pub})
+
+
+async def api_push_subscribe(request: Request) -> JSONResponse:
+    """Save a browser push subscription for the current user.
+
+    The browser calls this after navigator.serviceWorker.pushManager.subscribe().
+    Body: the PushSubscription JSON (endpoint, keys.p256dh, keys.auth).
+    """
+    _ensure_push_subs_loaded()
+    user = _get_user(request)
+    user_id = user.get("id", "admin")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    if "endpoint" not in body:
+        return JSONResponse({"error": "Missing endpoint in subscription"}, status_code=400)
+    subs = _push_subscriptions.setdefault(user_id, [])
+    if not any(s.get("endpoint") == body["endpoint"] for s in subs):
+        subs.append(body)
+        _save_push_subs()
+    return JSONResponse({"ok": True, "subscriptions": len(subs)})
 
 
 # ---------------------------------------------------------------------------
@@ -2659,8 +2791,10 @@ dashboard_routes = [
     Route("/notes/{topic}", api_note_content, methods=["GET"]),
     # Voice
     Route("/transcribe", api_transcribe, methods=["POST"]),
-    # Notifications
+    # Notifications + Web Push
     Route("/events", api_events, methods=["GET"]),
+    Route("/push/vapid-key", api_push_vapid_key, methods=["GET"]),
+    Route("/push/subscribe", api_push_subscribe, methods=["POST"]),
     # Videos
     Route("/videos", api_videos_list, methods=["GET"]),
     Route("/videos/upload", api_videos_upload, methods=["POST"]),

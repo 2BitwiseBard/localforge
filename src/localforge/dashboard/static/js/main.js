@@ -115,12 +115,54 @@ try {
   }
 } catch {}
 
-// Notification permission
-if ('Notification' in window && Notification.permission === 'default') {
-  document.addEventListener('click', function askNotif() {
-    Notification.requestPermission();
-    document.removeEventListener('click', askNotif);
-  }, { once: true });
+// Notification permission + Web Push subscription
+if ('Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window) {
+  function _urlBase64ToUint8Array(b64) {
+    const pad = '='.repeat((4 - b64.length % 4) % 4);
+    const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+  }
+
+  async function subscribeToPush() {
+    try {
+      const resp = await fetch('/api/push/vapid-key');
+      if (!resp.ok) return;
+      const { public_key } = await resp.json();
+      if (!public_key) return;
+      const reg = await navigator.serviceWorker.ready;
+      // Re-register existing subscription (idempotent on server)
+      const existing = await reg.pushManager.getSubscription();
+      if (existing) {
+        await authFetch('/api/push/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(existing.toJSON()),
+        }).catch(() => {});
+        return;
+      }
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: _urlBase64ToUint8Array(public_key),
+      });
+      await authFetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sub.toJSON()),
+      }).catch(() => {});
+    } catch {
+      // Push blocked or unavailable — not fatal
+    }
+  }
+
+  if (Notification.permission === 'granted') {
+    subscribeToPush();
+  } else if (Notification.permission === 'default') {
+    document.addEventListener('click', async function askNotif() {
+      document.removeEventListener('click', askNotif);
+      const perm = await Notification.requestPermission();
+      if (perm === 'granted') subscribeToPush();
+    }, { once: true });
+  }
 }
 
 // =====================================================================

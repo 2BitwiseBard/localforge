@@ -154,6 +154,43 @@ MODELS: list[Model] = [
         "tags": ["chat", "reasoning", "vision", "moe"],
         "tier": "xl",
     },
+    # --- TIER: xl — Qwen3.6-35B-A3B (MoE, multimodal vision) -------------
+    # Successor to Qwen3.5-35B-A3B. Same MoE shape (35B total / 3B active)
+    # but adds multimodal vision. Requires a matching mmproj file installed
+    # alongside (bootstrapper downloads it automatically).
+    {
+        "id": "qwen3.6-35b-a3b-ud-iq3-xxs",
+        "name": "Qwen3.6-35B-A3B · UD-IQ3_XXS (MoE, vision)",
+        "family": "qwen3.6-moe", "params_b": 35, "active_b": 3,
+        "quant": "UD-IQ3_XXS",
+        "size_gb": 13.2, "min_vram_mb": 14000,
+        "filename": "Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf",
+        "url": "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf",
+        "tags": ["chat", "reasoning", "vision", "moe"],
+        "tier": "xl",
+    },
+    {
+        "id": "qwen3.6-35b-a3b-ud-iq4-xs",
+        "name": "Qwen3.6-35B-A3B · UD-IQ4_XS (MoE, vision)",
+        "family": "qwen3.6-moe", "params_b": 35, "active_b": 3,
+        "quant": "UD-IQ4_XS",
+        "size_gb": 18.9, "min_vram_mb": 20000,
+        "filename": "Qwen3.6-35B-A3B-UD-IQ4_XS.gguf",
+        "url": "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-IQ4_XS.gguf",
+        "tags": ["chat", "reasoning", "vision", "moe"],
+        "tier": "xl",
+    },
+    {
+        "id": "qwen3.6-35b-a3b-ud-q5",
+        "name": "Qwen3.6-35B-A3B · UD-Q5_K_XL (MoE, vision)",
+        "family": "qwen3.6-moe", "params_b": 35, "active_b": 3,
+        "quant": "UD-Q5_K_XL",
+        "size_gb": 26.5, "min_vram_mb": 28000,
+        "filename": "Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf",
+        "url": "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf",
+        "tags": ["chat", "reasoning", "vision", "moe"],
+        "tier": "xl",
+    },
     # --- SPECIALTY: code (MoE, long context) ------------------------------
     {
         "id": "qwen3-coder-30b-a3b-ud-q4",
@@ -175,7 +212,7 @@ TIER_DEFAULTS: dict[str, str] = {
     "small":  "qwen3.5-4b-q4",
     "medium": "qwen3.5-9b-q4",
     "large":  "qwen3.5-27b-ud-iq4",
-    "xl":     "qwen3.5-35b-a3b-ud-q4",
+    "xl":     "qwen3.6-35b-a3b-ud-iq3-xxs",  # upgraded: 3.6 adds vision, smaller than 3.5 Q4
 }
 
 

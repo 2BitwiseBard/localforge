@@ -254,3 +254,21 @@ compute_pool:
     reranking: {prefer_tier: [cpu-capable]}
     classification: {prefer_tier: [lightweight, cpu-capable]}
     autocomplete: {prefer_tier: [lightweight, gpu-secondary]}
+
+# Gateway settings
+gateway:
+  # Web Push (VAPID) for native push notifications to PWA installs.
+  # Generate keys once with:
+  #   python3 -c "
+  #   from cryptography.hazmat.primitives.asymmetric.ec import SECP256R1, generate_private_key
+  #   from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, PrivateFormat, NoEncryption
+  #   from cryptography.hazmat.backends import default_backend
+  #   import base64
+  #   k = generate_private_key(SECP256R1(), default_backend())
+  #   pub = base64.urlsafe_b64encode(k.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)).rstrip(b'=').decode()
+  #   priv = base64.urlsafe_b64encode(k.private_bytes(Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption())).rstrip(b'=').decode()
+  #   print('vapid_public_key:', pub)
+  #   print('vapid_private_key:', priv)
+  #   "
+  vapid_public_key: ""   # URL-safe base64 uncompressed P-256 public key
+  vapid_private_key: ""  # URL-safe base64 PEM-encoded P-256 private key
