@@ -1013,9 +1013,18 @@ def create_app():
         })
 
     async def on_startup():
-        global _task_queue, _llama_swap_lock
+        global _task_queue, _llama_swap_lock, _llama_manager
         _task_queue = asyncio.Queue(maxsize=_max_concurrent * 4)
         _llama_swap_lock = asyncio.Lock()
+
+        if _llama_manager is not None:
+            started = await _llama_manager.start()
+            if started:
+                log.info("llama-server ready: %s on :%d",
+                         _llama_manager.model_name, _llama_manager.port)
+            else:
+                log.error("llama-server FAILED to start — falling back to external backend")
+                _llama_manager = None
 
         # Start task worker coroutines
         for i in range(_max_concurrent):
@@ -1178,13 +1187,7 @@ def main():
             ctx_size=args.ctx_size,
             parallel=min(args.max_concurrent, 2),
         )
-        # Start llama-server synchronously before uvicorn
-        started = asyncio.run(_llama_manager.start())
-        if started:
-            print(f"  llama-server: {_llama_manager.model_name} on :{args.llama_port}")
-        else:
-            print("  llama-server: FAILED to start (falling back to external backend)")
-            _llama_manager = None
+        print(f"  llama-server: {_llama_manager.model_name} (will start in on_startup)")
     else:
         print("  llama-server: disabled (no model found)")
 

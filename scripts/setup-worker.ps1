@@ -50,6 +50,14 @@ if ($Token -like '%%*%%') { $Token = $env:LOCALFORGE_ENROLLMENT_TOKEN }
 
 $ErrorActionPreference = "Stop"
 
+# Force TLS 1.2 globally — PowerShell 5.1 on older Windows 10 defaults to
+# TLS 1.0/1.1 which most HTTPS endpoints (including Tailscale certs) reject.
+# Must happen early, before any Invoke-RestMethod or Invoke-WebRequest call.
+try {
+    [Net.ServicePointManager]::SecurityProtocol = `
+        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+} catch { }
+
 # Elevated windows spawned via Start-Process -Verb RunAs close IMMEDIATELY
 # on `exit N` (which bypasses PowerShell's `trap` handler). Two defenses so
 # the user can always see what happened:
@@ -451,14 +459,17 @@ if ($Model) {
 }
 
 $serviceName = "LocalForgeWorker"
+# NSSM's AppParameters is a raw CreateProcess command-line; args with spaces
+# need individual double-quoting.
+$appParams = ($svcArgs | ForEach-Object {
+    if ($_ -match '\s') { "`"$_`"" } else { $_ }
+}) -join ' '
 $existing = & $nssmExe status $serviceName 2>&1
 if ($LASTEXITCODE -eq 0) {
     Write-Step "Reconfiguring existing $serviceName service"
     & $nssmExe stop $serviceName | Out-Null
-    # Replace the command + args on reconfigure so a prior install without
-    # --model picks up the new model arg (and vice versa for -SkipModel).
     & $nssmExe set $serviceName Application $venvPy | Out-Null
-    & $nssmExe set $serviceName AppParameters ($svcArgs -join ' ') | Out-Null
+    & $nssmExe set $serviceName AppParameters $appParams | Out-Null
 } else {
     Write-Step "Installing $serviceName service"
     & $nssmExe install $serviceName $venvPy @svcArgs
