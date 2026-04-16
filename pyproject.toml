@@ -72,8 +72,11 @@ media = [
     "Pillow~=10.0",
 ]
 
-# Device worker (mesh compute node)
+# Device worker (mesh compute node) — standalone HTTP server, so it
+# needs its own uvicorn/starlette in addition to system-metrics deps.
 worker = [
+    "uvicorn~=0.30",
+    "starlette~=0.38",
     "psutil~=5.9",
     "wmi~=1.5 ; sys_platform == 'win32'",
 ]

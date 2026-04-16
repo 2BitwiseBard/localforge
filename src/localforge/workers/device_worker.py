@@ -750,19 +750,26 @@ def create_app():
             return JSONResponse({"error": "Worker is shutting down"}, status_code=503)
 
         # Memory-pressure check: reject if available RAM < threshold
-        try:
-            with open("/proc/meminfo") as f:
-                for line in f:
-                    if line.startswith("MemAvailable:"):
-                        avail_mb = int(line.split()[1]) // 1024
-                        if avail_mb < _min_memory_mb:
-                            return JSONResponse(
-                                {"error": f"Insufficient memory ({avail_mb}MB available, need {_min_memory_mb}MB)"},
-                                status_code=503,
-                            )
-                        break
-        except (OSError, ValueError):
-            pass  # Non-Linux or parse error — skip check
+        avail_mb = None
+        if _HAS_PSUTIL:
+            try:
+                avail_mb = psutil.virtual_memory().available // (1024 * 1024)
+            except Exception:
+                pass
+        if avail_mb is None:
+            try:
+                with open("/proc/meminfo") as f:
+                    for line in f:
+                        if line.startswith("MemAvailable:"):
+                            avail_mb = int(line.split()[1]) // 1024
+                            break
+            except (OSError, ValueError):
+                pass
+        if avail_mb is not None and avail_mb < _min_memory_mb:
+            return JSONResponse(
+                {"error": f"Insufficient memory ({avail_mb}MB available, need {_min_memory_mb}MB)"},
+                status_code=503,
+            )
 
         # Power-aware check: reject if battery too low and not charging
         hw = get_hardware()
@@ -1142,13 +1149,12 @@ def main():
     global _llama_manager
     model_path = args.model
     if not model_path and not args.no_llama:
-        # Auto-detect: look for GGUF files in standard locations
         from pathlib import Path
-        for search_dir in [
-            Path(os.environ.get("INSTALL_DIR", "")) / "models",
-            Path.home() / ".ai-hub-worker" / "models",
-            Path.cwd() / "models",
-        ]:
+        search_dirs = [_models_dir()]
+        for extra in [Path.cwd() / "models"]:
+            if extra not in search_dirs:
+                search_dirs.append(extra)
+        for search_dir in search_dirs:
             if search_dir.is_dir():
                 gguf_files = sorted(search_dir.glob("*.gguf"), key=lambda p: p.stat().st_size, reverse=True)
                 if gguf_files:

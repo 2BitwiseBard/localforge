@@ -50,6 +50,23 @@ if ($Token -like '%%*%%') { $Token = $env:LOCALFORGE_ENROLLMENT_TOKEN }
 
 $ErrorActionPreference = "Stop"
 
+# Elevated windows spawned via Start-Process -Verb RunAs close IMMEDIATELY
+# on `exit N` (which bypasses PowerShell's `trap` handler). Two defenses so
+# the user can always see what happened:
+#   1. Start-Transcript to a well-known path so the parent (non-elevated)
+#      console can `type` the log after the elevated window closes.
+#   2. Register a PowerShell.Exiting engine event — unlike `trap`, this
+#      DOES fire on `exit N`, giving us a reliable pause.
+$script:TranscriptPath = Join-Path $env:TEMP "localforge-setup.log"
+try {
+    if (Test-Path $script:TranscriptPath) { Remove-Item -Force $script:TranscriptPath }
+    Start-Transcript -Path $script:TranscriptPath -Force | Out-Null
+} catch {
+    Write-Host "Warning: Start-Transcript failed ($_). Continuing without log." -ForegroundColor Yellow
+}
+
+Write-Host "Log: $script:TranscriptPath" -ForegroundColor DarkGray
+
 # Validate required params. Supports either -Hub/-Token args or env vars
 # (LOCALFORGE_HUB_URL / LOCALFORGE_ENROLLMENT_TOKEN) so the script works
 # both when run via args and when piped through iex.
@@ -92,11 +109,23 @@ function Invoke-Download {
 }
 
 # Keep the (likely elevated) console window open at the end so users can read
-# success/error output before it closes. Register for both normal and fault exits.
+# success/error output before it closes. `trap` does NOT fire on `exit N`,
+# so we use PowerShell.Exiting (runs on ANY exit path) as the primary hook,
+# and leave `trap` as a belt-and-suspenders for terminating errors.
 $script:pauseOnExit = $true
 function Invoke-PauseOnExit {
-    if ($script:pauseOnExit) { try { Read-Host "Press Enter to close" | Out-Null } catch { } }
+    if (-not $script:pauseOnExit) { return }
+    try { Stop-Transcript | Out-Null } catch { }
+    try {
+        Write-Host ""
+        Write-Host "Full log saved to: $script:TranscriptPath" -ForegroundColor Cyan
+        Read-Host "Press Enter to close"
+    } catch { }
 }
+try {
+    Register-EngineEvent -SourceIdentifier PowerShell.Exiting `
+        -Action { Invoke-PauseOnExit } | Out-Null
+} catch { }
 trap { Invoke-PauseOnExit; break }
 
 # Admin check: NSSM must register a Windows service, which requires Administrator.
@@ -206,9 +235,12 @@ if (-not (Test-Path $venvPy)) {
 
 Write-Step "Installing localforge[worker] into venv"
 # Use `python -m pip` so pip can replace itself without a Windows file lock.
-# PEP 508 direct-URL syntax — pip 25 rejects #egg= fragments.
+# Install from a zip archive URL (no git dependency — most Windows boxes
+# don't have git installed).  PEP 440 direct-URL syntax.
 & $venvPy -m pip install --upgrade pip
-& $venvPy -m pip install "localforge[worker] @ git+$GitRepo"
+$archiveUrl = "$GitRepo/archive/refs/heads/main.zip"
+Write-Host "    Installing from: $archiveUrl"
+& $venvPy -m pip install "localforge[worker] @ $archiveUrl"
 if ($LASTEXITCODE -ne 0) { Write-Err "pip install failed"; exit 1 }
 
 # --- 3. Hardware detect + register ---------------------------------------

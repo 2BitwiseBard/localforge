@@ -2012,11 +2012,25 @@ def _install_oneliners(token: str, hub_url: str) -> dict[str, str]:
             # downloads the script to a temp file and relaunches it elevated via
             # UAC (Start-Process -Verb RunAs). Server-side templates Hub + Token
             # into the script body so no args need to cross the UAC boundary.
+            #
+            # The elevated PowerShell window closes IMMEDIATELY on `exit N`
+            # (PowerShell's `trap` handler is skipped on explicit exits), so
+            # without extra help the user sees nothing when the installer
+            # fails. Fix: the elevated script writes a transcript to a
+            # known path, and after Start-Process -Wait returns we `type`
+            # that transcript into the (visible) parent console so the user
+            # always sees success or failure output.
             f"powershell -ExecutionPolicy Bypass -NoProfile -Command "
             f"\"$s=$env:TEMP+'\\localforge-setup.ps1'; "
+            f"$log=$env:TEMP+'\\localforge-setup.log'; "
             f"iwr -useb '{base}?platform=win32&token={token}' -OutFile $s; "
+            f"if(Test-Path $log){{Remove-Item -Force $log}}; "
             f"Start-Process powershell -Verb RunAs -Wait -ArgumentList "
-            f"'-ExecutionPolicy','Bypass','-NoProfile','-File',$s\"",
+            f"'-ExecutionPolicy','Bypass','-NoProfile','-File',$s; "
+            f"if(Test-Path $log){{Write-Host '--- installer log ---' -ForegroundColor Cyan; "
+            f"Get-Content $log | Write-Host; "
+            f"Write-Host ('--- end log: '+$log+' ---') -ForegroundColor Cyan}} "
+            f"else{{Write-Host 'No log produced. The elevated window may have been blocked by UAC.' -ForegroundColor Yellow}}\"",
         "android":
             f"curl -fsSL '{base}?platform=android&token={token}' | "
             f"bash -s -- --hub {hub_url} --token {token}",

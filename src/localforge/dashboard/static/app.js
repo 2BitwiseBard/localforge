@@ -492,7 +492,33 @@ function renderMeshNodeDrawer(w) {
       <input type="checkbox" name="allowed_tasks" value="${c}" ${caps.includes(c) ? 'checked' : ''}>
       <span>${c}</span>
     </label>`).join('');
+  const isPending = typeof w.status === 'string' && w.status.startsWith('registered');
+  const pendingBanner = isPending ? `
+    <div class="drawer-section drawer-alert">
+      <h4>Worker has not connected yet</h4>
+      <p>This node registered but has never sent a heartbeat. The service may not be running.</p>
+      <details open>
+        <summary>Troubleshooting</summary>
+        <ul class="troubleshoot-list">
+          ${w.platform === 'win32' ? `
+            <li>Check the install log: <code>type %TEMP%\\localforge-setup.log</code></li>
+            <li>Check service: <code>%LOCALAPPDATA%\\LocalForge\\nssm.exe status LocalForgeWorker</code></li>
+            <li>Check error log: <code>type %LOCALAPPDATA%\\LocalForge\\worker.err.log</code></li>
+            <li>Restart: <code>%LOCALAPPDATA%\\LocalForge\\nssm.exe restart LocalForgeWorker</code></li>
+          ` : w.platform === 'darwin' ? `
+            <li>Check service: <code>launchctl print gui/$(id -u)/com.localforge.worker</code></li>
+            <li>Check log: <code>cat ~/Library/Application\\ Support/LocalForge/worker.log</code></li>
+          ` : `
+            <li>Check service: <code>systemctl --user status localforge-worker</code></li>
+            <li>Check log: <code>journalctl --user -u localforge-worker -n 50</code></li>
+          `}
+          <li>Test from the device: <code>curl http://localhost:8200/health</code></li>
+        </ul>
+      </details>
+      <button type="button" class="btn-small" id="mesh-node-reenroll">Re-enroll (new install command)</button>
+    </div>` : '';
   body.innerHTML = `
+    ${pendingBanner}
     <div class="drawer-section">
       <div class="drawer-meta">
         <div><strong>Worker ID:</strong> <code>${escapeHtml(w.worker_id)}</code></div>
@@ -556,6 +582,37 @@ function renderMeshNodeDrawer(w) {
       alert('Revoke failed: ' + err.message);
     }
   });
+  const reenrollBtn = document.getElementById('mesh-node-reenroll');
+  if (reenrollBtn) {
+    reenrollBtn.addEventListener('click', async () => {
+      reenrollBtn.disabled = true;
+      reenrollBtn.textContent = 'Minting token…';
+      try {
+        const r = await authFetch(`${API}/mesh/enrollment-token`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ note: `re-enroll ${w.hostname || w.worker_id}` }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const data = await r.json();
+        const platform = w.platform || 'linux';
+        const cmd = data.install_commands?.[platform] || 'No command available';
+        reenrollBtn.replaceWith(Object.assign(document.createElement('div'), {
+          className: 'reenroll-result',
+          innerHTML: `<label class="param-label">Run this on the device:</label>
+            <div class="code-copy-wrap">
+              <pre class="code-block">${escapeHtml(cmd)}</pre>
+              <button class="btn-small copy-btn" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">Copy</button>
+            </div>
+            <p class="param-subtitle">Token expires in ${data.ttl_seconds || 600}s. Revoke the old entry first if re-installing.</p>`,
+        }));
+      } catch (err) {
+        reenrollBtn.disabled = false;
+        reenrollBtn.textContent = 'Re-enroll (new install command)';
+        alert('Failed: ' + err.message);
+      }
+    });
+  }
 }
 
 async function saveMeshNodeConfig(workerId, form) {
