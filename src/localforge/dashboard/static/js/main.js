@@ -185,8 +185,6 @@ startStatusRefresh();
   loadTrainingOverview();
   loadTrainingStatus();
   connectSSE();
-  setInterval(loadStatus, 30000);
-  setInterval(loadMeshStatus, 30000);
   setInterval(loadApprovals, 15000);
   setInterval(loadTrainingStatus, 30000);
 })();

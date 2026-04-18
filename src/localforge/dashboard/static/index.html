@@ -1050,6 +1050,25 @@
         <label for="enrollment-note-input" class="param-label">Note (optional — helps track which device got this token)</label>
         <input id="enrollment-note-input" type="text" maxlength="200" placeholder="e.g. tyler's windows laptop">
       </div>
+      <div class="enrollment-model-picker">
+        <div class="enrollment-model-row">
+          <div>
+            <label for="enrollment-vram-input" class="param-label">VRAM (GB)</label>
+            <input id="enrollment-vram-input" type="number" min="1" max="128" step="0.5" value="4" style="width:80px;">
+          </div>
+          <div>
+            <label for="enrollment-ram-input" class="param-label">RAM for offload (GB)</label>
+            <input id="enrollment-ram-input" type="number" min="0" max="256" step="1" value="0" style="width:80px;">
+          </div>
+          <div style="flex:1 1 200px;">
+            <label for="enrollment-model-select" class="param-label">Model to install</label>
+            <select id="enrollment-model-select">
+              <option value="">-- auto-select by VRAM --</option>
+            </select>
+          </div>
+        </div>
+        <p id="enrollment-model-hint" class="param-subtitle" style="margin:4px 0 0;min-height:1.2em;"></p>
+      </div>
       <div class="enrollment-command-block">
         <label class="param-label">Run this on the new device</label>
         <pre id="enrollment-command"><em>Click "Mint token &amp; generate command" below.</em></pre>

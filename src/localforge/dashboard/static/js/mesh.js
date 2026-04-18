@@ -556,6 +556,75 @@ function _setAddNodeCommand() {
   _enrollmentCountdownTimer = setInterval(_updateExpiryCountdown, 1000);
 }
 
+function _populateModelSelect(catalog) {
+  const sel = document.getElementById('enrollment-model-select');
+  const hint = document.getElementById('enrollment-model-hint');
+  if (!sel || !catalog) return;
+
+  const vramGb = parseFloat(document.getElementById('enrollment-vram-input')?.value || '4');
+  const ramGb  = parseFloat(document.getElementById('enrollment-ram-input')?.value || '0');
+  const vramMb = Math.round(vramGb * 1024);
+  const ramMb  = Math.round(ramGb * 1024);
+
+  const models = (catalog.models || []).slice().sort((a, b) => (b.min_vram_mb || 0) - (a.min_vram_mb || 0));
+
+  const prevId = sel.value;
+  sel.innerHTML = '<option value="">-- auto-select by VRAM --</option>';
+  let autoId = '';
+
+  models.forEach(m => {
+    const needsMb = (m.min_vram_mb || 0);
+    const fitsVram = needsMb <= vramMb;
+    const fitsOffload = !fitsVram && needsMb <= vramMb + ramMb;
+    if (!fitsVram && !fitsOffload) return;
+
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    const sizeStr = m.size_gb ? ` ${m.size_gb}GB` : '';
+    const offload = fitsOffload ? ' [RAM offload]' : '';
+    opt.textContent = `${m.name}${sizeStr}${offload}`;
+    if (fitsOffload) opt.style.color = 'var(--yellow, #d29922)';
+    sel.appendChild(opt);
+
+    if (fitsVram && !autoId) autoId = m.id;
+  });
+
+  sel.value = prevId || autoId;
+  _updateModelHint(catalog);
+}
+
+function _updateModelHint(catalog) {
+  const hint = document.getElementById('enrollment-model-hint');
+  const sel = document.getElementById('enrollment-model-select');
+  if (!hint || !sel) return;
+  if (!sel.value) {
+    hint.textContent = 'Auto: installer will pick the best fit based on detected VRAM.';
+    return;
+  }
+  const models = catalog?.models || [];
+  const m = models.find(x => x.id === sel.value);
+  if (!m) { hint.textContent = ''; return; }
+  const tags = (m.tags || []).join(', ');
+  const offload = sel.options[sel.selectedIndex]?.textContent?.includes('RAM offload') ? ' (requires RAM offloading)' : '';
+  hint.textContent = `${m.name} — ${m.size_gb || '?'}GB${offload}${tags ? ' | ' + tags : ''}`;
+}
+
+let _enrollmentCatalog = null;
+
+async function _loadEnrollmentCatalog() {
+  if (_enrollmentCatalog) {
+    _populateModelSelect(_enrollmentCatalog);
+    return;
+  }
+  try {
+    const r = await authFetch(`${API}/mesh/models/catalog`);
+    if (r.ok) {
+      _enrollmentCatalog = await r.json();
+      _populateModelSelect(_enrollmentCatalog);
+    }
+  } catch {}
+}
+
 function openAddNodeModal() {
   const modal = document.getElementById('add-node-modal');
   modal.hidden = false;
@@ -564,8 +633,10 @@ function openAddNodeModal() {
   document.querySelectorAll('.platform-tab').forEach(t => {
     t.classList.toggle('active', t.dataset.platform === detected);
   });
+  _loadEnrollmentCatalog();
   if (!_enrollmentTokenData || _enrollmentTokenData.expires_at < Date.now() / 1000 + 30) {
-    mintEnrollmentToken();
+    _enrollmentTokenData = null;
+    _setAddNodeCommand();
   } else {
     _setAddNodeCommand();
   }
@@ -578,14 +649,17 @@ function closeAddNodeModal() {
 
 async function mintEnrollmentToken() {
   const noteInput = document.getElementById('enrollment-note-input');
+  const modelSel = document.getElementById('enrollment-model-select');
   const btn = document.getElementById('mint-token-btn');
   btn.disabled = true;
   btn.textContent = 'Minting...';
   try {
+    const body = { note: (noteInput.value || '').trim() };
+    if (modelSel?.value) body.model_id = modelSel.value;
     const resp = await authFetch(API + '/mesh/enrollment-token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ note: (noteInput.value || '').trim() }),
+      body: JSON.stringify(body),
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ error: 'unknown' }));
@@ -621,6 +695,13 @@ export function initAddNodeModal() {
     });
   });
   document.getElementById('mint-token-btn').addEventListener('click', mintEnrollmentToken);
+
+  const vramInput = document.getElementById('enrollment-vram-input');
+  const ramInput  = document.getElementById('enrollment-ram-input');
+  const modelSel  = document.getElementById('enrollment-model-select');
+  if (vramInput) vramInput.addEventListener('input', () => _populateModelSelect(_enrollmentCatalog));
+  if (ramInput)  ramInput.addEventListener('input',  () => _populateModelSelect(_enrollmentCatalog));
+  if (modelSel)  modelSel.addEventListener('change', () => _updateModelHint(_enrollmentCatalog));
   document.getElementById('copy-enrollment-cmd').addEventListener('click', async () => {
     const cmd = document.getElementById('enrollment-command').textContent;
     try {

@@ -43,6 +43,7 @@ PUBLIC_PATHS = {
     "",
     "/api/mesh/register",
     "/api/mesh/install-script",
+    "/api/push/vapid-key",
 }
 
 # ---------------------------------------------------------------------------

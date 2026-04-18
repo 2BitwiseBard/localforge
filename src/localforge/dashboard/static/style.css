@@ -2200,6 +2200,32 @@ a:focus-visible {
   font-size: 0.9rem;
 }
 
+.enrollment-model-picker { margin-bottom: 14px; }
+.enrollment-model-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.enrollment-model-row > div { display: flex; flex-direction: column; gap: 3px; }
+.enrollment-model-row select {
+  padding: 7px 10px;
+  background: var(--bg, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  color: var(--fg, #c9d1d9);
+  font-size: 0.9rem;
+  min-width: 180px;
+}
+.enrollment-model-row input[type="number"] {
+  padding: 7px 8px;
+  background: var(--bg, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  color: var(--fg, #c9d1d9);
+  font-size: 0.9rem;
+}
+
 .enrollment-command-block pre {
   background: #010409;
   border: 1px solid #30363d;

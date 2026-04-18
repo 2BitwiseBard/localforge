@@ -83,15 +83,13 @@ export async function loadAgents() {
     }).join('');
 
     data.agents.forEach(a => {
-      authFetch(API + `/agents/${a.id}/logs`).then(r => r.json()).then(d => {
-        const runEl = el.querySelector(`.agent-last-run[data-agent="${a.id}"]`);
-        if (runEl) {
-          const parts = [];
-          if (d.last_run) parts.push('last: ' + timeAgo(d.last_run));
-          if (d.run_count) parts.push('runs: ' + d.run_count);
-          runEl.textContent = parts.join(' | ') || 'no runs yet';
-        }
-      }).catch(() => {});
+      const runEl = el.querySelector(`.agent-last-run[data-agent="${a.id}"]`);
+      if (runEl) {
+        const parts = [];
+        if (a.last_run) parts.push('last: ' + timeAgo(a.last_run));
+        if (a.run_count) parts.push('runs: ' + a.run_count);
+        runEl.textContent = parts.join(' | ') || 'no runs yet';
+      }
     });
 
     el.querySelectorAll('.trigger-btn').forEach(btn => {

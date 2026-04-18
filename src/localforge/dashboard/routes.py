@@ -2403,16 +2403,18 @@ def _repo_root() -> Path:
     return here.parents[3]
 
 
-def _install_oneliners(token: str, hub_url: str) -> dict[str, str]:
+def _install_oneliners(token: str, hub_url: str, model_id: str = "") -> dict[str, str]:
     """Return per-platform copy/paste install commands with token + hub pre-baked."""
     base = f"{hub_url.rstrip('/')}/api/mesh/install-script"
+    model_flag_sh = f" --model-id {model_id}" if model_id else ""
+    model_flag_ps = f",'-ModelId','{model_id}'" if model_id else ""
     return {
         "linux":
             f"curl -fsSL '{base}?platform=linux&token={token}' | "
-            f"bash -s -- --hub {hub_url} --token {token}",
+            f"bash -s -- --hub {hub_url} --token {token}{model_flag_sh}",
         "darwin":
             f"curl -fsSL '{base}?platform=darwin&token={token}' | "
-            f"bash -s -- --hub {hub_url} --token {token}",
+            f"bash -s -- --hub {hub_url} --token {token}{model_flag_sh}",
         "win32":
             # Native PowerShell one-liner (no -Command wrapper, so $vars are in
             # the caller's scope and aren't pre-expanded by an outer PS session).
@@ -2428,7 +2430,7 @@ def _install_oneliners(token: str, hub_url: str) -> dict[str, str]:
             f"$log=\"$env:ProgramData\\LocalForge\\setup.log\"; "
             f"if(Test-Path $log){{Remove-Item -Force $log}}; "
             f"Start-Process powershell -Verb RunAs -Wait "
-            f"-ArgumentList '-ExecutionPolicy','Bypass','-NoProfile','-File',$s; "
+            f"-ArgumentList '-ExecutionPolicy','Bypass','-NoProfile','-File',$s{model_flag_ps}; "
             f"if(Test-Path $log){{"
             f"Write-Host '--- installer log ---' -ForegroundColor Cyan; "
             f"Get-Content $log | Write-Host"
@@ -2438,7 +2440,7 @@ def _install_oneliners(token: str, hub_url: str) -> dict[str, str]:
             f"}}",
         "android":
             f"curl -fsSL '{base}?platform=android&token={token}' | "
-            f"bash -s -- --hub {hub_url} --token {token}",
+            f"bash -s -- --hub {hub_url} --token {token}{model_flag_sh}",
     }
 
 
@@ -2455,6 +2457,7 @@ async def api_mesh_enrollment_token(request: Request) -> JSONResponse:
     except Exception:
         pass
     note = (body.get("note") or "")[:200]
+    model_id = (body.get("model_id") or "")[:64]
 
     user = _get_user(request)
     hub_url = body.get("hub_url") or _default_hub_url(request)
@@ -2468,7 +2471,8 @@ async def api_mesh_enrollment_token(request: Request) -> JSONResponse:
     return JSONResponse({
         **token_info,
         "hub_url": hub_url,
-        "install_commands": _install_oneliners(token_info["token"], hub_url),
+        "model_id": model_id or None,
+        "install_commands": _install_oneliners(token_info["token"], hub_url, model_id),
     })
 
 
