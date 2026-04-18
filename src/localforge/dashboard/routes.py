@@ -399,26 +399,27 @@ async def api_chat(request: Request) -> StreamingResponse:
                 if k in params and params[k] is not None:
                     request_body[k] = params[k]
 
-            async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post(
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5, read=180)) as client:
+                async with client.stream(
+                    "POST",
                     f"{backend_url}/chat/completions",
                     json=request_body,
                     headers={"Content-Type": "application/json"},
-                )
-                async for line in resp.aiter_lines():
-                    if line.startswith("data: "):
-                        data = line[6:]
-                        if data == "[DONE]":
-                            yield f"data: [DONE]\n\n"
-                            break
-                        try:
-                            chunk = json.loads(data)
-                            delta = chunk.get("choices", [{}])[0].get("delta", {})
-                            content = delta.get("content", "")
-                            if content:
-                                yield f"data: {json.dumps({'content': content})}\n\n"
-                        except json.JSONDecodeError:
-                            continue
+                ) as resp:
+                    async for line in resp.aiter_lines():
+                        if line.startswith("data: "):
+                            data = line[6:]
+                            if data == "[DONE]":
+                                yield f"data: [DONE]\n\n"
+                                break
+                            try:
+                                chunk = json.loads(data)
+                                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    yield f"data: {json.dumps({'content': content})}\n\n"
+                            except json.JSONDecodeError:
+                                continue
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
@@ -1016,8 +1017,9 @@ async def api_upload_image(request: Request) -> StreamingResponse:
 
     async def stream():
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post(
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5, read=180)) as client:
+                async with client.stream(
+                    "POST",
                     f"{backend_url}/chat/completions",
                     json={
                         "messages": [{
@@ -1030,21 +1032,21 @@ async def api_upload_image(request: Request) -> StreamingResponse:
                         "max_tokens": 2048,
                         "stream": True,
                     },
-                )
-                async for line in resp.aiter_lines():
-                    if line.startswith("data: "):
-                        data = line[6:]
-                        if data == "[DONE]":
-                            yield f"data: [DONE]\n\n"
-                            break
-                        try:
-                            chunk = json.loads(data)
-                            delta = chunk.get("choices", [{}])[0].get("delta", {})
-                            content = delta.get("content", "")
-                            if content:
-                                yield f"data: {json.dumps({'content': content})}\n\n"
-                        except json.JSONDecodeError:
-                            continue
+                ) as resp:
+                    async for line in resp.aiter_lines():
+                        if line.startswith("data: "):
+                            data = line[6:]
+                            if data == "[DONE]":
+                                yield f"data: [DONE]\n\n"
+                                break
+                            try:
+                                chunk = json.loads(data)
+                                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    yield f"data: {json.dumps({'content': content})}\n\n"
+                            except json.JSONDecodeError:
+                                continue
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
