@@ -158,29 +158,38 @@ fi
 echo ""
 echo "--- Deploying worker files ---"
 
-# Try to fetch from hub first, fall back to bundled copy
-WORKER_SRC=""
-if curl -fs "$HUB_URL/health" >/dev/null 2>&1; then
-    echo "Hub reachable, but worker files must be copied manually for now."
-fi
+# Fetch worker files from hub via HTTP, then fall back to local package
+fetch_worker_file() {
+    local name="$1"
+    if curl -fs "$HUB_URL/static/workers/$name" -o "$INSTALL_DIR/$name" 2>/dev/null; then
+        echo "[OK] Downloaded $name from hub"
+        return 0
+    fi
+    return 1
+}
 
-# Check if running on the hub machine itself (files are local)
-HUB_WORKER_DIR="$HOME/.claude/mcp-servers/local-model/workers"
-if [[ -f "$HUB_WORKER_DIR/device_worker.py" ]]; then
-    cp "$HUB_WORKER_DIR/device_worker.py" "$INSTALL_DIR/"
-    cp "$HUB_WORKER_DIR/detect.py" "$INSTALL_DIR/"
-    echo "[OK] Copied worker files from local hub"
+if fetch_worker_file "device_worker.py" && fetch_worker_file "detect.py"; then
+    : # both downloaded from hub
 else
-    # For remote devices, the files need to be transferred
-    echo "[!!] Worker files not found locally."
-    echo "     Copy these from the hub (ai-hub) to $INSTALL_DIR/:"
-    echo "       scp ai-hub:~/.claude/mcp-servers/local-model/workers/device_worker.py $INSTALL_DIR/"
-    echo "       scp ai-hub:~/.claude/mcp-servers/local-model/workers/detect.py $INSTALL_DIR/"
-    echo ""
-    read -rp "Have you copied the files? Continue? [y/N] " copied
-    if [[ "${copied,,}" != "y" ]]; then
-        echo "Setup paused. Copy the files and re-run."
-        exit 0
+    echo "Hub download unavailable, checking local install..."
+    # Check installed localforge package
+    LOCALFORGE_WORKERS=$("$PY" -c "import localforge.workers, os; print(os.path.dirname(localforge.workers.__file__))" 2>/dev/null || true)
+    if [[ -n "$LOCALFORGE_WORKERS" && -f "$LOCALFORGE_WORKERS/device_worker.py" ]]; then
+        cp "$LOCALFORGE_WORKERS/device_worker.py" "$INSTALL_DIR/"
+        cp "$LOCALFORGE_WORKERS/detect.py" "$INSTALL_DIR/"
+        echo "[OK] Copied worker files from installed localforge package"
+    else
+        echo "[!!] Worker files not found. Options:"
+        echo "     1. Install localforge and retry:  pip install 'localforge[worker]'"
+        echo "     2. Download from hub manually:"
+        echo "          curl -fsSL $HUB_URL/static/workers/device_worker.py -o $INSTALL_DIR/device_worker.py"
+        echo "          curl -fsSL $HUB_URL/static/workers/detect.py        -o $INSTALL_DIR/detect.py"
+        echo ""
+        read -rp "Have you copied the files? Continue? [y/N] " copied
+        if [[ "${copied,,}" != "y" ]]; then
+            echo "Setup paused."
+            exit 0
+        fi
     fi
 fi
 

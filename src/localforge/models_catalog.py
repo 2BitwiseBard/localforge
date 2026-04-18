@@ -203,6 +203,41 @@ MODELS: list[Model] = [
         "tags": ["code", "moe"],
         "tier": "xl",
     },
+    # --- REASONING: DeepSeek R1 distill (Qwen base, thinking model) ------
+    {
+        "id": "deepseek-r1-distill-qwen-14b-q4",
+        "name": "DeepSeek-R1-Distill-Qwen-14B · Q4_K_M (reasoning)",
+        "family": "deepseek-r1-distill", "params_b": 14, "active_b": 14,
+        "quant": "Q4_K_M",
+        "size_gb": 8.7, "min_vram_mb": 10000,
+        "filename": "DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
+        "url": "https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf",
+        "tags": ["chat", "reasoning"],
+        "tier": "large",
+    },
+    {
+        "id": "deepseek-r1-distill-qwen-14b-q8",
+        "name": "DeepSeek-R1-Distill-Qwen-14B · Q8_0 (reasoning, high quality)",
+        "family": "deepseek-r1-distill", "params_b": 14, "active_b": 14,
+        "quant": "Q8_0",
+        "size_gb": 15.0, "min_vram_mb": 16000,
+        "filename": "DeepSeek-R1-Distill-Qwen-14B-Q8_0.gguf",
+        "url": "https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-14B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-14B-Q8_0.gguf",
+        "tags": ["chat", "reasoning"],
+        "tier": "large",
+    },
+    # --- GENERAL: Phi-4 (Microsoft, strong reasoning/math at 14B) --------
+    {
+        "id": "phi-4-q4",
+        "name": "Phi-4 · Q4_K_M (reasoning, math)",
+        "family": "phi-4", "params_b": 14, "active_b": 14,
+        "quant": "Q4_K_M",
+        "size_gb": 8.5, "min_vram_mb": 10000,
+        "filename": "phi-4-Q4_K_M.gguf",
+        "url": "https://huggingface.co/bartowski/phi-4-GGUF/resolve/main/phi-4-Q4_K_M.gguf",
+        "tags": ["chat", "reasoning"],
+        "tier": "large",
+    },
 ]
 
 

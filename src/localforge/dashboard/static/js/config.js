@@ -9,15 +9,19 @@ const modelSelect = document.getElementById('model-select');
 export async function loadModels() {
   try {
     const data = await authFetch(API + '/models').then(r => r.json());
-    modelSelect.innerHTML = '<option value="">-- switch model --</option>';
-    (data.models || []).forEach(m => {
-      const name = typeof m === 'string' ? m : m.name || m;
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name.replace('.gguf', '').substring(0, 40);
-      if (name === data.current) opt.selected = true;
-      modelSelect.appendChild(opt);
-    });
+    const models = data.models || [];
+    const current = data.current || '';
+    const buildOpts = (placeholder) =>
+      `<option value="">${placeholder}</option>` +
+      models.map(m => {
+        const name = typeof m === 'string' ? m : m.name || m;
+        const label = name.replace('.gguf', '').substring(0, 45);
+        return `<option value="${name}"${name === current ? ' selected' : ''}>${label}</option>`;
+      }).join('');
+    modelSelect.innerHTML = buildOpts('-- switch model --');
+    const tabSel = document.getElementById('model-tab-select');
+    if (tabSel) tabSel.innerHTML = buildOpts('-- select model --');
+    updateModelBadge(current);
   } catch (e) { modelSelect.innerHTML = '<option>Error</option>'; }
 }
 
@@ -87,6 +91,82 @@ modelSelect.addEventListener('change', async () => {
   badge.style.background = ''; loadStatus(); loadModels();
 });
 
+// Model tab select — pre-fill ctx/gpu/flash/cache from config.yaml on selection, no auto-swap
+document.getElementById('model-tab-select')?.addEventListener('change', async () => {
+  const model = document.getElementById('model-tab-select').value;
+  if (!model) return;
+  try {
+    const cfgData = await authFetch(API + '/models/config?model=' + encodeURIComponent(model)).then(r => r.json());
+    const cfg = cfgData.config || {};
+    if (cfg.ctx_size) document.getElementById('ctrl-ctx-size').value = cfg.ctx_size;
+    if (cfg.gpu_layers != null) document.getElementById('ctrl-gpu-layers').value = cfg.gpu_layers;
+    if (cfg.flash_attn != null) document.getElementById('ctrl-flash-attn').value = String(cfg.flash_attn);
+    if (cfg.cache_type) document.getElementById('ctrl-cache-type').value = cfg.cache_type;
+    if (cfg.parallel) document.getElementById('ctrl-parallel').value = cfg.parallel;
+    if (cfgData.matched_pattern) {
+      showToast(`Config: ${cfgData.matched_pattern} — ctx=${cfg.ctx_size || 'default'}, gpu=${cfg.gpu_layers ?? 'all'}`);
+    }
+  } catch (e) {}
+});
+
+document.getElementById('model-load-btn')?.addEventListener('click', async () => {
+  const sel = document.getElementById('model-tab-select');
+  const st = document.getElementById('model-load-status');
+  const btn = document.getElementById('model-load-btn');
+  const model = sel?.value;
+  if (!model) {
+    if (st) { st.textContent = 'Select a model first.'; st.className = 'config-status config-status-error'; }
+    return;
+  }
+  if (!confirm(`Load ${model.replace('.gguf', '')}?`)) return;
+  btn.disabled = true; btn.textContent = 'Loading\u2026';
+  if (st) { st.textContent = 'Loading\u2026'; st.className = 'config-status'; }
+  try {
+    const resp = await authFetch(API + '/swap', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ model_name: model, ...collectLoadParams() }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      if (st) { st.textContent = data.error; st.className = 'config-status config-status-error'; }
+    } else {
+      const hint = data.applied ? `ctx=${data.applied.ctx_size}, gpu=${data.applied.gpu_layers}` : '';
+      if (st) { st.textContent = hint ? `Loaded (${hint})` : 'Loaded'; st.className = 'config-status config-status-ok'; }
+      showToast(`Loaded: ${model.replace('.gguf', '')}`, 'success');
+      updateModelBadge(model); loadModels(); loadStatus();
+    }
+  } catch (e) {
+    if (st) { st.textContent = 'Error: ' + e.message; st.className = 'config-status config-status-error'; }
+  } finally {
+    btn.disabled = false; btn.textContent = 'Load Model';
+  }
+});
+
+document.getElementById('model-unload-btn')?.addEventListener('click', async () => {
+  if (!confirm('Unload current model? This will free VRAM.')) return;
+  const btn = document.getElementById('model-unload-btn');
+  const st = document.getElementById('model-load-status');
+  btn.disabled = true;
+  try {
+    await authFetch(API + '/model/unload', { method: 'POST' });
+    showToast('Model unloaded \u2014 VRAM freed', 'success');
+    if (st) { st.textContent = 'Unloaded'; st.className = 'config-status config-status-ok'; }
+    updateModelBadge(''); loadStatus(); loadModels();
+  } catch (e) {
+    showToast('Unload failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function updateModelBadge(name) {
+  const el = document.getElementById('model-current-badge');
+  if (!el) return;
+  el.textContent = name ? name.replace('.gguf', '') : '';
+  el.style.display = name ? '' : 'none';
+}
+
 // ---------------------------------------------------------------------------
 // Generation Parameters
 // ---------------------------------------------------------------------------
@@ -107,6 +187,8 @@ export async function loadGenParams() {
       const el = document.getElementById(elId);
       if (el && data[key] !== undefined && data[key] !== null) el.value = data[key];
     }
+    const thinkEl = document.getElementById('param-thinking');
+    if (thinkEl && data.enable_thinking != null) thinkEl.checked = !!data.enable_thinking;
     document.querySelectorAll('.param-row input[type="range"]').forEach(s => {
       const v = s.closest('.param-row').querySelector('.param-value');
       if (v) v.textContent = s.value;
@@ -127,6 +209,8 @@ document.getElementById('params-apply').addEventListener('click', async () => {
   };
   const seed = parseInt(document.getElementById('param-seed').value);
   if (seed >= 0) params.seed = seed;
+  const thinkEl = document.getElementById('param-thinking');
+  if (thinkEl) params.enable_thinking = thinkEl.checked;
   try {
     const d = await authFetch(API + '/generation-params', {
       method: 'POST',
@@ -186,7 +270,7 @@ document.getElementById('preset-load').addEventListener('click', async () => {
 // ---------------------------------------------------------------------------
 // Model Controls
 // ---------------------------------------------------------------------------
-document.getElementById('model-unload').addEventListener('click', async () => {
+document.getElementById('model-unload')?.addEventListener('click', async () => {
   if (!confirm('Unload current model? This will free VRAM.')) return;
   try {
     await authFetch(API + '/model/unload', { method: 'POST' });
@@ -323,13 +407,15 @@ document.getElementById('lora-unload-all').addEventListener('click', async () =>
   } catch (e) { showToast('Failed', 'error'); }
 });
 
+document.getElementById('lora-refresh-btn')?.addEventListener('click', () => loadLoras());
+
 // ---------------------------------------------------------------------------
 // Model Sync
 // ---------------------------------------------------------------------------
 document.getElementById('sync-models-btn')?.addEventListener('click', async () => {
   const btn = document.getElementById('sync-models-btn');
   const status = document.getElementById('sync-models-status');
-  const result = document.getElementById('sync-models-result');
+  const result = document.getElementById('sync-models-result-raw');
   btn.disabled = true;
   status.textContent = 'Syncing...';
   result.style.display = 'none';
@@ -349,5 +435,56 @@ document.getElementById('sync-models-btn')?.addEventListener('click', async () =
     status.textContent = 'Error: ' + e.message;
   } finally {
     btn.disabled = false;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Startup Model
+// ---------------------------------------------------------------------------
+export async function loadStartupConfig() {
+  try {
+    const data = await authFetch(API + '/config/startup').then(r => r.json());
+    const model = data.startup_model || '';
+    const chk = document.getElementById('startup-model-enabled');
+    const row = document.getElementById('startup-model-row');
+    if (chk) chk.checked = !!model;
+    if (row) row.style.display = model ? '' : 'none';
+    const sel = document.getElementById('startup-model-select');
+    if (sel) {
+      try {
+        const md = await authFetch(API + '/models').then(r => r.json());
+        sel.innerHTML = '<option value="">-- select model --</option>' +
+          (md.models || []).map(m => {
+            const name = typeof m === 'string' ? m : m.name || m;
+            return `<option value="${name}"${name === model ? ' selected' : ''}>${name.replace('.gguf', '')}</option>`;
+          }).join('');
+      } catch {}
+    }
+  } catch (e) {
+    const st = document.getElementById('startup-status');
+    if (st) st.textContent = 'Error loading startup config';
+  }
+}
+
+document.getElementById('startup-model-enabled')?.addEventListener('change', function () {
+  const row = document.getElementById('startup-model-row');
+  if (row) row.style.display = this.checked ? '' : 'none';
+});
+
+document.getElementById('startup-save-btn')?.addEventListener('click', async () => {
+  const chk = document.getElementById('startup-model-enabled');
+  const sel = document.getElementById('startup-model-select');
+  const st = document.getElementById('startup-status');
+  const model = chk?.checked ? (sel?.value || '') : '';
+  try {
+    await authFetch(API + '/config/startup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ startup_model: model }),
+    });
+    if (st) st.textContent = model ? `Will load ${model.replace('.gguf', '')} on next boot` : 'No auto-load on boot';
+    showToast('Startup setting saved', 'success');
+  } catch (e) {
+    if (st) st.textContent = 'Error: ' + e.message;
   }
 });

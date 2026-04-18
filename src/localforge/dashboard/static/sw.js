@@ -1,9 +1,10 @@
 // AI Hub Service Worker — stale-while-revalidate for static, network-first for API
-const CACHE_VERSION = 13;  // Bump on every static file change
+const CACHE_VERSION = 34;  // Bump on every static file change
 const CACHE_NAME = `ai-hub-v${CACHE_VERSION}`;
 const STATIC_ASSETS = [
   '/',
   '/static/style.css',
+  '/static/js/sw-bootstrap.js',
   '/static/js/main.js',
   '/static/js/api.js',
   '/static/js/auth.js',
@@ -24,47 +25,68 @@ const STATIC_ASSETS = [
   '/static/icon-192.svg',
 ];
 
-// Install: cache static assets
+// Install: cache all static assets fresh before activating
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(STATIC_ASSETS))
+    caches.open(CACHE_NAME)
+      .then(cache => cache.addAll(STATIC_ASSETS))
+      .then(() => self.skipWaiting())
   );
-  self.skipWaiting();
 });
 
-// Activate: clean old caches
+// Activate: delete old caches, claim clients, then tell them to reload
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    )
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))
+      .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ includeUncontrolled: true, type: 'window' }))
+      .then(clients => clients.forEach(c => c.postMessage({ type: 'SW_UPDATED', version: CACHE_VERSION })))
   );
-  self.clients.claim();
 });
 
-// Fetch: stale-while-revalidate for static, network-only for API
+// Fetch: network-first for HTML navigation, stale-while-revalidate for static assets
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // API calls: always network
+  // API / health: always network, never cache
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/mcp') || url.pathname === '/health') {
     return;
   }
 
-  // Static assets: serve cached immediately, update cache in background
+  // HTML navigation (the page itself): network-first so we always get fresh HTML
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then(response => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Static assets (JS, CSS, images): stale-while-revalidate
   event.respondWith(
     caches.match(event.request).then(cached => {
       const networkFetch = fetch(event.request).then(response => {
-        if (response.ok && (url.pathname.startsWith('/static/') || url.pathname === '/')) {
+        if (response.ok && url.pathname.startsWith('/static/')) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
         }
         return response;
-      }).catch(() => cached);  // offline fallback to cache
+      }).catch(() => cached);
 
       return cached || networkFetch;
     })
   );
+});
+
+// Listen for page-side acknowledgement (optional)
+self.addEventListener('message', event => {
+  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 // Push notifications

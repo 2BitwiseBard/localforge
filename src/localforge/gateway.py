@@ -133,7 +133,7 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
     # Start agent supervisor
     gateway_cfg = cfg.get("gateway", {})
     api_keys = gateway_cfg.get("api_keys", [])
-    api_key = api_keys[0] if api_keys else ""
+    api_key = api_keys[0] if api_keys else os.environ.get("LOCAL_AI_KEY", "")
     port = gateway_cfg.get("port", 8100)
 
     try:
@@ -177,6 +177,40 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
     except Exception as e:
         log.warning(f"Agent supervisor failed to start: {e}")
 
+    # Auto-load startup model if configured (off by default)
+    import json as _json
+    sc_path = Path(os.environ.get("LOCALFORGE_DATA_DIR", ".")) / "startup_config.json"
+    if sc_path.exists():
+        try:
+            sc = _json.loads(sc_path.read_text())
+            startup_model = sc.get("startup_model", "").strip()
+            if startup_model:
+                log.info("Auto-loading startup model: %s", startup_model)
+                backend_url = cfg.get("backends", {}).get("local", {}).get("url", "http://localhost:5000/v1")
+                model_cfg: dict = {}
+                for pat, overrides in cfg.get("models", {}).items():
+                    if pat in startup_model:
+                        model_cfg = overrides
+                        break
+                ctx_size = model_cfg.get("ctx_size", 8192)
+                load_payload = {
+                    "model_name": startup_model,
+                    "args": {"ctx_size": ctx_size, "gpu_layers": model_cfg.get("gpu_layers", -1)},
+                    "settings": {"truncation_length": ctx_size},
+                }
+                import httpx as _httpx
+                try:
+                    async with _httpx.AsyncClient(timeout=180) as _hc:
+                        r = await _hc.post(f"{backend_url}/internal/model/load", json=load_payload)
+                    if r.status_code == 200:
+                        log.info("Startup model loaded: %s", startup_model)
+                    else:
+                        log.warning("Startup model load returned %s: %s", r.status_code, r.text[:200])
+                except Exception as exc:
+                    log.warning("Startup model load failed: %s", exc)
+        except Exception as exc:
+            log.warning("Could not read startup_config.json: %s", exc)
+
     async with session_manager.run():
         log.info("MCP HTTP gateway started (with dashboard + GPU pool + agents)")
         yield
@@ -202,6 +236,7 @@ starlette_app = Starlette(
         Route("/health", health, methods=["GET"]),
         Mount("/mcp", app=session_manager.handle_request),
         Mount("/api", routes=dashboard_routes),
+        Mount("/static/workers", app=StaticFiles(directory=str(Path(__file__).parent / "workers")), name="worker-files"),
         Mount("/static", app=StaticFiles(directory=str(STATIC_DIR)), name="static"),
         Route("/", lambda r: FileResponse(str(STATIC_DIR / "index.html"))),
     ],

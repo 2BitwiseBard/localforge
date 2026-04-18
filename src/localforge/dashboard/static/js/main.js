@@ -1,24 +1,17 @@
-import { loadStatus } from './status.js';
-import { startStatusRefresh, loadModes, initModeControls } from './status.js';
+import { loadStatus, startStatusRefresh, loadModes, initModeControls, scanDiskModels } from './status.js';
 import { loadMeshStatus, loadMeshTab, initMeshClickDelegation, initAddNodeModal } from './mesh.js';
 import { initUser, connectSSE } from './auth.js';
-import { loadModels, loadGenParams, loadPresets, loadLoras, initLoadParams } from './config.js';
+import { loadModels, loadGenParams, loadPresets, loadLoras, initLoadParams, loadStartupConfig } from './config.js';
 import { loadPhotos } from './media.js';
 import { loadIndexes, loadIndexMgmt, initIndexCreate } from './search.js';
 import { loadAgents, loadApprovals, initAgentToolbar } from './agents.js';
 import { loadNotes } from './notes.js';
 import { loadKGStats } from './knowledge.js';
-import { loadResearchSessions, initResearch } from './research.js';
-import { loadTrainingOverview, loadTrainingStatus, initTraining } from './training.js';
+import { loadResearchSessions, loadResearchQueue, initResearch } from './research.js';
+import { loadTrainingOverview, loadTrainingDatasets, loadTrainingStatus, loadTrainingLoras, initTraining } from './training.js';
+import { authFetch } from './api.js';
 import './chat.js';
 import './knowledge.js';
-
-// =====================================================================
-// PWA Registration
-// =====================================================================
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/static/sw.js').catch(() => {});
-}
 
 // =====================================================================
 // Connection status indicator
@@ -54,10 +47,11 @@ function activateTab(tabName) {
   if (tabName === 'search') { loadIndexes(); loadIndexMgmt(); }
   if (tabName === 'knowledge') loadKGStats();
   if (tabName === 'media') loadPhotos();
-  if (tabName === 'config') { loadGenParams(); loadPresets(); loadLoras(); }
-  if (tabName === 'research') loadResearchSessions();
+  if (tabName === 'config') { loadGenParams(); loadPresets(); loadLoras(); loadStartupConfig(); }
+  if (tabName === 'research') { loadResearchSessions(); loadResearchQueue(); }
   if (tabName === 'workflows') window.__wfEditor?.onTabOpen();
   if (tabName === 'mesh') loadMeshTab();
+  if (tabName === 'training') { loadTrainingOverview(); loadTrainingStatus(); }
   document.getElementById('sidebar')?.classList.remove('open');
   document.getElementById('sidebar-backdrop')?.setAttribute('hidden', '');
   const sheet = document.getElementById('mobile-more-sheet');
@@ -169,6 +163,7 @@ if ('Notification' in window && 'serviceWorker' in navigator && 'PushManager' in
 // Init
 // =====================================================================
 initModeControls();
+document.getElementById('scan-models-btn')?.addEventListener('click', scanDiskModels);
 initMeshClickDelegation();
 initAgentToolbar();
 initIndexCreate();

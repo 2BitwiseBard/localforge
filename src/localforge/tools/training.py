@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 from localforge import config as cfg
-from localforge.paths import data_dir
+from localforge.paths import training_dir as _training_root
 from localforge.tools import tool_handler
 
 log = logging.getLogger("localforge")
@@ -36,9 +36,7 @@ _PREPARE_SCRIPT = _UNSLOTH_ENV / "prepare_dataset.py"
 
 
 def _training_dir() -> Path:
-    d = data_dir() / "training"
-    d.mkdir(exist_ok=True)
-    return d
+    return _training_root()
 
 
 def _datasets_dir() -> Path:
@@ -55,6 +53,46 @@ def _runs_dir() -> Path:
 
 def _feedback_path() -> Path:
     return _training_dir() / "feedback.jsonl"
+
+
+def _dataset_meta_path(dataset_path: Path) -> Path:
+    return dataset_path.with_suffix(".meta.json")
+
+
+def _write_dataset_meta(dataset_path: Path, examples: int, source: str = "", fmt: str = "") -> None:
+    """Write a sidecar metadata file so train_list doesn't have to read the full JSONL."""
+    import datetime
+    meta = {
+        "examples": examples,
+        "source": source,
+        "format": fmt,
+        "created": datetime.datetime.now().isoformat(timespec="seconds"),
+        "size_bytes": dataset_path.stat().st_size if dataset_path.exists() else 0,
+    }
+    _dataset_meta_path(dataset_path).write_text(json.dumps(meta))
+
+
+def _count_lines_fast(path: Path) -> int:
+    """Count newlines in a file without loading it all into memory."""
+    count = 0
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            count += chunk.count(b"\n")
+    return count
+
+
+def _dataset_info(path: Path) -> tuple[int, int]:
+    """Return (examples, size_kb) for a dataset, using sidecar if available."""
+    meta_path = _dataset_meta_path(path)
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text())
+            return meta.get("examples", 0), int(path.stat().st_size / 1024)
+        except Exception:
+            pass
+    # Fallback: count lines (slow for large files, but correct)
+    count = _count_lines_fast(path)
+    return count, int(path.stat().st_size / 1024)
 
 
 # ---------------------------------------------------------------------------
@@ -88,8 +126,10 @@ def _check_unsloth() -> str | None:
 @tool_handler(
     name="train_prepare",
     description=(
-        "Prepare a training dataset from source code or git history. "
-        "Modes: 'git-diffs' (commit message training from git log), "
+        "Prepare a training dataset. "
+        "Modes: 'huggingface' (download from HuggingFace, auto-convert), "
+        "'merge' (combine multiple JSONL datasets with optional per-source cap), "
+        "'git-diffs' (commit message training from git log), "
         "'code-pairs' (function-level instruction/completion pairs), "
         "'from-feedback' (export recorded feedback as training data). "
         "Output is a JSONL file ready for train_start."
@@ -99,8 +139,29 @@ def _check_unsloth() -> str | None:
         "properties": {
             "mode": {
                 "type": "string",
-                "enum": ["git-diffs", "code-pairs", "from-feedback"],
+                "enum": ["huggingface", "merge", "git-diffs", "code-pairs", "from-feedback"],
                 "description": "Dataset preparation mode",
+            },
+            "dataset_id": {
+                "type": "string",
+                "description": "HuggingFace dataset ID for 'huggingface' mode (e.g. HuggingFaceH4/Bespoke-Stratos-17k)",
+            },
+            "hf_split": {
+                "type": "string",
+                "description": "HuggingFace dataset split for 'huggingface' mode (default: train)",
+            },
+            "max_examples": {
+                "type": "integer",
+                "description": "For 'huggingface' mode: randomly sample this many examples (0 = all)",
+            },
+            "inputs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "For 'merge' mode: list of JSONL dataset filenames to combine",
+            },
+            "max_per_source": {
+                "type": "integer",
+                "description": "For 'merge' mode: cap each source at this many examples (0 = unlimited)",
             },
             "repo": {
                 "type": "string",
@@ -150,7 +211,36 @@ async def train_prepare(args: dict) -> str:
 
     cmd = [str(_UNSLOTH_PYTHON), str(_PREPARE_SCRIPT), mode]
 
-    if mode == "git-diffs":
+    if mode == "huggingface":
+        dataset_id = args.get("dataset_id")
+        if not dataset_id:
+            return "Error: 'dataset_id' is required for huggingface mode (e.g. HuggingFaceH4/Bespoke-Stratos-17k)"
+        cmd += ["--dataset-id", dataset_id, "--output", str(output_path)]
+        hf_split = args.get("hf_split", "train")
+        cmd += ["--split", hf_split]
+        max_ex = args.get("max_examples", 0)
+        if max_ex:
+            cmd += ["--max-examples", str(max_ex)]
+
+    elif mode == "merge":
+        inputs = args.get("inputs")
+        if not inputs:
+            return "Error: 'inputs' list is required for merge mode"
+        # Resolve relative paths against datasets dir
+        resolved = []
+        for p in inputs:
+            path = Path(p)
+            if not path.is_absolute():
+                path = _datasets_dir() / path
+                if not path.exists() and not path.suffix:
+                    path = path.with_suffix(".jsonl")
+            resolved.append(str(path))
+        cmd += ["--inputs"] + resolved + ["--output", str(output_path)]
+        max_per = args.get("max_per_source", 0)
+        if max_per:
+            cmd += ["--max-per-source", str(max_per)]
+
+    elif mode == "git-diffs":
         repo = args.get("repo")
         if not repo:
             return "Error: 'repo' is required for git-diffs mode"
@@ -171,16 +261,19 @@ async def train_prepare(args: dict) -> str:
             "--output", str(output_path),
         ]
 
+    # HuggingFace downloads can take a while — raise timeout
+    timeout = 600 if mode == "huggingface" else 300
+
     try:
         result = await asyncio.to_thread(
             subprocess.run,
             cmd,
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=timeout,
         )
     except subprocess.TimeoutExpired:
-        return "Dataset preparation timed out after 5 minutes."
+        return f"Dataset preparation timed out after {timeout // 60} minutes."
 
     if result.returncode != 0:
         return f"Dataset preparation failed:\n{result.stderr[-1000:]}"
@@ -296,6 +389,56 @@ async def _prepare_from_feedback(args: dict) -> str:
                 "type": "string",
                 "description": "GGUF quant method for export (default: q4_k_m, 'none' to skip)",
             },
+            "bf16_lora": {
+                "type": "boolean",
+                "description": (
+                    "Use bf16 LoRA instead of 4-bit QLoRA (default: false). "
+                    "Recommended for Qwen3.5/3.6 — avoids quantization error accumulation "
+                    "at the cost of ~2x more VRAM. Use unsloth/<model>-unsloth base, not bnb-4bit."
+                ),
+            },
+            "grad_accum": {
+                "type": "integer",
+                "description": "Gradient accumulation steps (default: 4). Effective batch = batch_size * grad_accum.",
+            },
+            "lora_alpha": {
+                "type": "integer",
+                "description": "LoRA alpha (default: same as lora_rank). Controls scaling of LoRA updates.",
+            },
+            "lr_scheduler": {
+                "type": "string",
+                "enum": ["cosine", "linear", "constant", "cosine_with_restarts"],
+                "description": "LR scheduler type (default: cosine).",
+            },
+            "warmup_ratio": {
+                "type": "number",
+                "description": "Fraction of total steps used for warmup (default: 0.03).",
+            },
+            "val_split": {
+                "type": "number",
+                "description": "Fraction of data to hold out for validation (default: 0.1; set 0 to disable).",
+            },
+            "early_stopping": {
+                "type": "integer",
+                "description": "Early stopping patience in eval steps (default: 3; set 0 to disable).",
+            },
+            "max_grad_norm": {
+                "type": "number",
+                "description": "Gradient clipping max norm (default: 1.0).",
+            },
+            "resume": {
+                "type": "string",
+                "description": "Path to a checkpoint directory to resume training from.",
+            },
+            "full_finetune": {
+                "type": "boolean",
+                "description": (
+                    "Full fine-tune instead of LoRA (default: false). "
+                    "Trains all weights — needs ~4-6× more VRAM. "
+                    "Practical only for ≤3B models on 16 GB. "
+                    "Use a non-quantized base (e.g. unsloth/Llama-3.2-3B-Instruct)."
+                ),
+            },
         },
         "required": ["dataset"],
     },
@@ -344,13 +487,25 @@ async def train_start(args: dict) -> str:
     run_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / "training.log"
 
-    base_model = args.get("base_model", "unsloth/Qwen3-8B-bnb-4bit")
+    bf16_lora = bool(args.get("bf16_lora", False))
+    # bf16 LoRA uses the non-quantized Unsloth base; QLoRA uses bnb-4bit variant.
+    default_base = "unsloth/Meta-Llama-3.1-8B-Instruct" if bf16_lora else "unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit"
+    base_model = args.get("base_model", default_base)
     epochs = args.get("epochs", 3)
     batch_size = args.get("batch_size", 2)
     lr = args.get("learning_rate", 2e-4)
     lora_rank = args.get("lora_rank", 16)
+    lora_alpha = args.get("lora_alpha", lora_rank)
     max_seq_len = args.get("max_seq_len", 2048)
     export_gguf = args.get("export_gguf", "q4_k_m")
+    grad_accum = args.get("grad_accum", 4)
+    lr_scheduler = args.get("lr_scheduler", "cosine")
+    warmup_ratio = args.get("warmup_ratio", 0.03)
+    val_split = args.get("val_split", 0.1)
+    early_stopping = args.get("early_stopping", 3)
+    max_grad_norm = args.get("max_grad_norm", 1.0)
+    resume = args.get("resume")
+    full_finetune = bool(args.get("full_finetune", False))
 
     cmd = [
         str(_UNSLOTH_PYTHON), str(_TRAIN_SCRIPT),
@@ -359,11 +514,24 @@ async def train_start(args: dict) -> str:
         "--output", str(run_dir / "output"),
         "--epochs", str(epochs),
         "--batch-size", str(batch_size),
+        "--grad-accum", str(grad_accum),
         "--lr", str(lr),
         "--lora-rank", str(lora_rank),
+        "--lora-alpha", str(lora_alpha),
         "--max-seq-len", str(max_seq_len),
         "--export-gguf", export_gguf,
+        "--lr-scheduler", lr_scheduler,
+        "--warmup-ratio", str(warmup_ratio),
+        "--val-split", str(val_split),
+        "--early-stopping", str(early_stopping),
+        "--max-grad-norm", str(max_grad_norm),
     ]
+    if bf16_lora:
+        cmd.append("--bf16")
+    if full_finetune:
+        cmd.append("--full-finetune")
+    if resume:
+        cmd += ["--resume", str(resume)]
 
     # Save run config
     run_config = {
@@ -372,10 +540,20 @@ async def train_start(args: dict) -> str:
         "dataset": str(dataset_path),
         "epochs": epochs,
         "batch_size": batch_size,
+        "grad_accum": grad_accum,
         "learning_rate": lr,
         "lora_rank": lora_rank,
+        "lora_alpha": lora_alpha,
         "max_seq_len": max_seq_len,
         "export_gguf": export_gguf,
+        "bf16_lora": bf16_lora,
+        "full_finetune": full_finetune,
+        "lr_scheduler": lr_scheduler,
+        "warmup_ratio": warmup_ratio,
+        "val_split": val_split,
+        "early_stopping": early_stopping,
+        "max_grad_norm": max_grad_norm,
+        "resume": resume,
         "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "status": "running",
     }
@@ -402,9 +580,10 @@ async def train_start(args: dict) -> str:
 
     return (
         f"Training started: {name}\n"
-        f"Base model: {base_model}\n"
+        f"Base model: {base_model} ({'bf16 LoRA' if bf16_lora else 'QLoRA 4-bit'})\n"
         f"Dataset: {dataset_path.name} ({sum(1 for _ in dataset_path.read_text().splitlines())} examples)\n"
-        f"Epochs: {epochs} | Batch: {batch_size} | LR: {lr} | LoRA rank: {lora_rank}\n"
+        f"Epochs: {epochs} | Batch: {batch_size} × Accum {grad_accum} | LR: {lr} ({lr_scheduler}) | LoRA rank: {lora_rank} α{lora_alpha}\n"
+        f"Val split: {val_split} | Early stop: {early_stopping} | Max grad norm: {max_grad_norm}\n"
         f"Output: {run_dir}\n"
         f"Log: {log_path}\n\n"
         f"Use train_status to monitor progress.\n"
@@ -488,7 +667,8 @@ async def train_status(args: dict) -> str:
         f"Status: {status}",
         f"Base model: {run_config.get('base_model', '?')}",
         f"Dataset: {Path(run_config.get('dataset', '?')).name}",
-        f"Epochs: {run_config.get('epochs', '?')} | Batch: {run_config.get('batch_size', '?')} | LoRA rank: {run_config.get('lora_rank', '?')}",
+        f"Epochs: {run_config.get('epochs', '?')} | Batch: {run_config.get('batch_size', '?')} × Accum: {run_config.get('grad_accum', '?')} | LoRA rank: {run_config.get('lora_rank', '?')} α{run_config.get('lora_alpha', '?')}",
+        f"LR: {run_config.get('learning_rate', '?')} | Sched: {run_config.get('lr_scheduler', 'cosine')} | Val split: {run_config.get('val_split', '?')}",
     ]
 
     if is_running:
@@ -530,6 +710,99 @@ async def train_status(args: dict) -> str:
     return "\n".join(lines)
 
 
+# Curated list of verified Unsloth-compatible training base models (verified April 2026).
+# All bnb-4bit IDs confirmed to exist on huggingface.co/unsloth.
+# "qlora" = bnb-4bit quantized; "bf16" = full precision LoRA.
+# vram_gb = approximate training VRAM (model + optimizer + activations at batch=2).
+UNSLOTH_CATALOG: list[dict] = [
+    # ── Qwen3 QLoRA (verified) ───────────────────────────────────────────
+    {"id": "unsloth/Qwen3-0.6B-bnb-4bit",   "name": "Qwen3 0.6B · QLoRA",  "vram_gb": 1,  "params_b": 0.6, "mode": "qlora", "tags": ["chat", "tiny"]},
+    {"id": "unsloth/Qwen3-1.7B-bnb-4bit",   "name": "Qwen3 1.7B · QLoRA",  "vram_gb": 2,  "params_b": 1.7, "mode": "qlora", "tags": ["chat", "tiny"]},
+    {"id": "unsloth/Qwen3-4B-bnb-4bit",     "name": "Qwen3 4B · QLoRA",    "vram_gb": 4,  "params_b": 4,   "mode": "qlora", "tags": ["chat", "fast"]},
+    {"id": "unsloth/Qwen3-8B-bnb-4bit",     "name": "Qwen3 8B · QLoRA",    "vram_gb": 6,  "params_b": 8,   "mode": "qlora", "tags": ["chat", "recommended"]},
+    {"id": "unsloth/Qwen3-14B-bnb-4bit",    "name": "Qwen3 14B · QLoRA",   "vram_gb": 9,  "params_b": 14,  "mode": "qlora", "tags": ["chat", "reasoning", "best-quality"]},
+    {"id": "unsloth/Qwen3-30B-A3B-bnb-4bit","name": "Qwen3 30B-A3B · QLoRA (MoE)", "vram_gb": 16, "params_b": 30, "mode": "qlora", "tags": ["chat", "reasoning", "moe"]},
+    # ── Qwen3 bf16 ───────────────────────────────────────────────────────
+    {"id": "unsloth/Qwen3-0.6B",  "name": "Qwen3 0.6B · bf16",  "vram_gb": 1,  "params_b": 0.6, "mode": "bf16", "tags": ["chat", "tiny", "bf16"]},
+    {"id": "unsloth/Qwen3-1.7B",  "name": "Qwen3 1.7B · bf16",  "vram_gb": 3,  "params_b": 1.7, "mode": "bf16", "tags": ["chat", "tiny", "bf16"]},
+    {"id": "unsloth/Qwen3-4B",    "name": "Qwen3 4B · bf16",    "vram_gb": 8,  "params_b": 4,   "mode": "bf16", "tags": ["chat", "bf16"]},
+    {"id": "unsloth/Qwen3-8B",    "name": "Qwen3 8B · bf16",    "vram_gb": 16, "params_b": 8,   "mode": "bf16", "tags": ["chat", "bf16"]},
+    # ── Gemma 3 QLoRA (verified) ─────────────────────────────────────────
+    {"id": "unsloth/gemma-3-1b-it-bnb-4bit",  "name": "Gemma 3 1B-IT · QLoRA",  "vram_gb": 2,  "params_b": 1,  "mode": "qlora", "tags": ["chat", "tiny"]},
+    {"id": "unsloth/gemma-3-4b-it-bnb-4bit",  "name": "Gemma 3 4B-IT · QLoRA",  "vram_gb": 4,  "params_b": 4,  "mode": "qlora", "tags": ["chat", "fast"]},
+    {"id": "unsloth/gemma-3-12b-it-bnb-4bit", "name": "Gemma 3 12B-IT · QLoRA", "vram_gb": 8,  "params_b": 12, "mode": "qlora", "tags": ["chat", "recommended"]},
+    {"id": "unsloth/gemma-3-27b-it-bnb-4bit", "name": "Gemma 3 27B-IT · QLoRA", "vram_gb": 15, "params_b": 27, "mode": "qlora", "tags": ["chat", "best-quality"]},
+    # ── Gemma 3 bf16 ─────────────────────────────────────────────────────
+    {"id": "unsloth/gemma-3-1b-it",  "name": "Gemma 3 1B-IT · bf16",  "vram_gb": 2,  "params_b": 1,  "mode": "bf16", "tags": ["chat", "tiny", "bf16"]},
+    {"id": "unsloth/gemma-3-4b-it",  "name": "Gemma 3 4B-IT · bf16",  "vram_gb": 8,  "params_b": 4,  "mode": "bf16", "tags": ["chat", "bf16"]},
+    {"id": "unsloth/gemma-3-12b-it", "name": "Gemma 3 12B-IT · bf16", "vram_gb": 24, "params_b": 12, "mode": "bf16", "tags": ["chat", "bf16"]},
+    # ── Llama 4 QLoRA (verified) ─────────────────────────────────────────
+    {"id": "unsloth/Llama-4-Scout-17B-16E-Instruct-unsloth-bnb-4bit", "name": "Llama 4 Scout 17B/16E · QLoRA (MoE)", "vram_gb": 10, "params_b": 17, "mode": "qlora", "tags": ["chat", "moe", "vision"]},
+    # ── Mistral Small 3.x QLoRA (verified) ───────────────────────────────
+    {"id": "unsloth/Mistral-Small-3.1-24B-Instruct-2503-bnb-4bit", "name": "Mistral Small 3.1 24B · QLoRA", "vram_gb": 13, "params_b": 24, "mode": "qlora", "tags": ["chat"]},
+    {"id": "unsloth/Mistral-Small-3.2-24B-Instruct-2506-bnb-4bit", "name": "Mistral Small 3.2 24B · QLoRA", "vram_gb": 13, "params_b": 24, "mode": "qlora", "tags": ["chat", "recommended"]},
+    # ── Phi-4 QLoRA / bf16 ───────────────────────────────────────────────
+    {"id": "unsloth/Phi-4-mini-instruct-bnb-4bit", "name": "Phi-4 mini 3.8B · QLoRA", "vram_gb": 3, "params_b": 3.8, "mode": "qlora", "tags": ["chat", "fast"]},
+    {"id": "unsloth/Phi-4-mini-instruct",          "name": "Phi-4 mini 3.8B · bf16",  "vram_gb": 8, "params_b": 3.8, "mode": "bf16",  "tags": ["chat", "bf16"]},
+    # ── Previous gen (stable, widely tested) ─────────────────────────────
+    {"id": "unsloth/Qwen2.5-7B-Instruct-bnb-4bit",       "name": "Qwen2.5 7B · QLoRA (prev gen)",      "vram_gb": 5,  "params_b": 7,  "mode": "qlora", "tags": ["chat", "reasoning", "stable"]},
+    {"id": "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit", "name": "Qwen2.5-Coder 7B · QLoRA (prev gen)", "vram_gb": 5, "params_b": 7,  "mode": "qlora", "tags": ["code", "stable"]},
+    {"id": "unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit","name": "Llama 3.1 8B · QLoRA (prev gen)",    "vram_gb": 6,  "params_b": 8,  "mode": "qlora", "tags": ["chat", "stable"]},
+    {"id": "unsloth/gemma-2-9b-it-bnb-4bit",             "name": "Gemma 2 9B-IT · QLoRA (prev gen)",  "vram_gb": 6,  "params_b": 9,  "mode": "qlora", "tags": ["chat", "stable"]},
+]
+
+
+@tool_handler(
+    name="train_base_models",
+    description=(
+        "List available Unsloth training base models with VRAM requirements. "
+        "These are the HuggingFace models Unsloth can download and fine-tune. "
+        "Note: these are separate from your local GGUF inference models — "
+        "Unsloth downloads full-precision weights for training."
+    ),
+    schema={
+        "type": "object",
+        "properties": {
+            "tags": {
+                "type": "string",
+                "description": "Filter by tag: chat, code, vision, reasoning, bf16, fast, tiny, recommended",
+            },
+            "max_vram_gb": {
+                "type": "integer",
+                "description": "Filter by max VRAM budget in GB (e.g. 8 for 8 GB free)",
+            },
+        },
+        "required": [],
+    },
+)
+async def train_base_models(args: dict) -> str:
+    tag_filter = args.get("tags", "")
+    vram_limit = args.get("max_vram_gb", 99)
+
+    filtered = [
+        m for m in UNSLOTH_CATALOG
+        if m["vram_gb"] <= vram_limit
+        and (not tag_filter or tag_filter in m["tags"])
+    ]
+
+    if not filtered:
+        return f"No models found with those filters. Try: tag=chat, code, vision, reasoning, bf16"
+
+    lines = ["Available Unsloth training base models (verified to exist on HuggingFace):"]
+    lines.append("")
+    for m in filtered:
+        tags = ", ".join(m["tags"])
+        lines.append(f"  {m['name']}")
+        lines.append(f"    ID:    {m['id']}")
+        lines.append(f"    VRAM:  ~{m['vram_gb']} GB during training  |  Params: {m['params_b']}B")
+        lines.append(f"    Tags:  {tags}")
+        lines.append("")
+
+    lines.append("Note: Qwen3/3.5/3.6 and Gemma 3/4 do not have Unsloth bnb-4bit variants yet.")
+    lines.append("Use train_start(base_model='<id>') — Unsloth downloads the model on first run.")
+    return "\n".join(lines)
+
+
 @tool_handler(
     name="train_list",
     description="List all training runs, datasets, and available fine-tuned models.",
@@ -550,12 +823,15 @@ async def train_list(args: dict) -> str:
     sections = []
 
     if what in ("datasets", "all"):
-        datasets = sorted(_datasets_dir().glob("*.jsonl"))
+        # Exclude -val.jsonl splits from the list (they're not for training)
+        datasets = sorted(
+            ds for ds in _datasets_dir().glob("*.jsonl")
+            if not ds.name.endswith("-val.jsonl")
+        )
         if datasets:
             lines = ["── Datasets ──"]
             for ds in datasets:
-                count = sum(1 for line in ds.read_text().splitlines() if line.strip())
-                size_kb = ds.stat().st_size / 1024
+                count, size_kb = _dataset_info(ds)
                 lines.append(f"  {ds.name}  ({count} examples, {size_kb:.0f} KB)")
             sections.append("\n".join(lines))
         elif what == "datasets":

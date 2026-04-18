@@ -1,4 +1,4 @@
-# LocalForge Windows Worker Bootstrap
+﻿# LocalForge Windows Worker Bootstrap
 # Run as the current user (NOT Administrator unless installing NSSM into Program Files).
 #
 # Usage:
@@ -33,7 +33,7 @@ param(
     # GGUF so the worker can host chat/completions on its own GPU. Precedence
     # (first non-empty wins): -Model (existing GGUF path), -ModelId (catalog id
     # from src/localforge/models_catalog.py), -ModelTier (tiny/small/medium/
-    # large/xl → TIER_DEFAULTS), else pick_for_vram() chooses the largest model
+    # large/xl -> TIER_DEFAULTS), else pick_for_vram() chooses the largest model
     # whose min_vram fits. -SkipModel downgrades to task-receiver only.
     [string]$Model = "",
     [string]$ModelId = "",
@@ -50,7 +50,7 @@ if ($Token -like '%%*%%') { $Token = $env:LOCALFORGE_ENROLLMENT_TOKEN }
 
 $ErrorActionPreference = "Stop"
 
-# Force TLS 1.2 globally — PowerShell 5.1 on older Windows 10 defaults to
+# Force TLS 1.2 globally -- PowerShell 5.1 on older Windows 10 defaults to
 # TLS 1.0/1.1 which most HTTPS endpoints (including Tailscale certs) reject.
 # Must happen early, before any Invoke-RestMethod or Invoke-WebRequest call.
 try {
@@ -61,13 +61,13 @@ try {
 # Elevated windows spawned via Start-Process -Verb RunAs close IMMEDIATELY
 # on `exit N` (which bypasses PowerShell's `trap` handler). Three defenses so
 # the user can always see what happened:
-#   1. Log under $env:ProgramData (not $env:TEMP) — when UAC prompts for
+#   1. Log under $env:ProgramData (not $env:TEMP) -- when UAC prompts for
 #      admin credentials rather than consent, the elevated shell runs under
 #      a DIFFERENT user whose $env:TEMP is elsewhere, so the parent can't
 #      find the log. ProgramData is the same absolute path for all users.
 #   2. Write a sentinel file BEFORE Start-Transcript so the parent can
 #      distinguish "script never ran" from "script ran but transcript failed".
-#   3. Register a PowerShell.Exiting engine event — unlike `trap`, this
+#   3. Register a PowerShell.Exiting engine event -- unlike `trap`, this
 #      DOES fire on `exit N`, giving us a reliable pause.
 $script:LogDir = Join-Path $env:ProgramData "LocalForge"
 $script:TranscriptPath = Join-Path $script:LogDir "setup.log"
@@ -150,7 +150,7 @@ try {
 trap { Invoke-PauseOnExit; break }
 
 # Admin check: NSSM must register a Windows service, which requires Administrator.
-# If we aren't elevated, bail with a clear message — the Add Node one-liner is
+# If we aren't elevated, bail with a clear message -- the Add Node one-liner is
 # responsible for triggering UAC via Start-Process -Verb RunAs before we run.
 $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
@@ -256,7 +256,7 @@ if (-not (Test-Path $venvPy)) {
 
 Write-Step "Installing localforge[worker] into venv"
 # Use `python -m pip` so pip can replace itself without a Windows file lock.
-# Install from a zip archive URL (no git dependency — most Windows boxes
+# Install from a zip archive URL (no git dependency -- most Windows boxes
 # don't have git installed).  PEP 440 direct-URL syntax.
 & $venvPy -m pip install --upgrade pip
 $archiveUrl = "$GitRepo/archive/refs/heads/main.zip"
@@ -308,7 +308,7 @@ if ($SkipModel) {
     Write-Host "    Chat tasks routed to this node will proxy back to the hub backend."
     $Model = ""
 } else {
-    # 4a. Backend auto-select. Vulkan is the safest default — works on any
+    # 4a. Backend auto-select. Vulkan is the safest default -- works on any
     # modern GPU with stock drivers; no CUDA runtime required. CPU fallback
     # when hardware detect found no GPU.
     if ($LlamaBackend -eq "auto") {
@@ -366,9 +366,9 @@ if ($SkipModel) {
     }
 
     # 4c. Pick a default GGUF from the shared catalog (src/localforge/
-    # models_catalog.py). Precedence: -Model path (skip download) → -ModelId
-    # (exact catalog id) → -ModelTier (TIER_DEFAULTS lookup) → pick_for_vram().
-    # Querying Python keeps the bootstrapper honest — if a model is added or
+    # models_catalog.py). Precedence: -Model path (skip download) -> -ModelId
+    # (exact catalog id) -> -ModelTier (TIER_DEFAULTS lookup) -> pick_for_vram().
+    # Querying Python keeps the bootstrapper honest -- if a model is added or
     # a URL moves, only the catalog changes, not this script.
     if (-not $Model) {
         New-Item -ItemType Directory -Force -Path $modelsDir | Out-Null
@@ -489,7 +489,7 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 # Env extras. LOCALFORGE_LLAMA_BIN points device_worker at the vendored
-# binary without touching the service's inherited PATH — NSSM's
+# binary without touching the service's inherited PATH -- NSSM's
 # AppEnvironmentExtra REPLACES (not appends) any listed var, so setting
 # PATH here would shadow System32 and the venv Scripts dir.
 # LOCALFORGE_INSTALL_DIR + LOCALFORGE_MODELS_DIR let runtime model downloads
@@ -528,7 +528,7 @@ Write-Host "  New-NetFirewallRule -DisplayName 'LocalForge Worker' -Direction In
              -InterfaceAlias 'Tailscale'"
 if (-not $SkipModel) {
     Write-Host ""
-    Write-Host "llama-server ($LlamaBackend) listens on 127.0.0.1:$LlamaPort — loopback only, no rule needed."
+    Write-Host "llama-server ($LlamaBackend) listens on 127.0.0.1:$LlamaPort -- loopback only, no rule needed."
 }
 
 Write-Host ""

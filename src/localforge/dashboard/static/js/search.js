@@ -22,18 +22,41 @@ searchQuery.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch()
 async function doSearch() {
   const query = searchQuery.value.trim(), index = searchIndex.value;
   if (!query || !index) return;
-  const mode = document.querySelector('input[name="search-mode"]:checked').value;
+  const modeEl = document.querySelector('input[name="search-mode"]:checked');
+  const mode = modeEl ? modeEl.value : 'hybrid';
+  const topK = parseInt(document.getElementById('search-top-k')?.value || '5') || 5;
   searchResults.innerHTML = '<div class="loading">Searching...</div>';
   try {
     const data = await authFetch(API + '/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ query, index_name: index, mode }),
+      body: JSON.stringify({ query, index_name: index, mode, top_k: topK }),
     }).then(r => r.json());
-    if (data.error) { searchResults.innerHTML = `<div class="error-msg">${data.error}</div>`; return; }
+    if (data.error) { searchResults.innerHTML = `<div class="error-msg">${escapeHtml(data.error)}</div>`; return; }
     const r = data.result || '';
-    searchResults.innerHTML = `<pre class="search-result-text">${escapeHtml(typeof r === 'string' ? r : JSON.stringify(r, null, 2))}</pre>`;
-  } catch (e) { searchResults.innerHTML = `<div class="error-msg">${e.message}</div>`; }
+    searchResults.innerHTML = _renderSearchResults(r);
+  } catch (e) { searchResults.innerHTML = `<div class="error-msg">${escapeHtml(e.message)}</div>`; }
+}
+
+function _renderSearchResults(raw) {
+  if (!raw) return '<div class="empty-state">No results</div>';
+  if (typeof raw !== 'string') {
+    return `<pre class="search-result-text">${escapeHtml(JSON.stringify(raw, null, 2))}</pre>`;
+  }
+  // Try to parse structured chunks (format: "## filepath\n...content...\n---\n")
+  const chunks = raw.split(/\n---+\n/).filter(c => c.trim());
+  if (chunks.length > 1 || raw.startsWith('##')) {
+    return '<div class="search-chunks">' + chunks.map(chunk => {
+      const lines = chunk.trim().split('\n');
+      const header = lines[0].startsWith('##') ? lines[0].replace(/^#+\s*/, '') : null;
+      const body = header ? lines.slice(1).join('\n').trim() : chunk.trim();
+      return `<div class="search-chunk">
+        ${header ? `<div class="search-chunk-path">${escapeHtml(header)}</div>` : ''}
+        <pre class="search-chunk-body">${escapeHtml(body)}</pre>
+      </div>`;
+    }).join('') + '</div>';
+  }
+  return `<pre class="search-result-text">${escapeHtml(raw)}</pre>`;
 }
 
 // Index management

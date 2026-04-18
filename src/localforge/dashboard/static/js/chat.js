@@ -3,11 +3,25 @@ import { API, authFetch, authHeaders, escapeHtml, showToast, renderMarkdown } fr
 const chatMessages = document.getElementById('chat-messages');
 const chatPrompt = document.getElementById('chat-prompt');
 const chatSend = document.getElementById('chat-send');
+const chatStop = document.getElementById('chat-stop');
 let chatHistory = [];
 let currentChatId = null;
+let _abortController = null;
+
+// Populate model indicator from health endpoint
+async function updateChatModelIndicator() {
+  try {
+    const h = await fetch('/health').then(r => r.json());
+    const name = h.model?.model_name || '';
+    const ind = document.getElementById('chat-model-indicator');
+    if (ind) ind.textContent = name ? name.replace('.gguf', '').substring(0, 28) : 'no model';
+  } catch {}
+}
+updateChatModelIndicator();
 
 chatSend.addEventListener('click', sendChat);
 chatPrompt.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } });
+chatStop?.addEventListener('click', () => { if (_abortController) { _abortController.abort(); _abortController = null; } });
 
 // Image upload
 let pendingImage = null;
@@ -22,21 +36,30 @@ imageInput.addEventListener('change', e => {
   pendingImage = f; imageThumbnail.src = URL.createObjectURL(f); imagePreview.style.display = 'flex';
 });
 
+function _setChatSending(sending) {
+  chatSend.disabled = sending;
+  if (chatStop) chatStop.style.display = sending ? '' : 'none';
+}
+
 async function sendChat() {
   const prompt = chatPrompt.value.trim();
   if (!prompt && !pendingImage) return;
+  if (_abortController) return;
+
   addMessage(prompt || '[Image analysis]', 'user');
   chatHistory.push({ role: 'user', content: prompt || '[Image]', timestamp: Date.now() });
-  chatPrompt.value = ''; chatSend.disabled = true;
+  chatPrompt.value = '';
+  _setChatSending(true);
   const msgEl = addMessage('', 'assistant');
 
+  _abortController = new AbortController();
   try {
     let resp;
     if (pendingImage) {
       const fd = new FormData();
       fd.append('image', pendingImage);
       fd.append('question', prompt || 'Describe this image in detail.');
-      resp = await authFetch(API + '/upload-image', { method: 'POST', body: fd });
+      resp = await authFetch(API + '/upload-image', { method: 'POST', body: fd, signal: _abortController.signal });
       pendingImage = null; imageInput.value = ''; imagePreview.style.display = 'none';
     } else {
       const sysPrompt = document.getElementById('sys-prompt')?.value?.trim() || '';
@@ -47,17 +70,32 @@ async function sendChat() {
           messages: chatHistory.filter(m => m.role === 'user' || m.role === 'assistant').map(m => ({ role: m.role, content: m.content })),
           system_prompt: sysPrompt,
         }),
+        signal: _abortController.signal,
       });
     }
-    const fullText = await streamResponse(resp, msgEl);
-    chatHistory.push({ role: 'assistant', content: fullText, timestamp: Date.now() });
-    if (ttsEnabled && fullText) speak(fullText);
-    document.getElementById('regen-area').style.display = 'block';
-  } catch (e) { msgEl.textContent = 'Error: ' + e.message; }
-  chatSend.disabled = false;
+    msgEl.classList.add('msg-streaming');
+    const fullText = await streamResponse(resp, msgEl, _abortController.signal);
+    msgEl.classList.remove('msg-streaming');
+    if (fullText) {
+      chatHistory.push({ role: 'assistant', content: fullText, timestamp: Date.now() });
+      if (ttsEnabled) speak(fullText);
+      document.getElementById('regen-area').style.display = 'block';
+    }
+  } catch (e) {
+    msgEl.classList.remove('msg-streaming');
+    if (e.name === 'AbortError') {
+      if (!msgEl.textContent) msgEl.textContent = '[stopped]';
+    } else {
+      msgEl.innerHTML += `<span style="color:var(--red);display:block;margin-top:4px;">Error: ${escapeHtml(e.message)}</span>`;
+    }
+  } finally {
+    _abortController = null;
+    _setChatSending(false);
+    updateChatModelIndicator();
+  }
 }
 
-async function streamResponse(resp, msgEl) {
+async function streamResponse(resp, msgEl, signal) {
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '', fullText = '', tokenCount = 0;
@@ -71,6 +109,7 @@ async function streamResponse(resp, msgEl) {
   }
 
   while (true) {
+    if (signal?.aborted) { reader.cancel(); break; }
     const { done, value } = await reader.read(); if (done) break;
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n'); buffer = lines.pop();
@@ -80,6 +119,7 @@ async function streamResponse(resp, msgEl) {
         try {
           const c = JSON.parse(data);
           if (c.content) {
+            if (!fullText) msgEl.innerHTML = '';  // clear thinking dots on first token
             fullText += c.content;
             tokenCount++;
             msgEl.innerHTML = renderMarkdown(fullText);
@@ -106,7 +146,11 @@ function addMessage(text, role) {
   const div = document.createElement('div');
   div.className = 'msg msg-' + role;
   if (role === 'assistant') {
-    div.innerHTML = renderMarkdown(text);
+    if (text) {
+      div.innerHTML = renderMarkdown(text);
+    } else {
+      div.innerHTML = '<span class="thinking-dots"><span></span><span></span><span></span></span>';
+    }
   } else {
     div.textContent = text;
   }
@@ -245,11 +289,13 @@ document.getElementById('sys-prompt-toggle').addEventListener('click', () => {
 
 document.getElementById('regen-btn').addEventListener('click', async () => {
   if (chatHistory.length < 2 || chatHistory[chatHistory.length - 1].role !== 'assistant') return;
+  if (_abortController) return;
   chatHistory.pop();
   const msgs = chatMessages.querySelectorAll('.msg');
   if (msgs.length) msgs[msgs.length - 1].remove();
   const msgEl = addMessage('', 'assistant');
-  chatSend.disabled = true;
+  _setChatSending(true);
+  _abortController = new AbortController();
   try {
     const sysPrompt = document.getElementById('sys-prompt')?.value?.trim() || '';
     const resp = await authFetch(API + '/chat', {
@@ -259,12 +305,22 @@ document.getElementById('regen-btn').addEventListener('click', async () => {
         messages: chatHistory.filter(m => m.role === 'user' || m.role === 'assistant').map(m => ({ role: m.role, content: m.content })),
         system_prompt: sysPrompt,
       }),
+      signal: _abortController.signal,
     });
-    const fullText = await streamResponse(resp, msgEl);
-    chatHistory.push({ role: 'assistant', content: fullText, timestamp: Date.now() });
-    if (ttsEnabled && fullText) speak(fullText);
-  } catch (e) { msgEl.textContent = 'Error: ' + e.message; }
-  chatSend.disabled = false;
+    msgEl.classList.add('msg-streaming');
+    const fullText = await streamResponse(resp, msgEl, _abortController.signal);
+    msgEl.classList.remove('msg-streaming');
+    if (fullText) {
+      chatHistory.push({ role: 'assistant', content: fullText, timestamp: Date.now() });
+      if (ttsEnabled) speak(fullText);
+    }
+  } catch (e) {
+    msgEl.classList.remove('msg-streaming');
+    if (e.name !== 'AbortError') msgEl.textContent = 'Error: ' + e.message;
+  } finally {
+    _abortController = null;
+    _setChatSending(false);
+  }
 });
 
 document.getElementById('chat-export-btn').addEventListener('click', () => {

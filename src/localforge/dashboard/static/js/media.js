@@ -1,4 +1,4 @@
-import { API, apiKey, authFetch, escapeHtml, escapeAttr, showToast } from './api.js';
+import { API, apiKey, authFetch, authHeaders, escapeHtml, escapeAttr, showToast } from './api.js';
 
 const photoGallery = document.getElementById('photo-gallery');
 const videoGallery = document.getElementById('video-gallery');
@@ -50,13 +50,21 @@ export async function loadPhotos() {
 }
 
 async function renderPhotos(photos) {
-  if (!photos.length) { photoGallery.innerHTML = '<div class="empty-state">No photos yet. Upload some!</div>'; return; }
+  if (!photos.length) {
+    photoGallery.innerHTML = '<div class="empty-state">No photos yet. Upload some!</div>';
+    return;
+  }
   photoGallery.innerHTML = photos.map(p => `
-    <div class="photo-card" data-url="${escapeAttr(p.url)}" data-thumb="${escapeAttr(p.thumbnail)}">
+    <div class="photo-card" data-filename="${escapeAttr(p.filename)}" data-url="${escapeAttr(p.url)}" data-thumb="${escapeAttr(p.thumbnail)}">
       <div class="photo-loading">Loading...</div>
       <div class="photo-info">
-        <div class="photo-desc">${escapeHtml((p.description || p.filename).substring(0, 80))}</div>
-        ${p.tags?.length ? '<div class="photo-tags">' + p.tags.map(t => '<span class="tag">' + escapeHtml(t) + '</span>').join('') + '</div>' : ''}
+        <div class="photo-desc">${escapeHtml((p.description || p.filename).substring(0, 100))}</div>
+        ${p.tags?.length ? '<div class="photo-tags">' + p.tags.map(t => '<span class="tag">' + escapeHtml(t) + '</span>').join('') + '</div>' : '<div class="photo-tags"></div>'}
+        <div class="photo-actions">
+          <button class="btn-small photo-analyze-btn" data-filename="${escapeAttr(p.filename)}">&#x1F50D; Analyze</button>
+          <button class="btn-small btn-danger-small photo-delete-btn" data-filename="${escapeAttr(p.filename)}">Delete</button>
+        </div>
+        <div class="photo-analyze-result" style="display:none;font-size:0.78em;color:#8b949e;margin-top:4px;line-height:1.4;"></div>
       </div>
     </div>
   `).join('');
@@ -78,6 +86,54 @@ async function renderPhotos(photos) {
       const loader = card.querySelector('.photo-loading');
       if (loader) loader.textContent = 'Failed to load';
     }
+
+    // Analyze with vision model
+    card.querySelector('.photo-analyze-btn').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const btn = e.target;
+      const resultEl = card.querySelector('.photo-analyze-result');
+      btn.disabled = true; btn.textContent = 'Analyzing…';
+      resultEl.style.display = 'block';
+      resultEl.textContent = 'Sending to vision model…';
+      try {
+        const resp = await authFetch(
+          API + '/photos/' + encodeURIComponent(btn.dataset.filename) + '/analyze',
+          { method: 'POST', headers: authHeaders() }
+        );
+        const data = await resp.json();
+        if (data.error) {
+          resultEl.textContent = '⚠ ' + data.error;
+        } else {
+          card.querySelector('.photo-desc').textContent = (data.description || '').substring(0, 100);
+          const tagsEl = card.querySelector('.photo-tags');
+          if (tagsEl && data.tags?.length) {
+            tagsEl.innerHTML = data.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('');
+          }
+          resultEl.style.display = 'none';
+          showToast('Image analyzed and tagged');
+        }
+      } catch (err) {
+        resultEl.textContent = 'Error: ' + err.message;
+      } finally {
+        btn.disabled = false; btn.textContent = '&#x1F50D; Analyze';
+      }
+    });
+
+    // Delete photo
+    card.querySelector('.photo-delete-btn').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const filename = e.target.dataset.filename;
+      if (!confirm(`Delete "${filename}"?`)) return;
+      try {
+        await authFetch(API + '/photos/' + encodeURIComponent(filename), {
+          method: 'DELETE', headers: authHeaders(),
+        });
+        showToast('Photo deleted');
+        card.remove();
+      } catch (err) {
+        showToast('Delete failed: ' + err.message, 'error');
+      }
+    });
   }));
 }
 

@@ -115,8 +115,20 @@ def config_path() -> Path:
 
 
 def training_dir() -> Path:
-    d = data_dir() / "training"
-    d.mkdir(exist_ok=True)
+    """Root directory for all training data (datasets, runs, feedback).
+
+    Override with LOCALFORGE_TRAINING_DIR to put training data outside the
+    main data directory — useful when sharing datasets across tools or storing
+    them on a separate drive.
+
+    Default: ~/Development/training  (accessible from scripts, services, Claude Code)
+    """
+    env = os.environ.get("LOCALFORGE_TRAINING_DIR")
+    if env:
+        d = Path(os.path.expanduser(env))
+    else:
+        d = Path(os.path.expanduser("~/Development/training"))
+    d.mkdir(parents=True, exist_ok=True)
     return d
 
 

@@ -1,9 +1,34 @@
 import { API, apiKey, setApiKey, setCurrentUser, authFetch, showToast } from './api.js';
 
+function showAuthModal(errorMsg = '') {
+  return new Promise(resolve => {
+    const modal = document.getElementById('auth-modal');
+    const input = document.getElementById('auth-key-input');
+    const btn   = document.getElementById('auth-submit-btn');
+    const err   = document.getElementById('auth-error');
+    err.textContent = errorMsg;
+    input.value = '';
+    modal.hidden = false;
+    input.focus();
+
+    function submit() {
+      const key = input.value.trim();
+      if (!key) { err.textContent = 'Key required.'; return; }
+      modal.hidden = true;
+      btn.removeEventListener('click', submit);
+      input.removeEventListener('keydown', onKey);
+      resolve(key);
+    }
+    function onKey(e) { if (e.key === 'Enter') submit(); }
+    btn.addEventListener('click', submit);
+    input.addEventListener('keydown', onKey);
+  });
+}
+
 export async function initUser() {
   let key = apiKey;
   if (!key) {
-    key = prompt('Enter your AI Hub API key:') || '';
+    key = await showAuthModal();
     if (key) setApiKey(key);
   }
   try {
@@ -14,7 +39,7 @@ export async function initUser() {
       document.getElementById('user-badge').textContent = user.name || user.id;
     } else if (resp.status === 401) {
       setApiKey('');
-      const newKey = prompt('Invalid key. Enter your AI Hub API key:') || '';
+      const newKey = await showAuthModal('Invalid key — try again.');
       if (newKey) { setApiKey(newKey); return initUser(); }
     }
   } catch (e) {

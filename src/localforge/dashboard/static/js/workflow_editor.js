@@ -401,8 +401,10 @@ async function saveCurrent() {
     if (!state.workflow) { setStatus('Nothing to save', 'error'); return; }
     state.workflow.name = document.getElementById('wf-name')?.value?.trim() || state.workflow.name || 'Untitled';
     try {
-        const data = await api('POST', '/workflows', state.workflow);
-        state.workflow.id = data.id;
+        const data = state.workflow.id
+            ? await api('PUT', '/workflows/' + encodeURIComponent(state.workflow.id), state.workflow)
+            : await api('POST', '/workflows', state.workflow);
+        if (data.id) state.workflow.id = data.id;
         state.dirty = false;
         await loadList();
         const sel = document.getElementById('wf-select');

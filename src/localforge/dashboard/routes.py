@@ -659,8 +659,63 @@ async def api_metrics(request: Request) -> JSONResponse:
                 }
     except Exception:
         pass
+
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        metrics["ram"] = {
+            "total_gb": round(vm.total / 1024**3, 1),
+            "used_gb": round(vm.used / 1024**3, 1),
+            "available_gb": round(vm.available / 1024**3, 1),
+            "used_pct": vm.percent,
+        }
+        metrics["cpu"] = {"utilization_pct": round(psutil.cpu_percent(interval=None), 1)}
+    except Exception:
+        pass
+
     _gpu_metrics_cache = (now, metrics)
     return JSONResponse(metrics)
+
+
+async def api_models_scan(request: Request) -> JSONResponse:
+    """Scan model directories for GGUF files and return what text-gen-webui knows about."""
+    scan_dirs = []
+    cfg = _load_config()
+    cfg_dir = cfg.get("backends", {}).get("local", {}).get("models_dir", "")
+    if cfg_dir:
+        scan_dirs.append(Path(cfg_dir))
+    for d in [Path("/mnt/models"), Path.home() / "models",
+               Path.home() / "Development/text-generation-webui/user_data/models"]:
+        if d not in scan_dirs:
+            scan_dirs.append(d)
+
+    found = []
+    seen = set()
+    for d in scan_dirs:
+        if not d.exists():
+            continue
+        for f in sorted(d.glob("*.gguf")):
+            if f.name in seen:
+                continue
+            seen.add(f.name)
+            found.append({
+                "name": f.name,
+                "path": str(f),
+                "size_gb": round(f.stat().st_size / 1024**3, 1),
+                "dir": str(d),
+            })
+
+    webui_models: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{_backend_url()}/internal/model/list")
+            if resp.status_code == 200:
+                data = resp.json()
+                webui_models = data.get("model_names", [])
+    except Exception:
+        pass
+
+    return JSONResponse({"scanned": found, "webui_models": webui_models, "dirs_checked": [str(d) for d in scan_dirs]})
 
 
 # ---------------------------------------------------------------------------
@@ -799,6 +854,97 @@ async def api_photos_upload(request: Request) -> JSONResponse:
     return JSONResponse({"filename": filename, "description": meta.get("description", ""), "tags": meta.get("tags", [])})
 
 
+async def api_photos_analyze(request: Request) -> JSONResponse:
+    """Re-analyze an existing photo with the current vision model."""
+    user = _get_user(request)
+    filename = request.path_params.get("filename", "")
+    photo_dir = _user_dir("photos", user["id"])
+    photo_path = photo_dir / filename
+
+    if not photo_path.exists() or not photo_path.is_file():
+        return JSONResponse({"error": "Not found"}, status_code=404)
+
+    backend_url = _backend_url()
+    is_vision = False
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{backend_url}/internal/model/info")
+            if resp.status_code == 200:
+                info = resp.json()
+                model_name = (info.get("model_name") or "").lower()
+                is_vision = any(kw in model_name for kw in ["vl", "vision", "gemma", "qwen", "image", "vlm", "multimodal"])
+    except Exception:
+        pass
+
+    if not is_vision:
+        return JSONResponse({"error": "No vision-capable model loaded. Load Gemma4-26B or Qwen3.6-35B with mmproj first."}, status_code=400)
+
+    content = photo_path.read_bytes()
+    b64 = base64.b64encode(content).decode("utf-8")
+    content_type = {
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp",
+    }.get(photo_path.suffix.lower(), "image/jpeg")
+
+    description, tags = "", []
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                f"{backend_url}/chat/completions",
+                json={
+                    "messages": [{"role": "user", "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{b64}"}},
+                        {"type": "text", "text": "Describe this image in 2-3 sentences. Then on a new line write 'Tags:' followed by 5-8 comma-separated keywords."},
+                    ]}],
+                    "max_tokens": 400, "stream": False,
+                },
+            )
+            if resp.status_code == 200:
+                text = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                lines = text.strip().splitlines()
+                for i, line in enumerate(lines):
+                    if line.lower().startswith("tags:"):
+                        description = " ".join(lines[:i]).strip()
+                        tags = [t.strip() for t in line[5:].split(",") if t.strip()][:10]
+                        break
+                if not description:
+                    description = text[:300].strip()
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+    meta_path = photo_path.with_suffix(".json")
+    meta = {}
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text())
+        except Exception:
+            pass
+    meta["description"] = description
+    meta["tags"] = tags
+    meta_path.write_text(json.dumps(meta, indent=2))
+
+    return JSONResponse({"description": description, "tags": tags})
+
+
+async def api_photos_delete(request: Request) -> JSONResponse:
+    """Delete a photo and its metadata."""
+    user = _get_user(request)
+    filename = request.path_params.get("filename", "")
+    photo_dir = _user_dir("photos", user["id"])
+    photo_path = photo_dir / filename
+
+    if not photo_path.exists() or not photo_path.is_file():
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    if not str(photo_path.resolve()).startswith(str(photo_dir.resolve())):
+        return JSONResponse({"error": "Invalid path"}, status_code=400)
+
+    photo_path.unlink()
+    meta_path = photo_path.with_suffix(".json")
+    if meta_path.exists():
+        meta_path.unlink()
+    return JSONResponse({"status": "deleted", "filename": filename})
+
+
 async def api_photos_search(request: Request) -> JSONResponse:
     """Search photos by description/tags."""
     body = await request.json()
@@ -851,19 +997,21 @@ async def api_upload_image(request: Request) -> StreamingResponse:
     content_type = image_file.content_type or "image/png"
     backend_url = _backend_url()
 
+    _VISION_KW = ["vl", "vision", "image", "vlm", "multimodal", "qwen3.6", "qwen-vl",
+                  "gemma4", "gemma-4", "pixtral", "llava", "cogvlm", "internvl", "minicpm"]
     is_vision = False
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.get(f"{backend_url}/internal/model/info")
             if resp.status_code == 200:
                 model_name = resp.json().get("model_name", "").lower()
-                is_vision = any(kw in model_name for kw in ["vl", "vision", "image"])
+                is_vision = any(kw in model_name for kw in _VISION_KW)
     except Exception:
         pass
 
     if not is_vision:
         async def vision_err():
-            yield f"data: {json.dumps({'error': 'Current model is not vision-capable. Load a VL model first.'})}\n\n"
+            yield f"data: {json.dumps({'error': 'No vision-capable model loaded. Load Gemma4-26B or Qwen3.6-35B (with mmproj) first.'})}\n\n"
         return StreamingResponse(vision_err(), media_type="text/event-stream")
 
     async def stream():
@@ -957,6 +1105,49 @@ async def api_kg_add(request: Request) -> JSONResponse:
             name=name, type=body.get("entity_type", "concept"), content=body.get("content", "")
         )
         return JSONResponse({"id": entity_id, "name": name})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_kg_relate(request: Request) -> JSONResponse:
+    body = await request.json()
+    from_name = body.get("from_name", "")
+    to_name = body.get("to_name", "")
+    relation = body.get("relation", "RELATED_TO")
+    if not from_name or not to_name:
+        return JSONResponse({"error": "from_name and to_name required"}, status_code=400)
+    kg = _get_kg()
+    from_e = kg.find_entity(from_name)
+    to_e = kg.find_entity(to_name)
+    if not from_e:
+        return JSONResponse({"error": f"Entity not found: {from_name}"}, status_code=404)
+    if not to_e:
+        return JSONResponse({"error": f"Entity not found: {to_name}"}, status_code=404)
+    try:
+        rel_id = kg.add_relation(from_e.id, to_e.id, relation)
+        return JSONResponse({"id": rel_id})
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_kg_entity_delete(request: Request) -> JSONResponse:
+    name = request.path_params.get("name", "")
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    kg = _get_kg()
+    entity = kg.find_entity(name)
+    if not entity:
+        return JSONResponse({"error": f"Entity not found: {name}"}, status_code=404)
+    kg.delete_entity(entity.id)
+    return JSONResponse({"deleted": name})
+
+
+async def api_kg_timeline(request: Request) -> JSONResponse:
+    limit = int(request.query_params.get("limit", "30"))
+    try:
+        return JSONResponse({"entries": _get_kg().timeline(limit=min(limit, 100))})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -1162,6 +1353,39 @@ async def api_note_content(request: Request) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+async def api_note_save(request: Request) -> JSONResponse:
+    """Create or update a note."""
+    body = await request.json()
+    topic = body.get("topic", "").strip()
+    content = body.get("content", "")
+    if not topic:
+        return JSONResponse({"error": "topic required"}, status_code=400)
+    if "/" in topic or "\\" in topic or ".." in topic:
+        return JSONResponse({"error": "invalid topic"}, status_code=400)
+    NOTES_DIR.mkdir(parents=True, exist_ok=True)
+    note_path = NOTES_DIR / f"{topic}.md"
+    try:
+        note_path.write_text(content, encoding="utf-8")
+        return JSONResponse({"ok": True, "topic": topic})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_note_delete(request: Request) -> JSONResponse:
+    """Delete a note by topic."""
+    topic = request.path_params.get("topic", "")
+    if not topic:
+        return JSONResponse({"error": "topic required"}, status_code=400)
+    if "/" in topic or "\\" in topic or ".." in topic:
+        return JSONResponse({"error": "invalid topic"}, status_code=400)
+    for ext in (".md", ".txt", ""):
+        p = NOTES_DIR / f"{topic}{ext}"
+        if p.exists() and p.is_file():
+            p.unlink()
+            return JSONResponse({"ok": True})
+    return JSONResponse({"error": "Note not found"}, status_code=404)
+
+
 # ---------------------------------------------------------------------------
 # Voice: STT transcribe proxy
 # ---------------------------------------------------------------------------
@@ -1336,10 +1560,11 @@ async def api_model_unload(request: Request) -> JSONResponse:
     backend_url = _backend_url()
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{backend_url}/internal/model/load",
-                                      json={"model_name": "None"})
-            await notify_all("Model Unloaded", "VRAM freed", "model-swap")
-            return JSONResponse({"status": "unloaded"})
+            await client.post(f"{backend_url}/internal/model/load", json={"model_name": "None"})
+        from localforge import config as _cfg
+        _cfg.MODEL = None
+        await notify_all("Model Unloaded", "VRAM freed", "model-swap")
+        return JSONResponse({"status": "unloaded"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -1690,13 +1915,19 @@ async def api_agent_bus(request: Request) -> JSONResponse:
 # Research sessions
 # ---------------------------------------------------------------------------
 def _get_research():
-    from knowledge.research_sessions import ResearchSession
+    try:
+        from localforge.knowledge.research_sessions import ResearchSession
+    except ImportError:
+        from knowledge.research_sessions import ResearchSession
     return ResearchSession()
 
 
 async def api_research_sessions(request: Request) -> JSONResponse:
-    rs = _get_research()
-    return JSONResponse({"sessions": rs.list_sessions()})
+    try:
+        rs = _get_research()
+        return JSONResponse({"sessions": rs.list_sessions()})
+    except Exception as e:
+        return JSONResponse({"sessions": [], "error": str(e)})
 
 
 async def api_research_session_get(request: Request) -> JSONResponse:
@@ -1714,7 +1945,11 @@ async def api_research_start(request: Request) -> JSONResponse:
     if not question:
         return JSONResponse({"error": "Question required"}, status_code=400)
 
-    rs = _get_research()
+    try:
+        rs = _get_research()
+    except Exception as e:
+        return JSONResponse({"error": f"Research store unavailable: {e}"}, status_code=503)
+
     session_id = rs.create(question)
 
     # Run deep_research in background
@@ -1741,6 +1976,45 @@ async def api_research_start(request: Request) -> JSONResponse:
 
     asyncio.create_task(_run())
     return JSONResponse({"session_id": session_id, "status": "started"})
+
+
+async def api_research_session_delete(request: Request) -> JSONResponse:
+    session_id = request.path_params.get("session_id", "")
+    rs = _get_research()
+    data = rs.get(session_id)
+    if not data:
+        return JSONResponse({"error": "Session not found"}, status_code=404)
+    rs.abandon(session_id)
+    return JSONResponse({"status": "abandoned"})
+
+
+async def api_research_queue(request: Request) -> JSONResponse:
+    """GET: list queued queries. POST: add a query to the queue."""
+    queue_file = None
+    for ext in (".md", ".txt", ""):
+        p = NOTES_DIR / f"research-queue{ext}"
+        if p.exists():
+            queue_file = p
+            break
+
+    if request.method == "GET":
+        if not queue_file:
+            return JSONResponse({"queries": []})
+        content = queue_file.read_text()
+        queries = [q.strip() for q in content.splitlines() if q.strip() and not q.startswith("#")]
+        return JSONResponse({"queries": queries})
+
+    # POST — append a query to the queue
+    body = await request.json()
+    query = body.get("query", "").strip()
+    if not query:
+        return JSONResponse({"error": "query required"}, status_code=400)
+    target = queue_file or (NOTES_DIR / "research-queue.md")
+    existing = target.read_text() if target.exists() else ""
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    target.write_text(existing + query + "\n")
+    return JSONResponse({"status": "queued", "query": query})
 
 
 # ---------------------------------------------------------------------------
@@ -2140,47 +2414,28 @@ def _install_oneliners(token: str, hub_url: str) -> dict[str, str]:
             f"curl -fsSL '{base}?platform=darwin&token={token}' | "
             f"bash -s -- --hub {hub_url} --token {token}",
         "win32":
-            # NSSM service registration requires Administrator, so the one-liner
-            # downloads the script to a temp file and relaunches it elevated via
-            # UAC (Start-Process -Verb RunAs). Server-side templates Hub + Token
-            # into the script body so no args need to cross the UAC boundary.
+            # Native PowerShell one-liner (no -Command wrapper, so $vars are in
+            # the caller's scope and aren't pre-expanded by an outer PS session).
+            # Hub + Token are baked server-side into the script body so nothing
+            # needs to cross the UAC boundary.  Log is under $env:ProgramData
+            # (not $env:TEMP) because admin-credential UAC opens a new session
+            # with a different TEMP path, but ProgramData is the same for all users.
             #
-            # Log lives under $env:ProgramData (NOT $env:TEMP) because when UAC
-            # prompts for admin credentials (not just consent), the elevated shell
-            # runs as a DIFFERENT user whose $env:TEMP resolves to a different
-            # directory — the parent can't find the log. ProgramData is the same
-            # absolute path for every user on the machine.
-            #
-            # The elevated script also writes a sentinel file at the very top
-            # (before Start-Transcript) so the parent can distinguish:
-            #   - sentinel missing      → script never started (UAC denied / GPO block)
-            #   - sentinel present, no log → script started but transcript failed
-            #   - log present           → script ran (check exit code)
-            f"powershell -ExecutionPolicy Bypass -NoProfile -Command "
-            f"\"$s=$env:TEMP+'\\localforge-setup.ps1'; "
-            f"$d=$env:ProgramData+'\\LocalForge'; "
-            f"$log=Join-Path $d 'setup.log'; "
-            f"$sentinel=Join-Path $d 'setup.started'; "
-            f"New-Item -ItemType Directory -Force -Path $d | Out-Null; "
+            # Run this in PowerShell (not cmd.exe). If you must use cmd.exe:
+            #   powershell -ExecutionPolicy Bypass -NoProfile -File <downloaded_script>
+            f"$s=\"$env:TEMP\\localforge-setup.ps1\"; "
             f"iwr -useb '{base}?platform=win32&token={token}' -OutFile $s; "
+            f"$log=\"$env:ProgramData\\LocalForge\\setup.log\"; "
             f"if(Test-Path $log){{Remove-Item -Force $log}}; "
-            f"if(Test-Path $sentinel){{Remove-Item -Force $sentinel}}; "
-            f"$proc=Start-Process powershell -Verb RunAs -PassThru -Wait "
+            f"Start-Process powershell -Verb RunAs -Wait "
             f"-ArgumentList '-ExecutionPolicy','Bypass','-NoProfile','-File',$s; "
             f"if(Test-Path $log){{"
             f"Write-Host '--- installer log ---' -ForegroundColor Cyan; "
-            f"Get-Content $log | Write-Host; "
-            f"Write-Host ('--- exit code: '+$proc.ExitCode+' ---') -ForegroundColor Cyan"
-            f"}} elseif(Test-Path $sentinel){{"
-            f"Write-Host 'Script started but transcript was never written.' -ForegroundColor Yellow; "
-            f"Write-Host ('Sentinel: '+(Get-Content $sentinel -Raw).Trim()) -ForegroundColor Yellow; "
-            f"Write-Host ('Exit code: '+$proc.ExitCode) -ForegroundColor Yellow"
-            f"}} else{{"
-            f"Write-Host 'Elevated shell never ran the script (UAC denied, GPO, or PowerShell blocked).' -ForegroundColor Red; "
-            f"Write-Host 'Manual fix: open Admin PowerShell and run:' -ForegroundColor Yellow; "
-            f"Write-Host ('  powershell -ExecutionPolicy Bypass -File '+$s) -ForegroundColor Yellow; "
-            f"Write-Host ('Exit code: '+$proc.ExitCode) -ForegroundColor Red"
-            f"}}\"",
+            f"Get-Content $log | Write-Host"
+            f"}} else {{"
+            f"Write-Host 'Log not written. Check that UAC was approved.' -ForegroundColor Yellow; "
+            f"Write-Host ('Manual fix: open Admin PowerShell and run: powershell -ExecutionPolicy Bypass -File '+$s) -ForegroundColor Yellow"
+            f"}}",
         "android":
             f"curl -fsSL '{base}?platform=android&token={token}' | "
             f"bash -s -- --hub {hub_url} --token {token}",
@@ -2646,26 +2901,133 @@ async def api_training_list(request: Request) -> JSONResponse:
     if not mod:
         return JSONResponse({"status": "ok", "result": "Training tools not installed. Install the localforge package."})
     what = request.query_params.get("what", "all")
+    fmt = request.query_params.get("fmt", "text")
     try:
+        if fmt == "json" and what == "datasets":
+            # Return structured JSON list for the UI dataset picker
+            from localforge.paths import training_dir as _tdir
+            from pathlib import Path
+            import json as _json
+            datasets_dir = _tdir() / "datasets"
+            result = []
+            for ds in sorted(datasets_dir.glob("*.jsonl")):
+                if ds.name.endswith("-val.jsonl"):
+                    continue
+                meta_path = ds.with_suffix(".meta.json")
+                examples, size_kb = 0, int(ds.stat().st_size / 1024)
+                if meta_path.exists():
+                    try:
+                        m = _json.loads(meta_path.read_text())
+                        examples = m.get("examples", 0)
+                    except Exception:
+                        pass
+                result.append({
+                    "name": ds.name,
+                    "examples": examples,
+                    "size_kb": size_kb,
+                    "source": _json.loads(meta_path.read_text()).get("source", "") if meta_path.exists() else "",
+                })
+            return JSONResponse({"status": "ok", "datasets": result})
         result = await mod.train_list({"what": what})
         return JSONResponse({"status": "ok", "result": result})
     except Exception as exc:
         return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
 
 
+async def api_training_preflight(request: Request) -> JSONResponse:
+    """Return GPU VRAM state and model-loaded state for training pre-flight check."""
+    import subprocess, shutil
+
+    gpu = None
+    if shutil.which("nvidia-smi"):
+        try:
+            r = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.used,memory.free,memory.total,name",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode == 0:
+                parts = [p.strip() for p in r.stdout.strip().split(",")]
+                gpu = {
+                    "used_mb": int(parts[0]),
+                    "free_mb": int(parts[1]),
+                    "total_mb": int(parts[2]),
+                    "name": parts[3] if len(parts) > 3 else "GPU",
+                }
+        except Exception:
+            pass
+
+    # Check what model is currently loaded in text-gen-webui
+    model_loaded = None
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=3) as client:
+            r2 = await client.get(f"{cfg.BACKEND_URL.rstrip('/v1')}/v1/internal/model/info")
+            if r2.status_code == 200:
+                info = r2.json()
+                name = info.get("model_name") or info.get("result", {}).get("model_name", "")
+                if name and name not in ("None", "none", ""):
+                    model_loaded = name
+    except Exception:
+        pass
+
+    ram = None
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        ram = {
+            "total_gb": round(vm.total / 1024**3, 1),
+            "available_gb": round(vm.available / 1024**3, 1),
+            "used_pct": vm.percent,
+        }
+    except Exception:
+        pass
+
+    return JSONResponse({"gpu": gpu, "ram": ram, "model_loaded": model_loaded})
+
+
 async def api_training_status(request: Request) -> JSONResponse:
-    """Get training run status."""
+    """Get training run status — returns both structured fields and a text log."""
     mod = _import_training()
     if not mod:
-        return JSONResponse({"status": "ok", "result": "Training tools not installed."})
+        return JSONResponse({"status": "ok", "active": False, "result": "Training tools not installed."})
     name = request.query_params.get("name")
-    tail = int(request.query_params.get("tail", "20"))
+    tail = int(request.query_params.get("tail", "40"))
     args = {"tail": tail}
     if name:
         args["name"] = name
     try:
         result = await mod.train_status(args)
-        return JSONResponse({"status": "ok", "result": result})
+
+        # Parse structured fields from the text output
+        lines = result.splitlines()
+        fields: dict = {"active": False, "result": result}
+        for line in lines:
+            if line.startswith("Status: "):
+                st = line.split("Status: ", 1)[1].strip()
+                fields["active"] = st == "RUNNING"
+                fields["run_status"] = st
+            elif line.startswith("Run: "):
+                fields["run_name"] = line.split("Run: ", 1)[1].strip()
+            elif line.startswith("Base model: "):
+                fields["base_model"] = line.split("Base model: ", 1)[1].strip()
+            elif line.startswith("Dataset: "):
+                fields["dataset"] = line.split("Dataset: ", 1)[1].strip()
+            elif line.startswith("Elapsed: "):
+                fields["elapsed"] = line.split("Elapsed: ", 1)[1].strip()
+            elif line.startswith("Latest loss: "):
+                fields["loss"] = line.split("Latest loss: ", 1)[1].strip()
+
+        # Extract log tail (everything after the separator line)
+        sep = "── Last"
+        sep_idx = result.find(sep)
+        if sep_idx >= 0:
+            log_section = result[result.find("\n", sep_idx)+1:]
+            fields["log_lines"] = [l for l in log_section.splitlines() if l.strip()]
+        else:
+            fields["log_lines"] = []
+
+        return JSONResponse({"status": "ok", **fields})
     except Exception as exc:
         return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
 
@@ -2709,6 +3071,40 @@ async def api_training_feedback(request: Request) -> JSONResponse:
         return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
 
 
+async def api_training_loras(request: Request) -> JSONResponse:
+    """List LoRA adapters produced by training runs."""
+    try:
+        from localforge.paths import training_dir as _tdir
+        runs_dir = _tdir() / "runs"
+        loras = []
+        if runs_dir.exists():
+            for run_dir in sorted(runs_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+                if not run_dir.is_dir():
+                    continue
+                if not (run_dir / "adapter_config.json").exists():
+                    continue
+                meta_path = run_dir / "train_meta.json"
+                meta = {}
+                if meta_path.exists():
+                    try:
+                        meta = json.loads(meta_path.read_text())
+                    except Exception:
+                        pass
+                gguf_files = list(run_dir.glob("*.gguf"))
+                loras.append({
+                    "name": run_dir.name,
+                    "path": str(run_dir),
+                    "base_model": meta.get("base_model", "unknown"),
+                    "dataset": meta.get("dataset", ""),
+                    "created": run_dir.stat().st_mtime,
+                    "has_gguf": bool(gguf_files),
+                    "gguf_files": [f.name for f in gguf_files],
+                })
+        return JSONResponse({"loras": loras})
+    except Exception as exc:
+        return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
+
+
 # ---------------------------------------------------------------------------
 # Model config lookup (for dashboard pre-fill)
 # ---------------------------------------------------------------------------
@@ -2723,6 +3119,41 @@ async def api_model_config(request: Request) -> JSONResponse:
         if pattern in model_name:
             return JSONResponse({"config": overrides, "matched_pattern": pattern})
     return JSONResponse({"config": {}})
+
+
+# ---------------------------------------------------------------------------
+# Startup config (which model to auto-load on gateway boot, if any)
+# ---------------------------------------------------------------------------
+
+def _startup_config_path() -> Path:
+    return DATA_ROOT / "startup_config.json"
+
+
+def _read_startup_config() -> dict:
+    p = _startup_config_path()
+    if p.exists():
+        try:
+            return json.loads(p.read_text())
+        except Exception:
+            pass
+    return {"startup_model": ""}
+
+
+def _write_startup_config(data: dict) -> None:
+    _startup_config_path().write_text(json.dumps(data, indent=2))
+
+
+async def api_startup_config_get(request: Request) -> JSONResponse:
+    return JSONResponse(_read_startup_config())
+
+
+async def api_startup_config_set(request: Request) -> JSONResponse:
+    body = await request.json()
+    model = body.get("startup_model", "")
+    cfg = _read_startup_config()
+    cfg["startup_model"] = model
+    _write_startup_config(cfg)
+    return JSONResponse({"status": "ok", "startup_model": model})
 
 
 # ---------------------------------------------------------------------------
@@ -2742,6 +3173,7 @@ dashboard_routes = [
     Route("/chats/{chat_id}", api_chat_delete, methods=["DELETE"]),
     # Models
     Route("/models", api_models, methods=["GET"]),
+    Route("/models/scan", api_models_scan, methods=["GET"]),
     Route("/swap", api_swap, methods=["POST"]),
     Route("/models/config", api_model_config, methods=["GET"]),
     # Generation params
@@ -2767,7 +3199,9 @@ dashboard_routes = [
     Route("/photos", api_photos_list, methods=["GET"]),
     Route("/photos/upload", api_photos_upload, methods=["POST"]),
     Route("/photos/search", api_photos_search, methods=["POST"]),
+    Route("/photos/{filename}/analyze", api_photos_analyze, methods=["POST"]),
     Route("/photos/{filename}", api_photos_get, methods=["GET"]),
+    Route("/photos/{filename}", api_photos_delete, methods=["DELETE"]),
     # Vision
     Route("/upload-image", api_upload_image, methods=["POST"]),
     # Knowledge Graph
@@ -2775,6 +3209,9 @@ dashboard_routes = [
     Route("/kg/search", api_kg_search, methods=["POST"]),
     Route("/kg/context", api_kg_context, methods=["POST"]),
     Route("/kg/add", api_kg_add, methods=["POST"]),
+    Route("/kg/relate", api_kg_relate, methods=["POST"]),
+    Route("/kg/timeline", api_kg_timeline, methods=["GET"]),
+    Route("/kg/entity/{name}", api_kg_entity_delete, methods=["DELETE"]),
     # Agents (static paths first, then parameterized)
     Route("/agents", api_agents, methods=["GET"]),
     Route("/agents/metrics", api_agent_metrics, methods=["GET"]),
@@ -2788,7 +3225,9 @@ dashboard_routes = [
     Route("/webhook/{agent_id}", api_webhook, methods=["POST"]),
     # Notes
     Route("/notes", api_notes, methods=["GET"]),
+    Route("/notes", api_note_save, methods=["POST"]),
     Route("/notes/{topic}", api_note_content, methods=["GET"]),
+    Route("/notes/{topic}", api_note_delete, methods=["DELETE"]),
     # Voice
     Route("/transcribe", api_transcribe, methods=["POST"]),
     # Notifications + Web Push
@@ -2803,7 +3242,9 @@ dashboard_routes = [
     # Research
     Route("/research/sessions", api_research_sessions, methods=["GET"]),
     Route("/research/sessions/{session_id}", api_research_session_get, methods=["GET"]),
+    Route("/research/sessions/{session_id}", api_research_session_delete, methods=["DELETE"]),
     Route("/research/start", api_research_start, methods=["POST"]),
+    Route("/research/queue", api_research_queue, methods=["GET", "POST"]),
     # Workflows
     Route("/workflows", api_workflows_list, methods=["GET"]),
     Route("/workflows", api_workflow_create, methods=["POST"]),
@@ -2842,8 +3283,14 @@ dashboard_routes = [
     Route("/sync-models", api_sync_models, methods=["POST"]),
     # Training pipeline
     Route("/training", api_training_list, methods=["GET"]),
+
+    Route("/training/preflight", api_training_preflight, methods=["GET"]),
     Route("/training/status", api_training_status, methods=["GET"]),
     Route("/training/prepare", api_training_prepare, methods=["POST"]),
     Route("/training/start", api_training_start, methods=["POST"]),
     Route("/training/feedback", api_training_feedback, methods=["POST"]),
+    Route("/training/loras", api_training_loras, methods=["GET"]),
+    # Startup config
+    Route("/config/startup", api_startup_config_get, methods=["GET"]),
+    Route("/config/startup", api_startup_config_set, methods=["POST"]),
 ]

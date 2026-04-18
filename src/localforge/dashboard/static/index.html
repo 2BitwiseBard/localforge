@@ -6,14 +6,29 @@
 <title>AI Hub</title>
 <meta name="description" content="Local AI platform">
 <meta name="theme-color" content="#0d1117">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="/static/manifest.json">
 <link rel="icon" href="/static/icon-192.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/static/icon-192.svg">
 <link rel="stylesheet" href="/static/style.css">
+<script src="/static/js/sw-bootstrap.js"></script>
 </head>
 <body>
+
+<!-- Auth modal — shown when no API key is stored; avoids unreliable prompt() in PWA mode -->
+<div id="auth-modal" class="modal-overlay" hidden>
+  <div class="modal-box" style="max-width:380px">
+    <h2 style="margin:0 0 12px">AI Hub — Sign In</h2>
+    <p style="color:var(--muted);margin:0 0 16px;font-size:0.9rem">Enter your API key to continue.</p>
+    <input id="auth-key-input" type="password" placeholder="API key" autocomplete="current-password"
+           style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:1rem;margin-bottom:10px">
+    <div id="auth-error" style="color:var(--red);font-size:0.85rem;min-height:1.2em;margin-bottom:8px"></div>
+    <button id="auth-submit-btn" class="btn btn-primary" style="width:100%">Connect</button>
+  </div>
+</div>
+
 <header>
   <button id="sidebar-mobile-toggle" class="icon-btn sidebar-mobile-toggle" aria-label="Open menu" title="Menu">&#9776;</button>
   <h1>AI Hub</h1>
@@ -32,7 +47,7 @@
     <button class="tab" data-tab="search" role="tab" aria-selected="false" aria-controls="tab-search" title="Search"><span class="tab-icon" aria-hidden="true">&#128269;</span><span class="tab-label">Search</span></button>
     <button class="tab" data-tab="mesh" role="tab" aria-selected="false" aria-controls="tab-mesh" title="Mesh"><span class="tab-icon" aria-hidden="true">&#127760;</span><span class="tab-label">Mesh</span></button>
     <button class="tab" data-tab="media" role="tab" aria-selected="false" aria-controls="tab-media" title="Media"><span class="tab-icon" aria-hidden="true">&#127912;</span><span class="tab-label">Media</span></button>
-    <button class="tab" data-tab="config" role="tab" aria-selected="false" aria-controls="tab-config" title="Config"><span class="tab-icon" aria-hidden="true">&#9881;</span><span class="tab-label">Config</span></button>
+    <button class="tab" data-tab="config" role="tab" aria-selected="false" aria-controls="tab-config" title="Model"><span class="tab-icon" aria-hidden="true">&#9881;</span><span class="tab-label">Model</span></button>
     <button class="tab" data-tab="agents" role="tab" aria-selected="false" aria-controls="tab-agents" title="Agents"><span class="tab-icon" aria-hidden="true">&#129302;</span><span class="tab-label">Agents</span></button>
     <button class="tab" data-tab="research" role="tab" aria-selected="false" aria-controls="tab-research" title="Research"><span class="tab-icon" aria-hidden="true">&#128300;</span><span class="tab-label">Research</span></button>
     <button class="tab" data-tab="workflows" role="tab" aria-selected="false" aria-controls="tab-workflows" title="Workflows"><span class="tab-icon" aria-hidden="true">&#128260;</span><span class="tab-label">Workflows</span></button>
@@ -59,7 +74,7 @@
   <div class="mobile-more-grid">
     <button class="tab mobile-more-item" data-tab="mesh"><span class="tab-icon" aria-hidden="true">&#127760;</span><span>Mesh</span></button>
     <button class="tab mobile-more-item" data-tab="media"><span class="tab-icon" aria-hidden="true">&#127912;</span><span>Media</span></button>
-    <button class="tab mobile-more-item" data-tab="config"><span class="tab-icon" aria-hidden="true">&#9881;</span><span>Config</span></button>
+    <button class="tab mobile-more-item" data-tab="config"><span class="tab-icon" aria-hidden="true">&#9881;</span><span>Model</span></button>
     <button class="tab mobile-more-item" data-tab="research"><span class="tab-icon" aria-hidden="true">&#128300;</span><span>Research</span></button>
     <button class="tab mobile-more-item" data-tab="workflows"><span class="tab-icon" aria-hidden="true">&#128260;</span><span>Workflows</span></button>
     <button class="tab mobile-more-item" data-tab="training"><span class="tab-icon" aria-hidden="true">&#127891;</span><span>Training</span></button>
@@ -84,6 +99,9 @@
       <div class="card status-model-card">
         <h2>Active Model</h2>
         <div id="status-model">Loading&hellip;</div>
+        <div id="status-model-actions" style="display:none;margin-top:10px;">
+          <button id="status-unload-btn" class="btn-danger" style="font-size:0.8em;padding:4px 10px;">Unload Model</button>
+        </div>
       </div>
       <div class="card status-gpu-card">
         <h2>GPU</h2>
@@ -98,13 +116,14 @@
         <div id="status-info" aria-live="polite">Loading&hellip;</div>
       </div>
       <div class="card">
-        <h2>Hub Mode</h2>
+        <h2>Hub Mode &amp; Character</h2>
+        <p class="param-subtitle" style="margin-bottom:8px;"><strong>Mode</strong> adjusts temperature &amp; token limits (development=precise, creative=expressive, research=analytical). <strong>Character</strong> sets a persona prompt (code-reviewer, architect, teacher…).</p>
         <div class="mode-controls">
           <select id="mode-select" class="param-select"><option value="">loading...</option></select>
           <select id="character-select" class="param-select"><option value="">loading...</option></select>
           <button id="mode-apply" class="btn-primary">Apply</button>
         </div>
-        <div id="mode-info" class="mode-info"></div>
+        <div id="mode-info" class="mode-info" style="margin-top:6px;font-size:0.82em;color:#8b949e;line-height:1.5;"></div>
       </div>
     </div>
 
@@ -120,14 +139,19 @@
       <div id="mesh-summary" class="mesh-summary">Loading&hellip;</div>
     </div>
 
-    <!-- Model sync -->
+    <!-- Models card — scan disk + sync symlinks -->
     <div class="card">
       <div class="card-header-row">
-        <h2>Model Sync</h2>
-        <button id="sync-models-btn" class="btn-small">Sync</button>
+        <h2>Models on Disk</h2>
+        <div style="display:flex;gap:6px;">
+          <button id="scan-models-btn" class="btn-small">&#x1F4BE; Scan Disk</button>
+          <button id="sync-models-btn" class="btn-small">&#x1F504; Sync Links</button>
+        </div>
       </div>
+      <p class="param-subtitle" style="margin-bottom:8px;"><strong>Scan Disk</strong> discovers GGUF files and adds them to the model loader above. <strong>Sync Links</strong> re-creates webui symlinks from <code>/mnt/models</code> after adding new files.</p>
+      <div id="scan-models-result" style="display:none;font-size:0.83em;line-height:1.6;margin-bottom:6px;"></div>
       <span id="sync-models-status" class="param-subtitle"></span>
-      <pre id="sync-models-result" style="display:none;margin-top:8px;white-space:pre-wrap;font-size:0.82em;color:#c9d1d9;max-height:180px;overflow:auto;"></pre>
+      <pre id="sync-models-result-raw" style="display:none;margin-top:8px;white-space:pre-wrap;font-size:0.82em;color:#c9d1d9;max-height:180px;overflow:auto;"></pre>
     </div>
   </section>
 
@@ -175,6 +199,7 @@
           <button id="chat-save-btn" class="icon-btn" title="Save chat" aria-label="Save chat">&#x1f4be;</button>
           <button id="chat-export-btn" class="icon-btn" title="Export chat" aria-label="Export chat">&#x2B07;</button>
           <button id="sys-prompt-toggle" class="icon-btn" title="System prompt" aria-label="System prompt">&#x2699;</button>
+          <span id="chat-model-indicator" class="badge" style="font-size:0.72em;background:var(--surface);border:1px solid var(--border);color:#8b949e;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
         </div>
         <div class="chat-header-right">
           <button id="tts-toggle" class="icon-btn" title="Text-to-speech" aria-label="Text-to-speech">&#x1f508;</button>
@@ -200,6 +225,7 @@
         <div class="chat-input-buttons">
           <label class="icon-btn file-label" title="Image" aria-label="Attach image">&#x1f4f7;<input type="file" id="image-input" accept="image/*" style="display:none"></label>
           <button id="mic-btn" class="icon-btn" title="Voice" aria-label="Voice input">&#x1f3a4;</button>
+          <button id="chat-stop" class="btn-danger" style="display:none;font-size:0.85em;padding:6px 12px;">&#9632; Stop</button>
           <button id="chat-send">Send</button>
         </div>
       </div>
@@ -219,6 +245,9 @@
           <label><input type="radio" name="search-mode" value="hybrid" checked> Hybrid</label>
           <label><input type="radio" name="search-mode" value="rag"> RAG</label>
         </div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:0.85em;color:var(--text-dim);">
+          Top K <input type="number" id="search-top-k" value="5" min="1" max="20" class="param-number" style="width:52px;">
+        </label>
       </div>
       <div class="search-input">
         <input type="text" id="search-query" placeholder="Search query...">
@@ -262,8 +291,133 @@
     </div>
   </section>
 
-  <!-- Config Tab -->
-  <section id="tab-config" class="tab-content" role="tabpanel" aria-label="Configuration">
+  <!-- Model Tab -->
+  <section id="tab-config" class="tab-content" role="tabpanel" aria-label="Model & Configuration">
+
+    <!-- Load / Swap — all loading params in one card -->
+    <div class="card">
+      <div class="card-header-row">
+        <h2 class="no-margin">Load / Swap Model</h2>
+        <span id="model-current-badge" class="badge" style="font-size:0.72rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+      </div>
+      <div class="param-grid" style="margin-top:10px;">
+        <div class="param-row" style="grid-column:1/-1;">
+          <label>Model</label>
+          <select id="model-tab-select" class="param-select"></select>
+        </div>
+        <div class="param-row">
+          <label>Context Size <span class="param-hint">tokens — auto-fills from config</span></label>
+          <input type="number" id="ctrl-ctx-size" placeholder="8192" min="512" max="1048576" step="256" class="param-number">
+        </div>
+        <div class="param-row">
+          <label>GPU Layers <span class="param-hint">-1 = all</span></label>
+          <input type="number" id="ctrl-gpu-layers" placeholder="-1" min="-1" max="999" class="param-number">
+        </div>
+      </div>
+
+      <details class="param-section" style="margin-top:10px;">
+        <summary>Performance &amp; Cache Options</summary>
+        <div class="param-grid">
+          <div class="param-row">
+            <label>Flash Attention <span class="param-hint">faster for long ctx</span></label>
+            <select id="ctrl-flash-attn" class="param-select">
+              <option value="">default</option>
+              <option value="true">enabled</option>
+              <option value="false">disabled</option>
+            </select>
+          </div>
+          <div class="param-row">
+            <label>KV Cache Type <span class="param-hint">q8_0 saves ~40% VRAM</span></label>
+            <select id="ctrl-cache-type" class="param-select">
+              <option value="">default (fp16)</option>
+              <option value="q8_0">q8_0 — half VRAM</option>
+              <option value="q4_0">q4_0 — quarter VRAM</option>
+            </select>
+          </div>
+          <div class="param-row">
+            <label>Batch Size</label>
+            <input type="number" id="ctrl-batch-size" placeholder="512" min="32" max="8192" step="32" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>Micro Batch</label>
+            <input type="number" id="ctrl-ubatch-size" placeholder="512" min="32" max="8192" step="32" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>Threads</label>
+            <input type="number" id="ctrl-threads" placeholder="auto" min="1" max="128" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>Threads (Batch)</label>
+            <input type="number" id="ctrl-threads-batch" placeholder="auto" min="1" max="128" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>RoPE Freq Base</label>
+            <input type="number" id="ctrl-rope-freq-base" placeholder="auto" min="1" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>Parallel Slots</label>
+            <input type="number" id="ctrl-parallel" placeholder="1" min="1" max="32" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>Tensor Split <span class="param-hint">e.g. 0.7,0.3</span></label>
+            <input type="text" id="ctrl-tensor-split" placeholder="auto" class="param-number" style="width:130px;text-align:left">
+          </div>
+        </div>
+      </details>
+
+      <details class="param-section" style="margin-top:6px;">
+        <summary>Speculative Decoding <span class="param-hint">draft model or n-gram for faster output</span></summary>
+        <div class="param-grid">
+          <div class="param-row">
+            <label>Type</label>
+            <select id="ctrl-spec-type" class="param-select">
+              <option value="">none</option>
+              <option value="draft">draft model</option>
+              <option value="ngram">n-gram</option>
+            </select>
+          </div>
+          <div class="param-row">
+            <label>Draft Model</label>
+            <select id="ctrl-model-draft" class="param-select">
+              <option value="">none</option>
+            </select>
+          </div>
+          <div class="param-row">
+            <label>Draft Max Tokens</label>
+            <input type="number" id="ctrl-draft-max" placeholder="16" min="1" max="128" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>Draft GPU Layers <span class="param-hint">-1 = all</span></label>
+            <input type="number" id="ctrl-gpu-layers-draft" placeholder="-1" min="-1" max="999" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>Draft Ctx Size</label>
+            <input type="number" id="ctrl-ctx-size-draft" placeholder="same" min="512" max="131072" step="256" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>N-gram N</label>
+            <input type="number" id="ctrl-ngram-n" placeholder="4" min="1" max="16" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>N-gram M</label>
+            <input type="number" id="ctrl-ngram-m" placeholder="2" min="1" max="16" class="param-number">
+          </div>
+          <div class="param-row">
+            <label>N-gram Min Hits</label>
+            <input type="number" id="ctrl-ngram-hits" placeholder="2" min="1" max="16" class="param-number">
+          </div>
+        </div>
+      </details>
+
+      <div class="param-actions" style="margin-top:12px;">
+        <button id="model-load-btn" class="btn-primary">Load Model</button>
+        <button id="model-unload-btn" class="btn-danger">Unload Current</button>
+        <button id="load-params-clear" class="btn-secondary">Clear</button>
+        <span id="model-load-status" class="config-status"></span>
+      </div>
+    </div>
+
+    <!-- Generation Parameters -->
     <div class="card">
       <h2>Generation Parameters</h2>
       <div class="param-grid">
@@ -295,6 +449,12 @@
           <label>Seed <span class="param-hint">-1 = random</span></label>
           <input type="number" id="param-seed" value="-1" min="-1" class="param-number">
         </div>
+        <div class="param-row" style="grid-column:1/-1;">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="checkbox" id="param-thinking" style="width:auto;accent-color:var(--accent);">
+            <span>Enable Thinking <span class="param-hint">Qwen3 extended reasoning — injects &lt;think&gt; tokens before response</span></span>
+          </label>
+        </div>
       </div>
       <div class="param-actions">
         <button id="params-apply" class="btn-primary">Apply</button>
@@ -303,156 +463,61 @@
       </div>
     </div>
 
+    <!-- Presets -->
     <div class="card">
       <h2>Presets</h2>
+      <p class="param-subtitle">Saved sampling profiles — override temperature, top_p, top_k, max_tokens.</p>
       <div class="preset-controls">
         <select id="preset-select"></select>
         <button id="preset-load" class="btn-primary">Load Preset</button>
       </div>
     </div>
 
+    <!-- LoRA Adapters -->
     <div class="card">
-      <h2>Model Controls</h2>
-      <div class="model-controls-actions">
-        <button id="model-unload" class="btn-danger">Unload Model</button>
-        <button id="run-benchmark" class="btn-secondary">Benchmark</button>
-        <span id="benchmark-result" class="config-status"></span>
+      <div class="card-header-row">
+        <h2>LoRA Adapters</h2>
+        <button id="lora-refresh-btn" class="btn-small">&#x21bb; Refresh</button>
       </div>
-    </div>
-
-    <div class="card">
-      <h2>Model Loading Parameters</h2>
-      <p class="param-subtitle">Applied on next model swap. Leave blank to use config.yaml defaults.</p>
-
-      <details class="param-section" open>
-        <summary>Core</summary>
-        <div class="param-grid">
-          <div class="param-row">
-            <label>Context Size <span class="param-hint">tokens</span></label>
-            <input type="number" id="ctrl-ctx-size" placeholder="32768" min="512" max="1048576" step="256" class="param-number">
-          </div>
-          <div class="param-row">
-            <label>GPU Layers <span class="param-hint">-1 = all</span></label>
-            <input type="number" id="ctrl-gpu-layers" placeholder="-1" min="-1" max="999" class="param-number">
-          </div>
-          <div class="param-row">
-            <label>Threads</label>
-            <input type="number" id="ctrl-threads" placeholder="auto" min="1" max="128" class="param-number">
-          </div>
-          <div class="param-row">
-            <label>Threads (Batch)</label>
-            <input type="number" id="ctrl-threads-batch" placeholder="auto" min="1" max="128" class="param-number">
-          </div>
-          <div class="param-row">
-            <label>Batch Size</label>
-            <input type="number" id="ctrl-batch-size" placeholder="512" min="32" max="8192" step="32" class="param-number">
-          </div>
-          <div class="param-row">
-            <label>Micro Batch</label>
-            <input type="number" id="ctrl-ubatch-size" placeholder="512" min="32" max="8192" step="32" class="param-number">
-          </div>
-        </div>
-      </details>
-
-      <details class="param-section">
-        <summary>KV Cache &amp; Attention</summary>
-        <div class="param-grid">
-          <div class="param-row">
-            <label>Cache Type</label>
-            <select id="ctrl-cache-type" class="param-select">
-              <option value="">default (fp16)</option>
-              <option value="fp16">fp16</option>
-              <option value="q8_0">q8_0 (half VRAM)</option>
-              <option value="q4_0">q4_0 (quarter VRAM)</option>
-            </select>
-          </div>
-          <div class="param-row">
-            <label>Flash Attention</label>
-            <select id="ctrl-flash-attn" class="param-select">
-              <option value="">default</option>
-              <option value="true">enabled</option>
-              <option value="false">disabled</option>
-            </select>
-          </div>
-          <div class="param-row">
-            <label>RoPE Freq Base</label>
-            <input type="number" id="ctrl-rope-freq-base" placeholder="auto" min="1" class="param-number">
-          </div>
-        </div>
-      </details>
-
-      <details class="param-section">
-        <summary>Parallelism</summary>
-        <div class="param-grid">
-          <div class="param-row">
-            <label>Parallel Slots</label>
-            <input type="number" id="ctrl-parallel" placeholder="1" min="1" max="32" class="param-number">
-          </div>
-          <div class="param-row">
-            <label>Tensor Split <span class="param-hint">e.g. 0.7,0.3</span></label>
-            <input type="text" id="ctrl-tensor-split" placeholder="auto" class="param-number" style="width:160px;text-align:left">
-          </div>
-        </div>
-      </details>
-
-      <details class="param-section">
-        <summary>Speculative Decoding</summary>
-        <div class="param-grid">
-          <div class="param-row">
-            <label>Spec Type</label>
-            <select id="ctrl-spec-type" class="param-select">
-              <option value="">none</option>
-              <option value="draft">draft model</option>
-              <option value="ngram">n-gram</option>
-            </select>
-          </div>
-          <div class="param-row">
-            <label>Draft Model</label>
-            <select id="ctrl-model-draft" class="param-select">
-              <option value="">none</option>
-            </select>
-          </div>
-          <div class="param-row">
-            <label>Draft Max Tokens</label>
-            <input type="number" id="ctrl-draft-max" placeholder="16" min="1" max="128" class="param-number">
-          </div>
-          <div class="param-row">
-            <label>Draft GPU Layers <span class="param-hint">-1 = all</span></label>
-            <input type="number" id="ctrl-gpu-layers-draft" placeholder="-1" min="-1" max="999" class="param-number">
-          </div>
-          <div class="param-row">
-            <label>Draft Ctx Size</label>
-            <input type="number" id="ctrl-ctx-size-draft" placeholder="same" min="512" max="131072" step="256" class="param-number">
-          </div>
-          <div class="param-row">
-            <label>N-gram Size N</label>
-            <input type="number" id="ctrl-ngram-n" placeholder="4" min="1" max="16" class="param-number">
-          </div>
-          <div class="param-row">
-            <label>N-gram Size M</label>
-            <input type="number" id="ctrl-ngram-m" placeholder="2" min="1" max="16" class="param-number">
-          </div>
-          <div class="param-row">
-            <label>N-gram Min Hits</label>
-            <input type="number" id="ctrl-ngram-hits" placeholder="2" min="1" max="16" class="param-number">
-          </div>
-        </div>
-      </details>
-
-      <div class="param-actions">
-        <button id="load-params-clear" class="btn-secondary">Clear All</button>
-        <span class="param-hint">Parameters are sent with the next model swap</span>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>LoRA Adapters</h2>
+      <p class="param-subtitle">LoRAs must be in <code>~/Development/text-generation-webui/user_data/loras/</code>. After training, copy the adapter directory there, then click Refresh. Training output is in <code>~/Development/training/runs/&lt;run-name&gt;/</code></p>
       <div id="lora-info"></div>
       <div id="lora-list" class="lora-list"></div>
       <div class="lora-actions">
         <button id="lora-unload-all" class="btn-secondary">Unload All LoRAs</button>
       </div>
     </div>
+
+    <!-- Startup Model (collapsed) -->
+    <details class="card">
+      <summary>Startup Model</summary>
+      <p class="param-subtitle">Auto-load a model when the gateway starts. Off by default — pick a model when you need it.</p>
+      <div class="param-grid">
+        <div class="param-row">
+          <label>Auto-load on boot</label>
+          <input type="checkbox" id="startup-model-enabled" style="width:20px;height:20px;cursor:pointer;accent-color:var(--accent);">
+        </div>
+        <div class="param-row" id="startup-model-row" style="display:none;">
+          <label>Model</label>
+          <select id="startup-model-select" class="param-select" style="max-width:300px;"></select>
+        </div>
+      </div>
+      <div class="param-actions">
+        <button id="startup-save-btn" class="btn-primary">Save</button>
+        <span id="startup-status" class="config-status"></span>
+      </div>
+      <p class="param-subtitle" style="margin-top:8px;">Takes effect on next gateway restart.</p>
+    </details>
+
+    <!-- Benchmark (collapsed) -->
+    <details class="card">
+      <summary>Benchmark</summary>
+      <p class="param-subtitle">Measure inference speed (tokens/sec) with the currently loaded model.</p>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:10px;">
+        <button id="run-benchmark" class="btn-secondary">Run Benchmark</button>
+        <span id="benchmark-result" class="config-status"></span>
+      </div>
+    </details>
+
   </section>
 
   <!-- Agents Tab -->
@@ -477,17 +542,38 @@
   <!-- Research Tab -->
   <section id="tab-research" class="tab-content" role="tabpanel" aria-label="Research">
     <div class="card">
-      <h2>Research Sessions</h2>
+      <div class="card-header-row">
+        <h2>New Research</h2>
+        <span class="param-hint">Results saved to Notes + Knowledge Graph via DuckDuckGo</span>
+      </div>
       <div class="research-controls">
         <div class="search-input">
           <input type="text" id="research-query" placeholder="What would you like to research?">
-          <button id="research-start-btn" class="btn-primary">Research</button>
+          <button id="research-start-btn" class="btn-primary">Research Now</button>
+          <button id="research-queue-btn" class="btn-secondary" title="Add to background queue (runs on next agent cycle)">+ Queue</button>
         </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header-row">
+        <h2>Background Queue</h2>
+        <button id="research-queue-refresh" class="btn-small">&#8635;</button>
+      </div>
+      <p class="param-hint" style="margin:0 0 8px;">Queued queries are processed by the research-agent every 15 minutes (up to 3 per cycle).</p>
+      <div id="research-queue-list" class="research-queue-list">Loading...</div>
+    </div>
+    <div class="card">
+      <div class="card-header-row">
+        <h2>Sessions</h2>
+        <button id="research-sessions-refresh" class="btn-small">&#8635;</button>
       </div>
       <div id="research-sessions">Loading...</div>
     </div>
     <div class="card" id="research-detail-card" style="display:none">
-      <h2 id="research-detail-title">Research Detail</h2>
+      <div class="card-header-row">
+        <h2 id="research-detail-title">Research Detail</h2>
+        <button id="research-detail-close" class="btn-small">Close</button>
+      </div>
       <div id="research-detail"></div>
     </div>
   </section>
@@ -534,95 +620,332 @@
 
   <!-- Training Tab -->
   <section id="tab-training" class="tab-content" role="tabpanel" aria-label="Training">
+
+    <!-- GPU & Model Status — always visible -->
     <div class="card">
-      <h2>Training Pipeline</h2>
-      <p class="param-subtitle">QLoRA fine-tuning via Unsloth</p>
-      <div id="training-overview">Loading...</div>
+      <div class="card-header-row">
+        <h2>GPU &amp; Model</h2>
+        <button id="train-preflight-refresh" class="btn-small">&#8635; Refresh</button>
+      </div>
+      <div id="train-gpu-status" class="param-subtitle" style="margin-top:4px;">Checking...</div>
+      <div id="train-ram-status" class="param-subtitle" style="margin-top:2px;"></div>
+      <div id="train-vram-bar-wrap" style="display:none;margin:10px 0 4px;">
+        <div style="display:flex;justify-content:space-between;font-size:0.78em;color:var(--text-dim);margin-bottom:4px;">
+          <span>VRAM</span>
+          <span id="train-vram-label"></span>
+        </div>
+        <div style="background:var(--bg);border-radius:4px;height:10px;overflow:hidden;border:1px solid var(--border);">
+          <div id="train-vram-bar" style="height:100%;background:#3fb950;transition:width 0.3s;"></div>
+        </div>
+        <div id="train-vram-warn" style="display:none;margin-top:6px;padding:8px;border-radius:6px;background:#2d1a0a;border:1px solid #f0883e;color:#f0883e;font-size:0.82em;"></div>
+      </div>
+      <div id="train-model-status" class="param-subtitle" style="margin-top:8px;">Checking...</div>
+      <button id="train-unload-btn" class="btn-secondary" style="display:none;margin-top:10px;">Unload Inference Model</button>
     </div>
-    <div class="card">
-      <h2>Prepare Dataset</h2>
-      <div style="display:flex;flex-direction:column;gap:8px;">
-        <select id="train-mode" class="param-select">
-          <option value="git-diffs">From Git History (commit messages)</option>
-          <option value="code-pairs">From Code (function pairs)</option>
-          <option value="from-feedback">From Feedback (rated responses)</option>
-        </select>
-        <input type="text" id="train-repo" class="param-number" placeholder="Repository or directory path..." style="width:100%">
-        <input type="text" id="train-glob" class="param-number" placeholder="Glob pattern (e.g. **/*.py)" style="width:100%">
-        <input type="text" id="train-dataset-name" class="param-number" placeholder="Dataset name (optional)" style="width:100%">
-        <button id="train-prepare-btn" class="btn-primary">Prepare Dataset</button>
-        <pre id="train-prepare-result" style="display:none;white-space:pre-wrap;font-size:0.85em;color:#c9d1d9;max-height:200px;overflow:auto;"></pre>
+
+    <!-- Active run monitor — shown only when training is active -->
+    <div class="card" id="train-active-card" style="display:none;">
+      <div class="card-header-row">
+        <h2>&#9654; Training Run</h2>
+        <span id="train-run-badge" class="mesh-status-pill pill-online" style="font-size:0.75rem;">running</span>
+      </div>
+      <div id="train-run-meta" style="color:#8b949e;font-size:0.83em;margin-bottom:8px;"></div>
+      <div id="train-progress-wrap" style="display:none;margin-bottom:8px;">
+        <div style="display:flex;justify-content:space-between;font-size:0.78em;color:#8b949e;margin-bottom:3px;">
+          <span>Progress</span><span id="train-progress-label"></span>
+        </div>
+        <div style="background:var(--bg);border-radius:4px;height:8px;overflow:hidden;border:1px solid var(--border);">
+          <div id="train-progress-bar" style="height:100%;background:var(--accent);transition:width 0.5s;width:0%;"></div>
+        </div>
+      </div>
+      <pre id="train-run-log" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:0.73em;max-height:300px;overflow-y:auto;white-space:pre-wrap;color:#c9d1d9;line-height:1.4;"></pre>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+        <button id="train-refresh-log-btn" class="btn-secondary" style="font-size:0.8em;">&#8635; Refresh</button>
+        <span id="train-poll-indicator" style="font-size:0.75em;color:#8b949e;display:none;">auto-refreshing every 4s</span>
       </div>
     </div>
-    <div class="card">
-      <h2>Start Training</h2>
+
+    <!-- Dataset Library & Preparation -->
+    <details class="card" open>
+      <summary>Dataset Library &amp; Preparation</summary>
+
+      <div class="card-header-row" style="margin-bottom:10px;">
+        <h3 class="section-label">Library</h3>
+        <button id="train-refresh-datasets-btn" class="btn-small">&#8635; Refresh</button>
+      </div>
+      <div id="train-dataset-table-wrap">
+        <table style="width:100%;border-collapse:collapse;font-size:0.85em;" id="train-dataset-table">
+          <thead>
+            <tr style="color:#8b949e;text-align:left;border-bottom:1px solid var(--border);">
+              <th style="padding:6px 8px;">Dataset</th>
+              <th style="padding:6px 8px;text-align:right;">Examples</th>
+              <th style="padding:6px 8px;text-align:right;">Size</th>
+            </tr>
+          </thead>
+          <tbody id="train-dataset-tbody">
+            <tr><td colspan="3" style="padding:12px 8px;color:#8b949e;">Loading datasets...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:14px;">
+        <h3 class="section-label">Prepare New Dataset</h3>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <select id="train-mode" class="param-select">
+            <option value="git-diffs">From Git History (commit messages)</option>
+            <option value="code-pairs">From Codebase (function pairs)</option>
+            <option value="from-qa">From Q&amp;A File (manual curation)</option>
+            <option value="from-feedback">From Feedback (rated responses)</option>
+            <option value="huggingface">Download from HuggingFace</option>
+            <option value="merge">Merge Existing Datasets</option>
+          </select>
+          <input type="text" id="train-repo" class="param-number" placeholder="Repository or directory path (e.g. ~/Development/platform_next)" style="width:100%">
+          <input type="text" id="train-glob" class="param-number" placeholder='Glob pattern (default: **/*.rs)' style="width:100%;display:none;">
+          <input type="text" id="train-qa-input" class="param-number" placeholder="Q&amp;A file path (e.g. ~/Development/training/qa-trading.txt)" style="width:100%;display:none;">
+          <input type="text" id="train-hf-dataset-id" class="param-number" placeholder="HuggingFace dataset ID (e.g. teknium/OpenHermes-2.5)" style="width:100%;display:none;">
+          <div id="train-hf-opts" style="display:none;gap:8px;flex-wrap:wrap;">
+            <label style="color:#8b949e;font-size:0.85em;">Split <input type="text" id="train-hf-split" class="param-number" value="train" style="width:80px;"></label>
+            <label style="color:#8b949e;font-size:0.85em;">Max Examples (0=all) <input type="number" id="train-hf-max" class="param-number" value="0" style="width:80px;"></label>
+          </div>
+          <input type="text" id="train-merge-inputs" class="param-number" placeholder="Dataset names to merge (comma-separated, e.g. bespoke.jsonl,synthia-coder.jsonl)" style="width:100%;display:none;">
+          <label id="train-merge-cap-label" style="display:none;color:#8b949e;font-size:0.85em;">Max per source (0=unlimited) <input type="number" id="train-merge-cap" class="param-number" value="5000" style="width:80px;"></label>
+          <input type="text" id="train-dataset-name" class="param-number" placeholder="Output dataset name (e.g. rust-domain)" style="width:100%">
+          <button id="train-prepare-btn" class="btn-primary">Prepare Dataset</button>
+          <pre id="train-prepare-result" style="display:none;white-space:pre-wrap;font-size:0.85em;color:#c9d1d9;max-height:200px;overflow:auto;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:8px;"></pre>
+        </div>
+      </div>
+    </details>
+
+    <!-- Configure & Start Training Run -->
+    <details class="card" open>
+      <summary>Configure &amp; Start Training Run</summary>
       <div style="display:flex;flex-direction:column;gap:8px;">
-        <select id="train-dataset-select" class="param-select">
-          <option value="">Select dataset...</option>
-        </select>
+
+        <label style="color:#8b949e;font-size:0.85em;">Dataset
+          <select id="train-dataset-select" class="param-select" style="margin-top:4px;">
+            <option value="">Select dataset...</option>
+          </select>
+        </label>
+
+        <label style="color:#8b949e;font-size:0.85em;">Run Name (optional)
+          <input type="text" id="train-run-name" class="param-number" placeholder="e.g. rust-trading-v1" style="width:100%;margin-top:4px;">
+        </label>
+
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 4px;">
+          <span style="color:#8b949e;font-size:0.8em;align-self:center;">Quick pick:</span>
+          <button class="btn-secondary train-preset-btn" data-model="unsloth/Qwen3-4B-bnb-4bit" data-rank="16" data-alpha="32" data-bf16="false" style="font-size:0.78em;">Q3-4B QLoRA ~4GB</button>
+          <button class="btn-secondary train-preset-btn" data-model="unsloth/Qwen3-8B-bnb-4bit" data-rank="32" data-alpha="64" data-bf16="false" style="font-size:0.78em;">Q3-8B QLoRA ~6GB ★</button>
+          <button class="btn-secondary train-preset-btn" data-model="unsloth/Qwen3-14B-bnb-4bit" data-rank="16" data-alpha="32" data-bf16="false" style="font-size:0.78em;">Q3-14B QLoRA ~9GB</button>
+          <button class="btn-secondary train-preset-btn" data-model="unsloth/gemma-3-12b-it-bnb-4bit" data-rank="16" data-alpha="16" data-bf16="false" style="font-size:0.78em;">Gemma3-12B ~8GB</button>
+          <button class="btn-secondary train-preset-btn" data-model="unsloth/Phi-4-mini-instruct-bnb-4bit" data-rank="16" data-alpha="16" data-bf16="false" style="font-size:0.78em;">Phi-4 mini ~3GB</button>
+          <button class="btn-secondary train-preset-btn" data-model="unsloth/Qwen3-1.7B" data-rank="16" data-alpha="16" data-bf16="true" style="font-size:0.78em;">Q3-1.7B bf16 full-FT</button>
+        </div>
+
+        <details class="param-section" open>
+          <summary>Model &amp; LoRA</summary>
+          <div class="param-grid" style="margin-top:8px;">
+            <label style="grid-column:1/-1;">Base Model (HuggingFace ID)
+              <input type="text" id="train-base-model" class="param-number" value="unsloth/Qwen3-8B-bnb-4bit" style="width:100%;margin-top:4px;" placeholder="e.g. unsloth/Qwen3-8B-bnb-4bit">
+            </label>
+            <label>LoRA Rank<input type="number" id="train-lora-rank" class="param-number" value="32"></label>
+            <label>LoRA Alpha<input type="number" id="train-lora-alpha" class="param-number" value="64" title="Usually 2× rank for code/reasoning, 1× for general"></label>
+            <label>GGUF Export<input type="text" id="train-gguf" class="param-number" value="q4_k_m,q8_0" title="Comma-separated quants, e.g. q4_k_m,q5_k_m,q8_0"></label>
+            <label style="grid-column:1/-1;display:flex;align-items:center;gap:8px;cursor:pointer;">
+              <input type="checkbox" id="train-bf16" style="width:auto;">
+              <span>bf16 LoRA mode <span style="color:#8b949e;font-size:0.8em;">(~2× VRAM, higher quality — use for ≤4B models; for 8B+ use QLoRA with bnb-4bit)</span></span>
+            </label>
+            <label style="grid-column:1/-1;display:flex;align-items:center;gap:8px;cursor:pointer;">
+              <input type="checkbox" id="train-full-finetune" style="width:auto;">
+              <span>Full fine-tune <span style="color:#8b949e;font-size:0.8em;">(trains all weights — practical only for ≤3B models on 16 GB)</span></span>
+            </label>
+          </div>
+        </details>
+
         <details class="param-section">
-          <summary>Training Parameters</summary>
-          <div class="param-grid">
-            <label>Base Model<input type="text" id="train-base-model" class="param-number" value="unsloth/Qwen3-8B-bnb-4bit" style="width:100%"></label>
+          <summary>Training Hyperparameters</summary>
+          <div class="param-grid" style="margin-top:8px;">
             <label>Epochs<input type="number" id="train-epochs" class="param-number" value="3"></label>
             <label>Batch Size<input type="number" id="train-batch" class="param-number" value="2"></label>
             <label>Learning Rate<input type="number" id="train-lr" class="param-number" value="0.0002" step="0.00001"></label>
-            <label>LoRA Rank<input type="number" id="train-lora-rank" class="param-number" value="16"></label>
             <label>Max Seq Len<input type="number" id="train-max-seq" class="param-number" value="2048"></label>
-            <label>GGUF Export<input type="text" id="train-gguf" class="param-number" value="q4_k_m"></label>
+            <label>Grad Accum<input type="number" id="train-grad-accum" class="param-number" value="4"></label>
+            <label>Val Split<input type="number" id="train-val-split" class="param-number" value="0.1" step="0.01" min="0" max="0.5"></label>
+            <label>Early Stop (0=off)<input type="number" id="train-early-stop" class="param-number" value="3"></label>
+            <label>LR Scheduler
+              <select id="train-lr-sched" class="param-select" style="margin-top:4px;">
+                <option value="cosine" selected>cosine</option>
+                <option value="linear">linear</option>
+                <option value="constant">constant</option>
+              </select>
+            </label>
+            <label style="grid-column:1/-1;display:flex;align-items:center;gap:8px;cursor:pointer;">
+              <input type="checkbox" id="train-grad-ck" style="width:auto;" checked>
+              <span>Gradient checkpointing <span style="color:#8b949e;font-size:0.8em;">(saves ~20-30% VRAM at ~20% speed cost — recommended for 8B+ models)</span></span>
+            </label>
           </div>
         </details>
-        <button id="train-start-btn" class="btn-primary">Start Training</button>
+
+        <div id="train-vram-hint" style="font-size:0.8em;color:#8b949e;padding:6px 8px;background:var(--bg-card);border-radius:4px;border:1px solid var(--border);"></div>
+
+        <button id="train-start-btn" class="btn-primary">&#9654; Start Training Run</button>
         <div id="train-start-warn" style="display:none;color:#f0883e;font-size:0.85em;margin-top:4px;"></div>
       </div>
-    </div>
-    <div class="card">
-      <h2>Training Status</h2>
-      <div id="training-status">No active run</div>
-    </div>
-    <div class="card">
-      <h2>Feedback</h2>
-      <p class="param-subtitle">Rate model responses to build personalized training data</p>
+    </details>
+
+    <!-- Completed Runs -->
+    <details class="card">
+      <summary>Completed Runs</summary>
+      <p class="param-subtitle">Output files are in <code>~/Development/training/runs/&lt;run-name&gt;/</code> &mdash; GGUFs go to your models directory, LoRA adapters go to <code>~/Development/text-generation-webui/user_data/loras/</code>.</p>
+      <div id="train-runs-list" class="param-subtitle" style="margin-top:8px;">Loading runs...</div>
+    </details>
+
+    <!-- LoRA Adapters from Runs -->
+    <details class="card">
+      <summary>LoRA Adapters</summary>
+      <p class="param-subtitle" style="margin-top:4px;">Load a trained LoRA adapter onto the currently loaded inference model to apply domain adaptation without swapping models.</p>
+      <div class="card-header-row" style="margin-top:10px;">
+        <span style="color:#8b949e;font-size:0.85em;">Adapters from training runs</span>
+        <button id="train-refresh-loras-btn" class="btn-small">&#8635; Refresh</button>
+      </div>
+      <div id="train-loras-list" style="margin-top:6px;">Loading...</div>
+      <p style="font-size:0.78em;color:#8b949e;margin:10px 0 0;">LoRA adapters add specialized knowledge on top of the base model. They require the same base architecture to be loaded in text-gen-webui. After loading, unload via Config → LoRAs tab.</p>
+    </details>
+
+    <!-- Storage Paths Reference -->
+    <details class="card">
+      <summary>Storage Paths</summary>
+      <div style="display:grid;gap:8px;margin-top:10px;font-size:0.83em;">
+        <div style="background:var(--bg);border-radius:6px;padding:10px;border:1px solid var(--border);">
+          <div style="font-weight:600;margin-bottom:4px;">&#x1F4C1; Datasets</div>
+          <code style="color:#8b949e;">~/Development/training/datasets/</code>
+          <div style="color:#8b949e;margin-top:3px;">JSONL files prepared from git history, codebases, HuggingFace, or feedback</div>
+        </div>
+        <div style="background:var(--bg);border-radius:6px;padding:10px;border:1px solid var(--border);">
+          <div style="font-weight:600;margin-bottom:4px;">&#x1F9E0; Training Runs &amp; LoRA Adapters</div>
+          <code style="color:#8b949e;">~/Development/training/runs/&lt;run-name&gt;/</code>
+          <div style="color:#8b949e;margin-top:3px;">adapter_config.json + adapter_model.safetensors (loadable LoRA), plus GGUF exports</div>
+        </div>
+        <div style="background:var(--bg);border-radius:6px;padding:10px;border:1px solid var(--border);">
+          <div style="font-weight:600;margin-bottom:4px;">&#x1F4E6; GGUF Exports</div>
+          <code style="color:#8b949e;">/mnt/models/&lt;run-name&gt;-&lt;quant&gt;.gguf</code>
+          <div style="color:#8b949e;margin-top:3px;">Auto-placed in models drive by sync_models. Swap in via Config tab or <code>local call swap_model</code></div>
+        </div>
+        <div style="background:var(--bg);border-radius:6px;padding:10px;border:1px solid var(--border);">
+          <div style="font-weight:600;margin-bottom:4px;">&#x1F916; HuggingFace Cache</div>
+          <code style="color:#8b949e;">~/.cache/huggingface/hub/</code>
+          <div style="color:#8b949e;margin-top:3px;">Full-precision base model weights (4–27 GB each) downloaded on first training run. Delete to free space after exporting GGUF.</div>
+        </div>
+        <div style="background:var(--bg);border-radius:6px;padding:10px;border:1px solid var(--border);">
+          <div style="font-weight:600;margin-bottom:4px;">&#x1F4AC; Feedback Data</div>
+          <code style="color:#8b949e;">~/Development/training/feedback.jsonl</code>
+          <div style="color:#8b949e;margin-top:3px;">DPO preference pairs from the Feedback tab. Use <em>From Feedback</em> dataset mode to turn into training data.</div>
+        </div>
+      </div>
+    </details>
+
+    <!-- How Fine-Tuning Works -->
+    <details class="card">
+      <summary>How Fine-Tuning Works</summary>
+      <p class="param-subtitle" style="margin-top:4px;">Training produces a LoRA adapter or full GGUF you can swap in like any other model.</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin:10px 0;">
+        <div style="background:var(--surface);border-radius:8px;padding:10px;text-align:center;">
+          <div style="font-size:1.3em;margin-bottom:4px;">&#x1F4BE;</div>
+          <div style="font-size:0.78em;font-weight:600;">Your data</div>
+          <div style="font-size:0.7em;color:#8b949e;">git, code, HF dataset, feedback</div>
+        </div>
+        <div style="background:var(--surface);border-radius:8px;padding:10px;text-align:center;">
+          <div style="font-size:1.3em;margin-bottom:4px;">&#x2192;</div>
+          <div style="font-size:0.78em;font-weight:600;">Unsloth</div>
+          <div style="font-size:0.7em;color:#8b949e;">downloads HF weights, trains QLoRA</div>
+        </div>
+        <div style="background:var(--surface);border-radius:8px;padding:10px;text-align:center;">
+          <div style="font-size:1.3em;margin-bottom:4px;">&#x2192;</div>
+          <div style="font-size:0.78em;font-weight:600;">GGUF output</div>
+          <div style="font-size:0.7em;color:#8b949e;">q4_k_m, q8_0 — swap in immediately</div>
+        </div>
+      </div>
+      <p style="font-size:0.82em;color:#8b949e;margin:8px 0 0;">Your installed GGUFs are quantized (compressed) — you can't train on them directly. Unsloth downloads full-precision HuggingFace weights (~4–14 GB) on first run, trains a LoRA adapter on top, then merges and exports a new GGUF.</p>
+    </details>
+
+    <!-- Feedback & DPO Data -->
+    <details class="card">
+      <summary>Feedback &amp; DPO Data</summary>
+      <p class="param-subtitle" style="margin-top:4px;">Rate model responses to build preference training data for DPO fine-tuning.</p>
       <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">
-        <textarea id="fb-prompt" placeholder="Prompt that was given..." rows="2" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical;"></textarea>
-        <textarea id="fb-response" placeholder="Model's response to rate..." rows="3" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical;"></textarea>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <label style="color:#8b949e;">Rating:</label>
-          <select id="fb-rating" class="param-select" style="width:auto;">
-            <option value="5">5 - Excellent</option>
-            <option value="4">4 - Good</option>
-            <option value="3" selected>3 - OK</option>
-            <option value="2">2 - Poor</option>
-            <option value="1">1 - Terrible</option>
-          </select>
+        <textarea id="fb-prompt" placeholder="Prompt that was given to the model..." rows="2" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical;font-size:0.9em;box-sizing:border-box;"></textarea>
+        <textarea id="fb-response" placeholder="Model's response to rate..." rows="3" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical;font-size:0.9em;box-sizing:border-box;"></textarea>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <label style="color:#8b949e;">Rating:
+            <select id="fb-rating" class="param-select" style="width:auto;margin-left:4px;">
+              <option value="5">5 — Excellent (use for DPO positive)</option>
+              <option value="4">4 — Good</option>
+              <option value="3" selected>3 — OK</option>
+              <option value="2">2 — Poor</option>
+              <option value="1">1 — Bad (use for DPO negative)</option>
+            </select>
+          </label>
           <button id="fb-submit-btn" class="btn-primary">Submit Feedback</button>
         </div>
         <div id="fb-result" style="color:#8b949e;font-size:0.85em;"></div>
       </div>
-    </div>
+    </details>
+
   </section>
 
   <!-- Notes Tab -->
   <section id="tab-notes" class="tab-content" role="tabpanel" aria-label="Notes">
     <div class="card">
-      <h2>Persistent Notes</h2>
-      <div id="notes-list">Loading...</div>
+      <div class="card-header-row">
+        <h2>Notes</h2>
+        <button id="notes-new-btn" class="btn-primary" style="font-size:0.85em;">+ New Note</button>
+      </div>
+      <div id="notes-new-form" style="display:none;margin-top:10px;border-top:1px solid var(--border);padding-top:12px;">
+        <div class="param-grid">
+          <div class="param-row" style="grid-column:1/-1;">
+            <label>Topic <span class="param-hint">file name — no spaces, use-hyphens</span></label>
+            <input type="text" id="notes-new-topic" class="param-number" placeholder="e.g. trading-ideas" style="width:100%;">
+          </div>
+          <div class="param-row" style="grid-column:1/-1;">
+            <label>Content</label>
+            <textarea id="notes-new-content" rows="4" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical;font-size:0.9em;box-sizing:border-box;"></textarea>
+          </div>
+        </div>
+        <div class="param-actions">
+          <button id="notes-create-btn" class="btn-primary">Create Note</button>
+          <span id="notes-create-status" class="config-status"></span>
+        </div>
+      </div>
+      <div class="notes-search-bar" style="margin-top:10px;display:flex;gap:8px;align-items:center;">
+        <input type="search" id="notes-filter" placeholder="Filter notes by topic..." style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:0.9em;box-sizing:border-box;">
+        <select id="notes-sort" class="param-select" style="width:auto;font-size:0.85em;">
+          <option value="newest">Newest</option>
+          <option value="oldest">Oldest</option>
+          <option value="name">A–Z</option>
+          <option value="size">Largest</option>
+        </select>
+      </div>
+      <div id="notes-list" style="margin-top:8px;">Loading...</div>
     </div>
   </section>
 
   <!-- Knowledge Graph Tab -->
   <section id="tab-knowledge" class="tab-content" role="tabpanel" aria-label="Knowledge graph">
     <div class="card">
-      <h2>Knowledge Graph</h2>
+      <div class="card-header-row">
+        <h2>Knowledge Graph</h2>
+        <button id="kg-timeline-btn" class="btn-small">Timeline</button>
+      </div>
       <div id="kg-stats" class="kg-stats">Loading...</div>
+      <div id="kg-timeline" class="kg-timeline" style="display:none;margin-top:12px;"></div>
     </div>
     <div class="card">
       <h2>Graph Explorer</h2>
       <div class="search-input">
-        <input type="text" id="kg-viz-center" placeholder="Center entity name...">
+        <input type="text" id="kg-viz-center" placeholder="Center entity name (blank = full graph)">
         <button id="kg-viz-btn">Visualize</button>
       </div>
-      <canvas id="kg-canvas" width="800" height="500" style="display:none;width:100%;border:1px solid var(--border);border-radius:8px;margin-top:8px"></canvas>
+      <div id="kg-viz-hint" class="param-hint" style="margin-top:4px;">Click a node in the graph to explore its context.</div>
+      <canvas id="kg-canvas" width="800" height="500" style="display:none;width:100%;border:1px solid var(--border);border-radius:8px;margin-top:8px;cursor:pointer;"></canvas>
     </div>
     <div class="card">
       <h2>Search Entities</h2>
@@ -665,6 +988,40 @@
         <button id="kg-add-btn">Add</button>
       </div>
     </div>
+    <details class="card">
+      <summary>Relate Entities</summary>
+      <div class="kg-relate-form" style="margin-top:10px;">
+        <div class="param-grid">
+          <div class="param-row">
+            <label>From entity</label>
+            <input type="text" id="kg-relate-from" class="param-number" placeholder="Entity name" style="width:100%;">
+          </div>
+          <div class="param-row">
+            <label>Relation</label>
+            <select id="kg-relate-type" class="config-select" style="width:100%;">
+              <option value="RELATED_TO">RELATED_TO</option>
+              <option value="DEPENDS_ON">DEPENDS_ON</option>
+              <option value="IMPLEMENTS">IMPLEMENTS</option>
+              <option value="PART_OF">PART_OF</option>
+              <option value="REFERENCES">REFERENCES</option>
+              <option value="CREATED_BY">CREATED_BY</option>
+              <option value="DECIDED_BY">DECIDED_BY</option>
+              <option value="SUPERSEDES">SUPERSEDES</option>
+              <option value="CONFLICTS_WITH">CONFLICTS_WITH</option>
+              <option value="EXTENDS">EXTENDS</option>
+            </select>
+          </div>
+          <div class="param-row">
+            <label>To entity</label>
+            <input type="text" id="kg-relate-to" class="param-number" placeholder="Entity name" style="width:100%;">
+          </div>
+        </div>
+        <div class="param-actions">
+          <button id="kg-relate-btn" class="btn-primary">Create Relation</button>
+          <span id="kg-relate-status" class="config-status"></span>
+        </div>
+      </div>
+    </details>
   </section>
 </main>
 

@@ -1,12 +1,12 @@
 export const API = window.location.origin + '/api';
 
-export let apiKey = sessionStorage.getItem('ai-hub-key') || '';
+export let apiKey = localStorage.getItem('ai-hub-key') || '';
 export let currentUser = null;
 
 export function setApiKey(key) {
   apiKey = key;
-  if (key) sessionStorage.setItem('ai-hub-key', key);
-  else sessionStorage.removeItem('ai-hub-key');
+  if (key) localStorage.setItem('ai-hub-key', key);
+  else localStorage.removeItem('ai-hub-key');
 }
 
 export function setCurrentUser(user) {
