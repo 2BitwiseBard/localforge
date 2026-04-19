@@ -559,6 +559,7 @@ async def api_swap(request: Request) -> JSONResponse:
         "rope_freq_base", "tensor_split", "parallel",
         "model_draft", "draft_max", "gpu_layers_draft", "ctx_size_draft",
         "spec_type", "spec_ngram_size_n", "spec_ngram_size_m", "spec_ngram_min_hits",
+        "mmproj",
     ]
     for key in LOAD_PARAM_KEYS:
         val = _resolve(key)
@@ -1565,7 +1566,7 @@ async def api_model_unload(request: Request) -> JSONResponse:
     backend_url = _backend_url()
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            await client.post(f"{backend_url}/internal/model/load", json={"model_name": "None"})
+            await client.post(f"{backend_url}/internal/model/unload")
         from localforge import config as _cfg
         _cfg.MODEL = None
         await notify_all("Model Unloaded", "VRAM freed", "model-swap")
