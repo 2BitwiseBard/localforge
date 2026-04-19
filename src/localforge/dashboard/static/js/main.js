@@ -121,7 +121,9 @@ if ('Notification' in window && 'serviceWorker' in navigator && 'PushManager' in
     try {
       const resp = await fetch('/api/push/vapid-key');
       if (!resp.ok) return;
-      const { public_key } = await resp.json();
+      const data = await resp.json();
+      if (data.enabled === false) return;
+      const public_key = data.public_key;
       if (!public_key) return;
       const reg = await navigator.serviceWorker.ready;
       // Re-register existing subscription (idempotent on server)
@@ -170,7 +172,6 @@ initIndexCreate();
 initResearch();
 initTraining();
 initLoadParams();
-startStatusRefresh();
 
 (async () => {
   await initUser();
@@ -185,6 +186,7 @@ startStatusRefresh();
   loadTrainingOverview();
   loadTrainingStatus();
   connectSSE();
+  startStatusRefresh();
   setInterval(loadApprovals, 15000);
   setInterval(loadTrainingStatus, 30000);
 })();

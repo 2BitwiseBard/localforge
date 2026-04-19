@@ -53,7 +53,7 @@ class CircuitBreaker:
     def record_failure(self):
         self.failures += 1
         self.last_failure = time.time()
-        if self.failures >= self.failure_threshold:
+        if self.failures >= self.failure_threshold and self.state != CircuitState.OPEN:
             self.state = CircuitState.OPEN
             log.warning("Circuit breaker OPEN after %d consecutive failures", self.failures)
 

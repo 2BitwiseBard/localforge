@@ -229,8 +229,8 @@ async def api_push_vapid_key(request: Request) -> JSONResponse:
     """
     pub, _ = _load_vapid_keys()
     if not pub:
-        return JSONResponse({"error": "Push notifications not configured on this hub"}, status_code=503)
-    return JSONResponse({"public_key": pub})
+        return JSONResponse({"enabled": False})
+    return JSONResponse({"enabled": True, "public_key": pub})
 
 
 async def api_push_subscribe(request: Request) -> JSONResponse:
@@ -585,9 +585,12 @@ async def api_swap(request: Request) -> JSONResponse:
             if resp.status_code == 200:
                 await notify_all("Model Swapped", f"Now running: {model_name}", "model-swap")
                 return JSONResponse({"status": "ok", "model": model_name, "applied": applied})
-            return JSONResponse({"error": resp.text}, status_code=resp.status_code)
+            err_text = resp.text[:300]
+            await notify_all("Model swap failed", f"{model_name}: {err_text}", "model-swap-error")
+            return JSONResponse({"error": err_text, "model": model_name}, status_code=resp.status_code)
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        await notify_all("Model swap failed", f"{model_name}: {e}", "model-swap-error")
+        return JSONResponse({"error": str(e), "model": model_name}, status_code=500)
 
 
 # ---------------------------------------------------------------------------

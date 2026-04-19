@@ -26,6 +26,13 @@ function showAuthModal(errorMsg = '') {
 }
 
 export async function initUser() {
+  // Auto-seed from ?key= URL param — bookmarkable first-run flow
+  const urlKey = new URLSearchParams(location.search).get('key');
+  if (urlKey) {
+    setApiKey(urlKey);
+    history.replaceState({}, '', location.pathname);
+  }
+
   let key = apiKey;
   if (!key) {
     key = await showAuthModal();
@@ -60,5 +67,13 @@ export function connectSSE() {
       }
     } catch (e) {}
   };
-  es.onerror = () => { setTimeout(connectSSE, 5000); es.close(); };
+  es.onerror = async () => {
+    es.close();
+    // Check if auth expired before reconnecting
+    try {
+      const r = await fetch(API + '/me', { headers: { 'Authorization': `Bearer ${apiKey}` } });
+      if (r.status === 401) { await initUser(); return; }
+    } catch {}
+    setTimeout(connectSSE, 5000);
+  };
 }

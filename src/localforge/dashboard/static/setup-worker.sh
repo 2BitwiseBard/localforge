@@ -13,6 +13,8 @@
 #   bash setup-worker.sh --hub ai-hub:8100 --port 8200
 #
 # Supports: Linux (x86/ARM), macOS (Intel/Apple Silicon), Android (Termux)
+# Windows: use setup-worker.ps1 instead:
+#   irm http://ai-hub:8100/static/setup-worker.ps1 | iex
 # =============================================================================
 
 set -euo pipefail

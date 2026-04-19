@@ -187,6 +187,7 @@ document.getElementById('status-model-load-btn')?.addEventListener('click', asyn
     const data = await resp.json();
     if (data.error) {
       if (statusEl) { statusEl.textContent = data.error; statusEl.className = 'config-status config-status-error'; }
+      showToast('Swap failed: ' + data.error, 'error');
     } else {
       const hint = data.applied ? `ctx=${data.applied.ctx_size}, gpu=${data.applied.gpu_layers}` : '';
       if (statusEl) { statusEl.textContent = hint ? `Loaded (${hint})` : 'Loaded'; statusEl.className = 'config-status config-status-ok'; }
@@ -196,6 +197,7 @@ document.getElementById('status-model-load-btn')?.addEventListener('click', asyn
     }
   } catch (e) {
     if (statusEl) { statusEl.textContent = 'Error: ' + e.message; statusEl.className = 'config-status config-status-error'; }
+    showToast('Swap error: ' + e.message, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Load';
   }
