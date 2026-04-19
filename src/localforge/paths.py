@@ -93,25 +93,32 @@ def config_path() -> Path:
 
     Priority:
     1. LOCALFORGE_CONFIG environment variable
-    2. config.yaml next to server.py (src/localforge/config.yaml)
-    3. ~/.config/localforge/config.yaml
+    2. config.yaml next to server.py (src/localforge/config.yaml) — dev mode
+    3. ~/.local/share/localforge/config.yaml (XDG data dir — production default)
+    4. ~/.config/localforge/config.yaml (XDG config dir — legacy)
+    5. Fall back to XDG data location (even if it doesn't exist yet)
     """
     env = os.environ.get("LOCALFORGE_CONFIG")
     if env:
         return Path(os.path.expanduser(env))
 
-    # Next to the source code
+    # Next to the source code (dev mode only — skipped in production installs)
     src_config = Path(__file__).parent / "config.yaml"
     if src_config.exists():
         return src_config
 
-    # XDG config home
-    xdg = Path(os.path.expanduser("~/.config/localforge/config.yaml"))
-    if xdg.exists():
-        return xdg
+    # XDG data dir (production — this is where `localforge` writes config by default)
+    xdg_data = data_dir() / "config.yaml"
+    if xdg_data.exists():
+        return xdg_data
 
-    # Default to src location (even if it doesn't exist yet)
-    return src_config
+    # XDG config dir (legacy path, kept for compatibility)
+    xdg_cfg = Path(os.path.expanduser("~/.config/localforge/config.yaml"))
+    if xdg_cfg.exists():
+        return xdg_cfg
+
+    # Default to XDG data location (even if it doesn't exist yet)
+    return xdg_data
 
 
 def training_dir() -> Path:
