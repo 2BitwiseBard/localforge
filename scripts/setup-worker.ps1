@@ -283,11 +283,16 @@ Write-Step "Installing localforge[worker] into venv"
 # Use `python -m pip` so pip can replace itself without a Windows file lock.
 # Install from a zip archive URL (no git dependency -- most Windows boxes
 # don't have git installed).  PEP 440 direct-URL syntax.
-& $venvPy -m pip install --upgrade pip
+& $venvPy -m pip install --upgrade pip --quiet
 $archiveUrl = "$GitRepo/archive/refs/heads/main.zip"
 Write-Host "    Installing from: $archiveUrl"
-& $venvPy -m pip install "localforge[worker] @ $archiveUrl"
+# --no-cache-dir: always re-download the zip so new commits are picked up.
+# --force-reinstall --no-deps: reinstall only localforge (deps already satisfied).
+& $venvPy -m pip install --no-cache-dir --force-reinstall --no-deps "localforge[worker] @ $archiveUrl"
 if ($LASTEXITCODE -ne 0) { Write-Err "pip install failed"; exit 1 }
+# Install/update worker extras and any new deps without forcing full reinstall.
+& $venvPy -m pip install --quiet "localforge[worker] @ $archiveUrl"
+if ($LASTEXITCODE -ne 0) { Write-Err "pip install (deps) failed"; exit 1 }
 
 # --- 3. Hardware detect + register ---------------------------------------
 Write-Step "Detecting hardware"
