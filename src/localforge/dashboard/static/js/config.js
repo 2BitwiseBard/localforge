@@ -1,5 +1,6 @@
 import { API, authFetch, authHeaders, escapeHtml, escapeAttr, showToast, statusRow } from './api.js';
 import { loadStatus } from './status.js';
+import { initUser } from './auth.js';
 
 // ---------------------------------------------------------------------------
 // Model Swap
@@ -8,7 +9,9 @@ const modelSelect = document.getElementById('model-select');
 
 export async function loadModels() {
   try {
-    const data = await authFetch(API + '/models').then(r => r.json());
+    const resp = await authFetch(API + '/models');
+    if (resp.status === 401) { await initUser(); return loadModels(); }
+    const data = await resp.json();
     const models = data.models || [];
     const current = data.current || '';
     const buildOpts = (placeholder) =>

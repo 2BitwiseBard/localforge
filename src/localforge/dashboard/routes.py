@@ -2413,7 +2413,7 @@ def _install_oneliners(token: str, hub_url: str, model_id: str = "") -> dict[str
     """Return per-platform copy/paste install commands with token + hub pre-baked."""
     base = f"{hub_url.rstrip('/')}/api/mesh/install-script"
     model_flag_sh = f" --model-id {model_id}" if model_id else ""
-    model_flag_ps = f",'-ModelId','{model_id}'" if model_id else ""
+    model_flag_ps = f" -ModelId '{model_id}'" if model_id else ""
     return {
         "linux":
             f"curl -fsSL '{base}?platform=linux&token={token}' | "
@@ -2422,27 +2422,22 @@ def _install_oneliners(token: str, hub_url: str, model_id: str = "") -> dict[str
             f"curl -fsSL '{base}?platform=darwin&token={token}' | "
             f"bash -s -- --hub {hub_url} --token {token}{model_flag_sh}",
         "win32":
-            # Native PowerShell one-liner (no -Command wrapper, so $vars are in
-            # the caller's scope and aren't pre-expanded by an outer PS session).
-            # Hub + Token are baked server-side into the script body so nothing
-            # needs to cross the UAC boundary.  Log is under $env:ProgramData
-            # (not $env:TEMP) because admin-credential UAC opens a new session
-            # with a different TEMP path, but ProgramData is the same for all users.
-            #
-            # Run this in PowerShell (not cmd.exe). If you must use cmd.exe:
-            #   powershell -ExecutionPolicy Bypass -NoProfile -File <downloaded_script>
-            f"$s=\"$env:TEMP\\localforge-setup.ps1\"; "
-            f"iwr -useb '{base}?platform=win32&token={token}' -OutFile $s; "
+            # Run in PowerShell (not cmd.exe).
+            # Script is saved to $env:PUBLIC (C:\Users\Public) so the elevated
+            # session can always read it regardless of which admin account UAC
+            # opens. The script self-elevates if needed, so no -Verb RunAs here.
+            # Hub+Token are baked server-side so they survive the UAC boundary.
+            f"$s=\"$env:PUBLIC\\localforge-setup.ps1\"; "
             f"$log=\"$env:ProgramData\\LocalForge\\setup.log\"; "
+            f"iwr -useb '{base}?platform=win32&token={token}' -OutFile $s; "
             f"if(Test-Path $log){{Remove-Item -Force $log}}; "
-            f"Start-Process powershell -Verb RunAs -Wait "
-            f"-ArgumentList '-ExecutionPolicy','Bypass','-NoProfile','-File',$s{model_flag_ps}; "
+            f"& powershell -ExecutionPolicy Bypass -NoProfile -File $s{model_flag_ps}; "
             f"if(Test-Path $log){{"
             f"Write-Host '--- installer log ---' -ForegroundColor Cyan; "
             f"Get-Content $log | Write-Host"
             f"}} else {{"
-            f"Write-Host 'Log not written. Check that UAC was approved.' -ForegroundColor Yellow; "
-            f"Write-Host ('Manual fix: open Admin PowerShell and run: powershell -ExecutionPolicy Bypass -File '+$s) -ForegroundColor Yellow"
+            f"Write-Host 'No log yet -- setup may still be running in the elevated window.' -ForegroundColor Yellow; "
+            f"Write-Host ('Log will appear at: $env:ProgramData\\LocalForge\\setup.log') -ForegroundColor Yellow"
             f"}}",
         "android":
             f"curl -fsSL '{base}?platform=android&token={token}' | "

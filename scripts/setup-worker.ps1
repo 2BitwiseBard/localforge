@@ -58,6 +58,31 @@ try {
         [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 } catch { }
 
+# Self-elevate if not running as Administrator.
+# Hub+Token are already baked into the script defaults by the server, so just
+# re-running the same file works without forwarding those args. Any explicitly
+# passed params (e.g. -SkipModel, -ModelId) ARE forwarded via $PSBoundParameters.
+$_selfElevPrincipal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not $_selfElevPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    $scriptFile = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
+    if (-not $scriptFile -or -not (Test-Path $scriptFile)) {
+        Write-Host ""
+        Write-Host "Cannot self-elevate: cannot resolve script path." -ForegroundColor Red
+        Write-Host "Open an Administrator PowerShell and run:" -ForegroundColor Yellow
+        Write-Host "  powershell -ExecutionPolicy Bypass -NoProfile -File <path-to-this-script>" -ForegroundColor Yellow
+        exit 1
+    }
+    $elevArgs = @('-ExecutionPolicy', 'Bypass', '-NoProfile', '-File', $scriptFile)
+    foreach ($k in $PSBoundParameters.Keys) {
+        $v = $PSBoundParameters[$k]
+        if ($v -is [switch]) { if ($v.IsPresent) { $elevArgs += "-$k" } }
+        else { $elevArgs += @("-$k", "$v") }
+    }
+    Write-Host "Requesting administrator elevation (required for NSSM service install)..." -ForegroundColor Yellow
+    Start-Process powershell -Verb RunAs -Wait -ArgumentList $elevArgs
+    exit
+}
+
 # Elevated windows spawned via Start-Process -Verb RunAs close IMMEDIATELY
 # on `exit N` (which bypasses PowerShell's `trap` handler). Three defenses so
 # the user can always see what happened:
