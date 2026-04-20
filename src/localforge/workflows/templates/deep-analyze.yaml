@@ -9,23 +9,23 @@ nodes:
   - id: read-file
     type: tool
     config:
-      tool: file_qa
-      args:
+      tool_name: file_qa
+      arguments:
         file_path: "{variables.file_path}"
         question: "Summarize the structure, key functions, and responsibilities of this file"
 
   - id: rag-context
     type: tool
     config:
-      tool: rag_query
-      args:
+      tool_name: rag_query
+      arguments:
         index_name: "{variables.index_name}"
         question: "Code related to {variables.file_path}"
 
   - id: architecture
     type: prompt
     config:
-      prompt: |
+      template: |
         Analyze the architecture of this code. How does it fit into the broader codebase?
 
         ## File Summary
@@ -37,7 +37,7 @@ nodes:
   - id: improvements
     type: prompt
     config:
-      prompt: |
+      template: |
         Suggest concrete improvements for this code based on the analysis:
 
         ## File Summary

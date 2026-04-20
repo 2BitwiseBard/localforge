@@ -8,13 +8,13 @@ nodes:
   - id: get-diff
     type: tool
     config:
-      tool: git_context
-      args: {}
+      tool_name: git_context
+      arguments: {}
 
   - id: review-bugs
     type: prompt
     config:
-      prompt: |
+      template: |
         Review this diff for bugs and logic errors. Focus on: {variables.focus}
 
         {node.get-diff}
@@ -22,7 +22,7 @@ nodes:
   - id: review-security
     type: prompt
     config:
-      prompt: |
+      template: |
         Review this diff for security vulnerabilities (injection, XSS, auth issues, etc):
 
         {node.get-diff}
@@ -30,7 +30,7 @@ nodes:
   - id: review-quality
     type: prompt
     config:
-      prompt: |
+      template: |
         Review this diff for code quality (naming, complexity, DRY, error handling):
 
         {node.get-diff}
@@ -38,7 +38,7 @@ nodes:
   - id: synthesize
     type: prompt
     config:
-      prompt: |
+      template: |
         Synthesize these three review perspectives into a final report with prioritized findings:
 
         ## Bug Review
