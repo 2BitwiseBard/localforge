@@ -1,0 +1,95 @@
+name: Worker Script Lint & Parity
+
+# Trigger whenever any worker enrollment script (or this checker itself)
+# is modified, on any branch push or PR targeting main.
+on:
+  push:
+    paths:
+      - "scripts/setup-worker*.sh"
+      - "scripts/setup-worker*.ps1"
+      - "scripts/check_script_parity.py"
+      - ".github/workflows/script-lint.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/setup-worker*.sh"
+      - "scripts/setup-worker*.ps1"
+      - "scripts/check_script_parity.py"
+      - ".github/workflows/script-lint.yml"
+
+jobs:
+  # --------------------------------------------------------------------------
+  # 1. ShellCheck — static analysis for the three bash scripts
+  #    (Linux, macOS, Android/Termux).  ShellCheck follows each script's own
+  #    shebang to determine the target shell, so no --shell flag is needed.
+  # --------------------------------------------------------------------------
+  shellcheck:
+    name: ShellCheck (bash scripts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get install -y --no-install-recommends shellcheck
+
+      - name: Lint setup-worker.sh (Linux)
+        run: shellcheck --severity=warning scripts/setup-worker.sh
+
+      - name: Lint setup-worker-darwin.sh (macOS)
+        run: shellcheck --severity=warning scripts/setup-worker-darwin.sh
+
+      - name: Lint setup-worker-termux.sh (Android/Termux)
+        # The Termux shebang (#!/data/data/com.termux/…/bash) is non-standard;
+        # tell ShellCheck explicitly which shell to target.
+        run: shellcheck --severity=warning --shell=bash scripts/setup-worker-termux.sh
+
+  # --------------------------------------------------------------------------
+  # 2. PSScriptAnalyzer — static analysis for the Windows PowerShell script.
+  #    Runs on ubuntu-latest using the pre-installed PowerShell Core (pwsh).
+  # --------------------------------------------------------------------------
+  psscriptanalyzer:
+    name: PSScriptAnalyzer (Windows script)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+
+      - name: Analyze setup-worker.ps1
+        shell: pwsh
+        run: |
+          $results = Invoke-ScriptAnalyzer `
+            -Path scripts/setup-worker.ps1 `
+            -Severity @('Warning', 'Error') `
+            -ReportSummary
+
+          if ($results) {
+            # Print findings with source location for easy navigation
+            $results | Format-List RuleName, Severity, Line, Column, Message
+            Write-Host "::error::PSScriptAnalyzer found $($results.Count) issue(s) in setup-worker.ps1"
+            exit 1
+          }
+          Write-Host "PSScriptAnalyzer: no warnings or errors found."
+
+  # --------------------------------------------------------------------------
+  # 3. Parity check — verifies that every LOCALFORGE_* env var added to one
+  #    platform's script is mirrored in all others (or explicitly declared
+  #    platform-specific), and that shared constants (port, repo URL,
+  #    registration endpoint, Python version floor) are consistent.
+  # --------------------------------------------------------------------------
+  parity:
+    name: Cross-platform env-var parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run parity checker
+        run: python scripts/check_script_parity.py
