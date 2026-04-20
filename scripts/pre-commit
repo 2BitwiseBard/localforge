@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# Pre-commit hook: static analysis for worker enrollment scripts.
+#
+# Triggers whenever any setup-worker* script or check_script_parity.py is
+# staged.  Runs ShellCheck, PSScriptAnalyzer (if pwsh is available), and the
+# cross-platform parity checker — the same three gates as the CI workflow.
+#
+# Install (one-time):
+#   bash scripts/install-hooks.sh
+# Bypass in genuine emergencies:
+#   git commit --no-verify
+
+set -euo pipefail
+
+# Worker scripts watched by this hook
+WORKER_GLOBS=(
+    "scripts/setup-worker.sh"
+    "scripts/setup-worker-darwin.sh"
+    "scripts/setup-worker-termux.sh"
+    "scripts/setup-worker.ps1"
+    "scripts/check_script_parity.py"
+)
+
+# ------------------------------------------------------------------
+# Determine whether any watched file is staged
+# ------------------------------------------------------------------
+TRIGGERED=0
+for f in "${WORKER_GLOBS[@]}"; do
+    if git diff --cached --name-only | grep -qF "$f"; then
+        TRIGGERED=1
+        break
+    fi
+done
+
+if [[ $TRIGGERED -eq 0 ]]; then
+    exit 0
+fi
+
+echo "pre-commit: worker script changes staged — running analysis"
+echo "============================================================"
+
+FAILED=0
+
+# ------------------------------------------------------------------
+# 1. ShellCheck — bash scripts
+# ------------------------------------------------------------------
+if command -v shellcheck &>/dev/null; then
+    echo ""
+    echo "ShellCheck"
+    echo "----------"
+
+    shellcheck --severity=warning scripts/setup-worker.sh \
+        && echo "  OK  setup-worker.sh" \
+        || { echo "  FAIL  setup-worker.sh"; FAILED=1; }
+
+    shellcheck --severity=warning scripts/setup-worker-darwin.sh \
+        && echo "  OK  setup-worker-darwin.sh" \
+        || { echo "  FAIL  setup-worker-darwin.sh"; FAILED=1; }
+
+    # Termux shebang uses a non-standard path; specify shell explicitly
+    shellcheck --severity=warning --shell=bash scripts/setup-worker-termux.sh \
+        && echo "  OK  setup-worker-termux.sh" \
+        || { echo "  FAIL  setup-worker-termux.sh"; FAILED=1; }
+else
+    echo ""
+    echo "ShellCheck  [SKIPPED — not installed]"
+    echo "  Install: sudo apt-get install shellcheck   (Debian/Ubuntu)"
+    echo "           brew install shellcheck            (macOS)"
+fi
+
+# ------------------------------------------------------------------
+# 2. PSScriptAnalyzer — Windows PowerShell script
+# ------------------------------------------------------------------
+if command -v pwsh &>/dev/null; then
+    echo ""
+    echo "PSScriptAnalyzer"
+    echo "----------------"
+    if pwsh -NoProfile -NonInteractive -Command "
+        \$ErrorActionPreference = 'Stop'
+        if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+            Write-Host '  Installing PSScriptAnalyzer...'
+            Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -Repository PSGallery
+        }
+        \$results = Invoke-ScriptAnalyzer \`
+            -Path scripts/setup-worker.ps1 \`
+            -Severity @('Warning', 'Error') \`
+            -ReportSummary
+        if (\$results) {
+            \$results | Format-List RuleName, Severity, Line, Column, Message
+            exit 1
+        }
+        Write-Host '  OK  setup-worker.ps1'
+    "; then
+        : # already printed OK inside the pwsh block
+    else
+        echo "  FAIL  setup-worker.ps1"
+        FAILED=1
+    fi
+else
+    echo ""
+    echo "PSScriptAnalyzer  [SKIPPED — pwsh not installed]"
+    echo "  Install: https://github.com/PowerShell/PowerShell/releases"
+fi
+
+# ------------------------------------------------------------------
+# 3. Cross-platform env-var & constant parity
+# ------------------------------------------------------------------
+echo ""
+echo "Parity check"
+echo "------------"
+if python3 scripts/check_script_parity.py; then
+    : # parity checker prints its own OK summary
+else
+    FAILED=1
+fi
+
+# ------------------------------------------------------------------
+# Result
+# ------------------------------------------------------------------
+echo ""
+echo "============================================================"
+if [[ $FAILED -ne 0 ]]; then
+    echo "pre-commit: FAILED — fix the issues above before committing."
+    echo "Emergency bypass: git commit --no-verify"
+    exit 1
+fi
+
+echo "pre-commit: all checks passed."
