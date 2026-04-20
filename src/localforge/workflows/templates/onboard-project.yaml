@@ -9,15 +9,15 @@ nodes:
   - id: detect-lang
     type: prompt
     config:
-      prompt: |
+      template: |
         Based on the directory name "{variables.directory}", detect the primary programming language.
         Respond with ONLY the language name (e.g., rust, python, typescript).
 
   - id: index
     type: tool
     config:
-      tool: index_directory
-      args:
+      tool_name: index_directory
+      arguments:
         name: "{variables.name}"
         directory: "{variables.directory}"
         glob_pattern: "**/*.*"
@@ -26,15 +26,15 @@ nodes:
   - id: find-entry
     type: tool
     config:
-      tool: search_index
-      args:
+      tool_name: search_index
+      arguments:
         index_name: "{variables.name}"
         query: "main entry point initialization setup"
 
   - id: summarize
     type: prompt
     config:
-      prompt: |
+      template: |
         Summarize this project based on the entry points and structure found:
 
         ## Language
@@ -51,8 +51,8 @@ nodes:
   - id: save-kg
     type: tool
     config:
-      tool: kg_add
-      args:
+      tool_name: kg_add
+      arguments:
         name: "{variables.name}"
         entity_type: "project"
         content: "{node.summarize}"
