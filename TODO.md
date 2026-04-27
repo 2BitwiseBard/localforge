@@ -1,6 +1,6 @@
 # LocalForge — TODO
 
-Last updated: 2026-04-26. Completed items stripped; see git log for history.
+Last updated: 2026-04-27. Completed items stripped; see git log for history.
 
 ---
 
@@ -202,3 +202,4 @@ Last updated: 2026-04-26. Completed items stripped; see git log for history.
 - M0-M1: mesh routing wired into chat(), model-aware routing, registry unification, dispatch retry, worker connection test, compute_test tool
 - M5: CPU-only inference fix, memory-pressure rejection, power-aware rejection
 - Tests: 121 → 162
+- P5 (Apr 27): Ctrl+Enter to send chat, prefers-color-scheme on first load, KG canvas theme-aware colors, export chat as Markdown, TODO condensed 1117→205 lines
