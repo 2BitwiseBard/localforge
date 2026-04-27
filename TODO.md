@@ -281,10 +281,11 @@ Organized by priority tier. Check items off as completed.
   - Add `rebuild_fts_index()` method and expose via MCP tool
   - Added `KnowledgeGraph.rebuild_fts_index()` and `kg_rebuild_fts` MCP tool
 
-- [ ] **Config schema validation**
+- [x] **Config schema validation**
   - No validation of config.yaml structure — missing keys cause runtime errors
   - Add pydantic model or jsonschema validation on load
   - Fail fast with clear error message on invalid config
+  - Done: _validate_config() warns on unknown keys, missing fields, type errors in reload_config() (April 2026)
 
 - [x] **Add `Restart=on-failure` with backoff to systemd services**
   - Current services may restart indefinitely on persistent failures

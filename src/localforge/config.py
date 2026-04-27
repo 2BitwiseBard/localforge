@@ -95,6 +95,57 @@ _context: dict[str, str] = {}  # mutable session context
 
 
 # ---------------------------------------------------------------------------
+# Config validation
+# ---------------------------------------------------------------------------
+
+_KNOWN_TOP_LEVEL = frozenset({
+    "backends", "webui_root", "model_source", "webui_settings",
+    "defaults", "models", "gateway", "users", "news", "telegram",
+    "gpu_pool", "compute_pool", "modes", "characters",
+})
+
+
+def _validate_config(cfg: dict[str, Any]) -> list[str]:
+    """Validate config.yaml structure; return list of human-readable warnings."""
+    problems: list[str] = []
+
+    for key in cfg:
+        if key not in _KNOWN_TOP_LEVEL:
+            problems.append(f"Unknown top-level key '{key}' — possible typo?")
+
+    for name, backend in cfg.get("backends", {}).items():
+        if not isinstance(backend, dict):
+            problems.append(f"backends.{name}: expected a mapping, got {type(backend).__name__}")
+            continue
+        if "url" not in backend:
+            problems.append(f"backends.{name}: missing required field 'url'")
+        elif not isinstance(backend.get("url"), str):
+            problems.append(f"backends.{name}.url: must be a string")
+
+    gw = cfg.get("gateway", {})
+    if gw:
+        if "host" not in gw:
+            problems.append("gateway: missing 'host'")
+        if "port" in gw and not isinstance(gw["port"], int):
+            problems.append(f"gateway.port: expected int, got {type(gw['port']).__name__}")
+
+    for uid, user in cfg.get("users", {}).items():
+        if not isinstance(user, dict):
+            problems.append(f"users.{uid}: expected a mapping")
+            continue
+        for field in ("name", "api_key"):
+            if field not in user:
+                problems.append(f"users.{uid}: missing required field '{field}'")
+
+    known_defaults = WEBUI_GEN_KEYS | {"system_suffix", "max_tokens"}
+    for key in cfg.get("defaults", {}):
+        if key not in known_defaults:
+            problems.append(f"defaults.{key}: unrecognised key (not a generation param)")
+
+    return problems
+
+
+# ---------------------------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------------------------
 
@@ -238,6 +289,10 @@ def reload_config() -> None:
     """
     global _config, _webui_settings, _webui_preset_name
     _config = _load_config()
+
+    for problem in _validate_config(_config):
+        log.warning("config.yaml: %s", problem)
+
     _webui_settings = _load_webui_settings(_config)
 
     path_str = _config.get("webui_settings", "")
