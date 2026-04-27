@@ -20,7 +20,7 @@ async function updateChatModelIndicator() {
 updateChatModelIndicator();
 
 chatSend.addEventListener('click', sendChat);
-chatPrompt.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } });
+chatPrompt.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || !e.shiftKey)) { e.preventDefault(); sendChat(); } });
 chatStop?.addEventListener('click', () => { if (_abortController) { _abortController.abort(); _abortController = null; } });
 
 // Image upload
@@ -177,6 +177,21 @@ document.getElementById('chat-save-btn').addEventListener('click', async () => {
     currentChatId = data.id;
     showToast('Chat saved: ' + data.title);
   } catch (e) { showToast('Save failed', 'error'); }
+});
+
+document.getElementById('chat-export-btn').addEventListener('click', () => {
+  if (!chatHistory.length) { showToast('Nothing to export', 'error'); return; }
+  const lines = chatHistory.map(m => {
+    const role = m.role === 'user' ? '**You**' : '**AI**';
+    return `${role}\n\n${m.content}\n`;
+  });
+  const md = lines.join('\n---\n\n');
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown' }));
+  a.download = `chat-${ts}.md`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 });
 
 const historyPanel = document.getElementById('chat-history-panel');

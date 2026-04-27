@@ -121,9 +121,12 @@ try {
   }
 } catch {}
 
-// Dark/light theme toggle
+// Dark/light theme toggle — respect OS preference on first visit
 try {
-  if (localStorage.getItem('theme') === 'light') document.body.classList.add('light-theme');
+  const saved = localStorage.getItem('theme');
+  if (saved === 'light' || (!saved && window.matchMedia('(prefers-color-scheme: light)').matches)) {
+    document.body.classList.add('light-theme');
+  }
 } catch {}
 document.getElementById('theme-toggle')?.addEventListener('click', () => {
   const light = document.body.classList.toggle('light-theme');

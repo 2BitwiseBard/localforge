@@ -275,8 +275,17 @@ async function renderKGGraph(canvas, nodes, edges) {
     person: '#f78166', tool: '#8b949e', project: '#79c0ff', task: '#d2a8ff', event: '#ffa657', artifact: '#7ee787',
   };
 
+  // Read theme colors from CSS vars so canvas respects light/dark toggle
+  const _cs = getComputedStyle(document.documentElement);
+  const _c = {
+    bg: _cs.getPropertyValue('--bg').trim(),
+    border: _cs.getPropertyValue('--border').trim(),
+    text: _cs.getPropertyValue('--text').trim(),
+    textDim: _cs.getPropertyValue('--text-dim').trim(),
+  };
+
   ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = _c.bg; ctx.fillRect(0, 0, w, h);
 
   // Edges with arrows
   edges.forEach(e => {
@@ -286,16 +295,16 @@ async function renderKGGraph(canvas, nodes, edges) {
     const r = 10;
     const ex = b.x - Math.cos(angle) * r, ey = b.y - Math.sin(angle) * r;
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(ex, ey);
-    ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.strokeStyle = _c.border; ctx.lineWidth = 1.5; ctx.stroke();
     // Arrowhead
     ctx.beginPath();
     ctx.moveTo(ex, ey);
     ctx.lineTo(ex - 7 * Math.cos(angle - 0.4), ey - 7 * Math.sin(angle - 0.4));
     ctx.lineTo(ex - 7 * Math.cos(angle + 0.4), ey - 7 * Math.sin(angle + 0.4));
-    ctx.closePath(); ctx.fillStyle = '#30363d'; ctx.fill();
+    ctx.closePath(); ctx.fillStyle = _c.border; ctx.fill();
     // Label
     if (e.relation) {
-      ctx.fillStyle = '#6e7681'; ctx.font = '9px monospace'; ctx.textAlign = 'center';
+      ctx.fillStyle = _c.textDim; ctx.font = '9px monospace'; ctx.textAlign = 'center';
       ctx.fillText(e.relation, (a.x + b.x) / 2, (a.y + b.y) / 2 - 4);
     }
   });
@@ -305,9 +314,9 @@ async function renderKGGraph(canvas, nodes, edges) {
     const p = _kgPos[n.id];
     const r = n.depth === 0 ? 14 : 9;
     ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-    ctx.fillStyle = colors[n.type] || '#8b949e'; ctx.fill();
-    ctx.strokeStyle = '#0d1117'; ctx.lineWidth = 2; ctx.stroke();
-    ctx.fillStyle = '#e6edf3'; ctx.font = `${n.depth === 0 ? 12 : 10}px monospace`; ctx.textAlign = 'center';
+    ctx.fillStyle = colors[n.type] || _c.textDim; ctx.fill();
+    ctx.strokeStyle = _c.bg; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = _c.text; ctx.font = `${n.depth === 0 ? 12 : 10}px monospace`; ctx.textAlign = 'center';
     ctx.fillText(n.name.substring(0, 18), p.x, p.y + r + 13);
   });
 
@@ -315,9 +324,9 @@ async function renderKGGraph(canvas, nodes, edges) {
   const legendTypes = [...new Set(nodes.map(n => n.type))].slice(0, 6);
   ctx.font = '10px monospace'; ctx.textAlign = 'left';
   legendTypes.forEach((t, i) => {
-    ctx.fillStyle = colors[t] || '#8b949e';
+    ctx.fillStyle = colors[t] || _c.textDim;
     ctx.fillRect(8, 8 + i * 16, 10, 10);
-    ctx.fillStyle = '#8b949e';
+    ctx.fillStyle = _c.textDim;
     ctx.fillText(t, 22, 17 + i * 16);
   });
 }
