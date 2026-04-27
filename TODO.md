@@ -222,9 +222,10 @@ Organized by priority tier. Check items off as completed.
   - Affects: RAG search, photo search, KG search
   - Verified: search inputs already use Enter/click (not input events). Added `debounce()` utility for future use.
 
-- [ ] **Move force-directed graph to a Web Worker**
+- [x] **Move force-directed graph to a Web Worker**
   - O(n^2) simulation freezes UI above ~30 nodes
   - Alternative: use d3-force or limit visible nodes with pagination
+  - Done: kg-worker.js runs simulation; renderKGGraph async + main-thread fallback (April 2026)
 
 - [x] **Add undo for destructive operations**
   - Delete chat, delete index, delete note — immediate with no recovery

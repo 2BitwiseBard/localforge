@@ -170,6 +170,14 @@ document.getElementById('kg-relate-btn')?.addEventListener('click', async () => 
 
 // KG Visualization
 let _kgNodes = [], _kgPos = {};
+let _kgWorker = null;
+
+function _getKGWorker() {
+  if (!_kgWorker) {
+    try { _kgWorker = new Worker('/static/js/kg-worker.js'); } catch {}
+  }
+  return _kgWorker;
+}
 
 document.getElementById('kg-viz-btn')?.addEventListener('click', async () => {
   const center = document.getElementById('kg-viz-center').value.trim();
@@ -180,7 +188,7 @@ document.getElementById('kg-viz-btn')?.addEventListener('click', async () => {
     const data = await authFetch(url, { method: 'POST' }).then(r => r.json());
     if (data.error) { showToast(data.error, 'error'); return; }
     _kgNodes = data.nodes || [];
-    renderKGGraph(canvas, _kgNodes, data.edges || []);
+    await renderKGGraph(canvas, _kgNodes, data.edges || []);
   } catch (e) { showToast('Graph failed: ' + e.message, 'error'); }
 });
 
@@ -207,28 +215,14 @@ document.getElementById('kg-canvas')?.addEventListener('click', e => {
   }
 });
 
-function renderKGGraph(canvas, nodes, edges) {
-  if (!nodes.length) { canvas.style.display = 'none'; showToast('No nodes to visualize'); return; }
-  const ctx = canvas.getContext('2d');
-  const W = canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
-  const H = canvas.height = 500 * (window.devicePixelRatio || 1);
-  ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
-  const w = canvas.clientWidth, h = 500;
-
-  _kgPos = {};
-  nodes.forEach(n => { _kgPos[n.id] = { x: w / 2 + (Math.random() - 0.5) * w * 0.6, y: h / 2 + (Math.random() - 0.5) * h * 0.6 }; });
-
-  const colors = {
-    concept: '#58a6ff', code_module: '#3fb950', decision: '#d29922', learning: '#bc8cff',
-    person: '#f78166', tool: '#8b949e', project: '#79c0ff', task: '#d2a8ff', event: '#ffa657', artifact: '#7ee787',
-  };
-
-  // Force-directed layout
+function _forceLayout(nodes, edges, w, h) {
+  const pos = {};
+  nodes.forEach(n => { pos[n.id] = { x: w / 2 + (Math.random() - 0.5) * w * 0.6, y: h / 2 + (Math.random() - 0.5) * h * 0.6 }; });
   for (let iter = 0; iter < 200; iter++) {
     const alpha = 0.12 * (1 - iter / 200);
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
-        const a = _kgPos[nodes[i].id], b = _kgPos[nodes[j].id];
+        const a = pos[nodes[i].id], b = pos[nodes[j].id];
         let dx = b.x - a.x, dy = b.y - a.y;
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
         const force = 6000 / (dist * dist);
@@ -238,21 +232,48 @@ function renderKGGraph(canvas, nodes, edges) {
       }
     }
     edges.forEach(e => {
-      const a = _kgPos[e.from], b = _kgPos[e.to];
-      if (!a || !b) return;
+      const a = pos[e.from], b = pos[e.to]; if (!a || !b) return;
       let dx = b.x - a.x, dy = b.y - a.y;
       const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      const force = (dist - 120) * 0.01;
-      dx /= dist; dy /= dist;
+      const force = (dist - 120) * 0.01; dx /= dist; dy /= dist;
       a.x += dx * force * alpha; a.y += dy * force * alpha;
       b.x -= dx * force * alpha; b.y -= dy * force * alpha;
     });
-    nodes.forEach(n => {
-      const p = _kgPos[n.id];
-      p.x = Math.max(50, Math.min(w - 50, p.x));
-      p.y = Math.max(50, Math.min(h - 50, p.y));
-    });
+    nodes.forEach(n => { const p = pos[n.id]; p.x = Math.max(50, Math.min(w - 50, p.x)); p.y = Math.max(50, Math.min(h - 50, p.y)); });
   }
+  return pos;
+}
+
+async function renderKGGraph(canvas, nodes, edges) {
+  if (!nodes.length) { canvas.style.display = 'none'; showToast('No nodes to visualize'); return; }
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
+  const H = canvas.height = 500 * (window.devicePixelRatio || 1);
+  ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+  const w = canvas.clientWidth, h = 500;
+
+  // Show placeholder while layout runs
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#6e7681'; ctx.font = '12px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('Computing layout\u2026', w / 2, h / 2);
+
+  // Try Web Worker for off-main-thread simulation; fall back if unavailable
+  const worker = _getKGWorker();
+  if (worker) {
+    _kgPos = await new Promise((resolve, reject) => {
+      worker.addEventListener('message', ({ data }) => resolve(data.positions), { once: true });
+      worker.addEventListener('error', reject, { once: true });
+      worker.postMessage({ nodes, edges, w, h });
+    }).catch(() => _forceLayout(nodes, edges, w, h));
+  } else {
+    _kgPos = _forceLayout(nodes, edges, w, h);
+  }
+
+  const colors = {
+    concept: '#58a6ff', code_module: '#3fb950', decision: '#d29922', learning: '#bc8cff',
+    person: '#f78166', tool: '#8b949e', project: '#79c0ff', task: '#d2a8ff', event: '#ffa657', artifact: '#7ee787',
+  };
 
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, w, h);

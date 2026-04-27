@@ -1,5 +1,5 @@
 // AI Hub Service Worker — stale-while-revalidate for static, network-first for API
-const CACHE_VERSION = 42;  // Bump on every static file change
+const CACHE_VERSION = 43;  // Bump on every static file change
 const CACHE_NAME = `ai-hub-v${CACHE_VERSION}`;
 const STATIC_ASSETS = [
   '/',
@@ -21,6 +21,7 @@ const STATIC_ASSETS = [
   '/static/js/training.js',
   '/static/js/workflows.js',
   '/static/js/workflow_editor.js',
+  '/static/js/kg-worker.js',
   '/static/manifest.json',
   '/static/icon-192.svg',
 ];
