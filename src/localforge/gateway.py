@@ -311,8 +311,27 @@ class RequestBodyLimitMiddleware(_BaseMiddleware):
         return await call_next(request)
 
 
+class RequestIDMiddleware(_BaseMiddleware):
+    """Attach a unique request ID to every request for distributed tracing.
+
+    Reads X-Request-ID from incoming headers (for client-side correlation) or
+    generates a new UUID4. Sets the ID in the ContextVar so JSON log lines
+    automatically include it, and echoes it in the response header.
+    """
+
+    async def dispatch(self, request, call_next):
+        import uuid
+        from localforge.log import set_request_id
+        rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+        set_request_id(rid)
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = rid
+        return response
+
+
 starlette_app.add_middleware(SecurityHeadersMiddleware)
 starlette_app.add_middleware(RequestBodyLimitMiddleware)
+starlette_app.add_middleware(RequestIDMiddleware)
 
 
 # ---------------------------------------------------------------------------

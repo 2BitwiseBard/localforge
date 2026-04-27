@@ -263,10 +263,11 @@ Organized by priority tier. Check items off as completed.
   - Add 15-30s TTL cache for both
   - Added `_gpu_metrics_cache` and `_status_cache` with 15s TTL in routes.py
 
-- [ ] **Add structured logging (JSON format)**
+- [x] **Add structured logging (JSON format)**
   - Current logging is plain text — hard to parse/search/alert on
   - Use `python-json-logger` or manual JSON formatter
   - Add request IDs for tracing through gateway -> tools -> agents
+  - Done: JSONFormatter in log.py, --log-format json CLI flag, RequestIDMiddleware in gateway (April 2026)
 
 - [ ] **Add pagination to more API endpoints**
   - Only `api_chat_list` has pagination

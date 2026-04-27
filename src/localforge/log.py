@@ -22,7 +22,20 @@ or a sub-logger:
 import json
 import logging
 import sys
+from contextvars import ContextVar
 from typing import Any
+
+# Per-request ID propagated via ContextVar so all log statements within a
+# request handler automatically include the ID without explicit passing.
+_request_id_var: ContextVar[str] = ContextVar("request_id", default="")
+
+
+def get_request_id() -> str:
+    return _request_id_var.get()
+
+
+def set_request_id(rid: str) -> None:
+    _request_id_var.set(rid)
 
 
 # ---------------------------------------------------------------------------
@@ -40,8 +53,12 @@ class JSONFormatter(logging.Formatter):
         }
         if record.exc_info and record.exc_info[0] is not None:
             entry["exception"] = self.formatException(record.exc_info)
+        # Include context-propagated request ID
+        rid = _request_id_var.get("")
+        if rid:
+            entry["request_id"] = rid
         # Include any extra fields attached to the record
-        for key in ("request_id", "tool", "model", "backend", "duration_ms"):
+        for key in ("tool", "model", "backend", "duration_ms"):
             val = getattr(record, key, None)
             if val is not None:
                 entry[key] = val
