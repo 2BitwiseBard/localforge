@@ -226,9 +226,10 @@ Organized by priority tier. Check items off as completed.
   - O(n^2) simulation freezes UI above ~30 nodes
   - Alternative: use d3-force or limit visible nodes with pagination
 
-- [ ] **Add undo for destructive operations**
+- [x] **Add undo for destructive operations**
   - Delete chat, delete index, delete note — immediate with no recovery
   - At minimum: confirmation dialog. Better: soft-delete with 30s undo toast
+  - Done: showUndoToast() added to api.js; note delete returns content + 8s undo window (April 2026)
 
 - [x] **Service worker: stale-while-revalidate for read-only endpoints**
   - `/api/status`, `/api/models`, `/api/agents` — cache last response

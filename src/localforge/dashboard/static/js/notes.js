@@ -1,4 +1,4 @@
-import { API, authFetch, authHeaders, escapeHtml, escapeAttr, formatBytes, showToast } from './api.js';
+import { API, authFetch, authHeaders, escapeHtml, escapeAttr, formatBytes, showToast, showUndoToast } from './api.js';
 
 let _allNotes = [];
 
@@ -83,14 +83,25 @@ export async function loadNotes() {
         await _openNoteEditor(wrap, topic);
       });
 
-      // Delete button
+      // Delete button — immediate removal with 8s undo window
       wrap.querySelector('.note-delete-btn').addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (!confirm(`Delete note "${topic}"?`)) return;
         try {
-          await authFetch(API + '/notes/' + encodeURIComponent(topic), { method: 'DELETE', headers: authHeaders() });
-          showToast('Note deleted');
-          loadNotes();
+          const resp = await authFetch(API + '/notes/' + encodeURIComponent(topic), { method: 'DELETE', headers: authHeaders() });
+          const data = await resp.json();
+          if (data.error) { showToast(data.error, 'error'); return; }
+          wrap.remove();
+          showUndoToast(`Deleted "${topic}"`, async () => {
+            try {
+              await authFetch(API + '/notes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders() },
+                body: JSON.stringify({ topic, content: data.content || '' }),
+              });
+              loadNotes();
+              showToast(`Restored "${topic}"`);
+            } catch (err) { showToast('Restore failed: ' + err.message, 'error'); }
+          });
         } catch (err) { showToast('Delete failed: ' + err.message, 'error'); }
       });
     });

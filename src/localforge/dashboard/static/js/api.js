@@ -41,6 +41,22 @@ export function showToast(msg, type = 'info') {
   setTimeout(() => { toast.classList.add('toast-fade'); setTimeout(() => toast.remove(), 500); }, 4000);
 }
 
+export function showUndoToast(msg, undoCallback, duration = 8000) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast toast-info';
+  toast.style.cssText = 'display:flex;align-items:center;gap:10px';
+  const text = document.createElement('span');
+  text.textContent = msg;
+  const btn = document.createElement('button');
+  btn.textContent = 'Undo';
+  btn.style.cssText = 'background:none;border:1px solid rgba(255,255,255,0.5);color:inherit;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:0.82rem;flex-shrink:0';
+  toast.append(text, btn);
+  container.appendChild(toast);
+  const timer = setTimeout(() => { toast.classList.add('toast-fade'); setTimeout(() => toast.remove(), 500); }, duration);
+  btn.addEventListener('click', () => { clearTimeout(timer); toast.remove(); if (undoCallback) undoCallback(); });
+}
+
 export function debounce(fn, ms = 300) {
   let t;
   return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };

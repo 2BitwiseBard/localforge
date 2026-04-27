@@ -1378,7 +1378,7 @@ async def api_note_save(request: Request) -> JSONResponse:
 
 
 async def api_note_delete(request: Request) -> JSONResponse:
-    """Delete a note by topic."""
+    """Delete a note by topic; returns content so the client can offer an undo."""
     topic = request.path_params.get("topic", "")
     if not topic:
         return JSONResponse({"error": "topic required"}, status_code=400)
@@ -1387,8 +1387,9 @@ async def api_note_delete(request: Request) -> JSONResponse:
     for ext in (".md", ".txt", ""):
         p = NOTES_DIR / f"{topic}{ext}"
         if p.exists() and p.is_file():
+            content = p.read_text(encoding="utf-8", errors="replace")
             p.unlink()
-            return JSONResponse({"ok": True})
+            return JSONResponse({"ok": True, "content": content})
     return JSONResponse({"error": "Note not found"}, status_code=404)
 
 
