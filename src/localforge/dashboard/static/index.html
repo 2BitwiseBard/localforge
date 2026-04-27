@@ -33,6 +33,28 @@
   </div>
 </div>
 
+<!-- Keyboard shortcuts overlay — press ? to open, Escape to close -->
+<div id="shortcuts-overlay" class="modal-overlay" hidden>
+  <div class="modal-box" style="max-width:480px">
+    <h2 style="margin:0 0 16px;display:flex;align-items:center;justify-content:space-between">
+      Keyboard Shortcuts
+      <button id="shortcuts-close-btn" class="icon-btn" aria-label="Close" style="font-size:1rem">&#10005;</button>
+    </h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 24px;font-size:0.88rem;line-height:1.6">
+      <div style="color:var(--muted);font-size:0.72rem;text-transform:uppercase;letter-spacing:.06em;grid-column:1/-1;margin-bottom:2px">Tabs</div>
+      <div><kbd style="background:var(--border);border-radius:4px;padding:1px 6px;font-size:0.8rem">1</kbd>–<kbd style="background:var(--border);border-radius:4px;padding:1px 6px;font-size:0.8rem">9</kbd> Status → Workflows</div>
+      <div><kbd style="background:var(--border);border-radius:4px;padding:1px 6px;font-size:0.8rem">0</kbd> Training</div>
+      <div><kbd style="background:var(--border);border-radius:4px;padding:1px 6px;font-size:0.8rem">-</kbd> Notes</div>
+      <div><kbd style="background:var(--border);border-radius:4px;padding:1px 6px;font-size:0.8rem">=</kbd> Knowledge</div>
+      <div style="color:var(--muted);font-size:0.72rem;text-transform:uppercase;letter-spacing:.06em;grid-column:1/-1;margin:10px 0 2px">Actions</div>
+      <div><kbd style="background:var(--border);border-radius:4px;padding:1px 6px;font-size:0.8rem">/</kbd> Focus search</div>
+      <div><kbd style="background:var(--border);border-radius:4px;padding:1px 6px;font-size:0.8rem">?</kbd> This help</div>
+      <div><kbd style="background:var(--border);border-radius:4px;padding:1px 6px;font-size:0.8rem">Esc</kbd> Close overlays</div>
+    </div>
+    <p style="color:var(--muted);font-size:0.78rem;margin:14px 0 0">Shortcuts are disabled while typing in any input.</p>
+  </div>
+</div>
+
 <header>
   <button id="sidebar-mobile-toggle" class="icon-btn sidebar-mobile-toggle" aria-label="Open menu" title="Menu">&#9776;</button>
   <h1>AI Hub</h1>

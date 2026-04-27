@@ -378,17 +378,41 @@ class AgentSupervisor:
                 backoff = min(backoff * 2, max_backoff)
 
     async def _schedule_inner(self, agent: BaseAgent, schedule: str):
-        """The actual schedule tick loop (separated for crash respawn wrapper)."""
-        interval = self._parse_schedule(schedule)
-        initial_delay = self._initial_delay(schedule)
-        # Wait for gateway on first run
+        """Schedule using croniter for precise cron alignment; falls back to fixed interval."""
+        import datetime
+        try:
+            from croniter import croniter as CronIter
+            CronIter(schedule)  # validate expression early
+        except ImportError:
+            CronIter = None
+            log.warning("croniter not installed; pip install localforge[agents] for precise cron. "
+                        "Falling back to approximate interval scheduling.")
+        except Exception as exc:
+            CronIter = None
+            log.warning("Invalid cron expression %r (%s); defaulting to hourly", schedule, exc)
+
         await self._wait_for_gateway()
-        # For daily schedules, wait until the target time before first run
-        if initial_delay > 0:
-            agent.state.log(f"Waiting {initial_delay // 60:.0f}m until target time")
-            await asyncio.sleep(initial_delay)
+
+        # Fallback only: compute initial delay for fixed daily schedules
+        if CronIter is None:
+            initial_delay = self._initial_delay(schedule)
+            if initial_delay > 0:
+                agent.state.log(f"Waiting {initial_delay // 60:.0f}m until target time")
+                await asyncio.sleep(initial_delay)
+
         while self._running:
-            next_run = time.monotonic() + interval
+            if CronIter is not None:
+                now = datetime.datetime.now()
+                next_dt = CronIter(schedule, now).get_next(datetime.datetime)
+                delay = max(0.0, (next_dt - datetime.datetime.now()).total_seconds())
+                agent.state.log(f"Next run at {next_dt.strftime('%H:%M:%S')}")
+                await asyncio.sleep(delay)
+                if not self._running:
+                    break
+            else:
+                interval = self._parse_schedule(schedule)
+                next_run = time.monotonic() + interval
+
             if agent.agent_id not in self._paused:
                 timeout = self._configs.get(agent.agent_id, {}).get(
                     "timeout", self._default_agent_timeout
@@ -402,12 +426,13 @@ class AgentSupervisor:
                     agent.state.log(f"Execution timed out after {timeout}s")
                     agent.state.last_error = f"Timed out after {timeout}s"
                 self._save_state(agent)
-            # Sleep remaining time to prevent drift from execution duration
-            remaining = next_run - time.monotonic()
-            if remaining > 0:
-                await asyncio.sleep(remaining)
-            else:
-                await asyncio.sleep(1)  # yield at minimum
+
+            if CronIter is None:
+                remaining = next_run - time.monotonic()
+                if remaining > 0:
+                    await asyncio.sleep(remaining)
+                else:
+                    await asyncio.sleep(1)  # yield at minimum
 
     @staticmethod
     def _parse_schedule(schedule: str) -> int:

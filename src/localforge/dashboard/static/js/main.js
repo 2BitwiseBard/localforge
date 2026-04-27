@@ -93,13 +93,25 @@ document.addEventListener('click', (e) => {
 
 // Keyboard shortcuts
 const _TAB_ORDER = ['status', 'chat', 'search', 'mesh', 'media', 'config', 'agents', 'research', 'workflows', 'training', 'notes', 'knowledge'];
+const _shortcutsOverlay = document.getElementById('shortcuts-overlay');
+document.getElementById('shortcuts-close-btn')?.addEventListener('click', () => { _shortcutsOverlay.hidden = true; });
+
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { _shortcutsOverlay.hidden = true; return; }
   if (e.target.matches('input, textarea, select, [contenteditable]')) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === '?') { _shortcutsOverlay.hidden = !_shortcutsOverlay.hidden; e.preventDefault(); return; }
+  if (e.key === '/') {
+    activateTab('search');
+    const inp = document.getElementById('search-query');
+    if (inp) { inp.focus(); inp.select(); }
+    e.preventDefault(); return;
+  }
   const idx = '123456789'.indexOf(e.key);
   if (idx >= 0 && idx < _TAB_ORDER.length) { activateTab(_TAB_ORDER[idx]); e.preventDefault(); }
   else if (e.key === '0' && _TAB_ORDER[9]) { activateTab(_TAB_ORDER[9]); e.preventDefault(); }
   else if (e.key === '-' && _TAB_ORDER[10]) { activateTab(_TAB_ORDER[10]); e.preventDefault(); }
+  else if (e.key === '=' && _TAB_ORDER[11]) { activateTab(_TAB_ORDER[11]); e.preventDefault(); }
 });
 
 // Restore sidebar collapsed state

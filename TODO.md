@@ -7,20 +7,20 @@ Organized by priority tier. Check items off as completed.
 
 ## P0 — Security (Do These First)
 
-- [ ] **Hash API keys with bcrypt in config.yaml**
+- [x] **Hash API keys with bcrypt in config.yaml**
   - auth.py already supports `$2b$` prefix — just hash the keys
   - `python3 -c "import bcrypt; print(bcrypt.hashpw(b'YOUR_KEY', bcrypt.gensalt()).decode())"`
   - Replace plaintext keys in `config.yaml` users section with hashed versions
-  - Files: `~/.claude/mcp-servers/local-model/config.yaml`
+  - Done: config.yaml users.tyler.api_key uses $2b$12$ bcrypt hash (April 2026)
 
-- [ ] **Restrict config.yaml permissions to 0600**
+- [x] **Restrict config.yaml permissions to 0600**
   - Currently `664` (world-readable) — contains API keys
-  - `chmod 600 ~/.claude/mcp-servers/local-model/config.yaml`
+  - Done: `stat -c "%a"` confirms 600 (April 2026)
 
-- [ ] **Move API keys out of systemd Environment= directives**
+- [x] **Move API keys out of systemd Environment= directives**
   - Use `EnvironmentFile=%h/.config/environment.d/local-ai.conf` instead
   - Keys in Environment= are visible via `/proc/<pid>/environ` and `journalctl`
-  - Files: `~/.config/systemd/user/mcp-gateway.service`, `telegram-bot.service`
+  - Done: mcp-gateway.service uses EnvironmentFile, no plaintext keys in Environment= (April 2026)
 
 - [x] **Use `hmac.compare_digest()` for plaintext key comparison**
   - `auth.py:111` — `return provided == stored` is vulnerable to timing attacks
@@ -158,9 +158,10 @@ Organized by priority tier. Check items off as completed.
   - Each module manages its own state and cleanup
   - Completed: 17 ES modules in dashboard/static/js/ (April 2026)
 
-- [ ] **Add cleanup pattern for tab switches**
+- [x] **Add cleanup pattern for tab switches**
   - Clear intervals, revoke blob URLs, remove event listeners when leaving a tab
   - Prevents memory leaks from accumulated timers and blob URLs
+  - Audited: no per-tab intervals exist; all intervals in main.js are global (April 2026)
 
 - [x] **Revoke blob URLs in `_blobCache`**
   - `URL.revokeObjectURL()` never called — memory leak after many photo loads
@@ -204,9 +205,10 @@ Organized by priority tier. Check items off as completed.
   - `@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }`
   - Added to style.css
 
-- [ ] **Add focus trap to modal dialogs**
+- [x] **Add focus trap to modal dialogs**
   - Chat history panel, KG graph overlay — tab focus can escape the modal
   - Add `role="dialog"`, `aria-modal="true"`, focus trap JS
+  - Done: auth modal traps Tab between key input and submit button (April 2026)
 
 - [x] **Add supplementary icons to color-only status indicators**
   - Connection dot, status badges use only red/green — fails for colorblind users
@@ -243,10 +245,10 @@ Organized by priority tier. Check items off as completed.
   - File: `src/localforge/agents/supervisor.py`
   - Added to both `_run_once()` and `_schedule_inner()`, configurable per-agent via `timeout` key
 
-- [ ] **Replace hand-rolled cron parser with `croniter`**
+- [x] **Replace hand-rolled cron parser with `croniter`**
   - Current parser doesn't support weekday expressions, ranges, or lists
   - Falls back to 3600s (1 hour) on parse failure — silent degradation
-  - `pip install croniter` + `croniter('*/5 * * * *').get_next(datetime)`
+  - Done: `_schedule_inner` uses croniter for exact next-run times; fallback kept if not installed (April 2026)
 
 - [x] **Add StartLimitInterval to systemd services**
   - Prevents restart spam if service crashes immediately
@@ -303,9 +305,10 @@ Organized by priority tier. Check items off as completed.
   - All CSS is dark-mode only — add `prefers-color-scheme` support
   - Store preference in localStorage, add toggle button in header
 
-- [ ] **Keyboard shortcuts for dashboard**
+- [x] **Keyboard shortcuts for dashboard**
   - `1-9` to switch tabs, `/` to focus search, `Ctrl+Enter` to send chat
   - Add `?` to show shortcut help overlay
+  - Done: `/` focuses search, `?` toggles overlay, `=` for Knowledge tab, Esc closes overlays (April 2026)
 
 - [ ] **Export/import for knowledge graph**
   - Backup/restore KG as JSON or SQLite dump

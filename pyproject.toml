@@ -56,9 +56,10 @@ auth = [
     "bcrypt~=4.0",
 ]
 
-# Autonomous agent file-watch triggers
+# Autonomous agent file-watch triggers and cron scheduling
 agents = [
     "watchdog~=6.0",
+    "croniter>=1.4",
 ]
 
 # Web search and research tools

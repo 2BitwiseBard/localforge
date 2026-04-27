@@ -11,10 +11,21 @@ function showAuthModal(errorMsg = '') {
     modal.hidden = false;
     input.focus();
 
+    function trapFocus(e) {
+      if (e.key !== 'Tab') return;
+      if (e.shiftKey) {
+        if (document.activeElement === input) { e.preventDefault(); btn.focus(); }
+      } else {
+        if (document.activeElement === btn) { e.preventDefault(); input.focus(); }
+      }
+    }
+    modal.addEventListener('keydown', trapFocus);
+
     function submit() {
       const key = input.value.trim();
       if (!key) { err.textContent = 'Key required.'; return; }
       modal.hidden = true;
+      modal.removeEventListener('keydown', trapFocus);
       btn.removeEventListener('click', submit);
       input.removeEventListener('keydown', onKey);
       resolve(key);
