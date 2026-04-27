@@ -80,6 +80,7 @@ modelSelect.addEventListener('change', async () => {
   if (!confirm(`Swap to ${model.replace('.gguf', '')}?`)) { modelSelect.value = ''; return; }
   const badge = document.getElementById('model-badge');
   badge.textContent = 'Loading...'; badge.style.background = 'var(--yellow)';
+  modelSelect.disabled = true;
   try {
     const swapBody = { model_name: model, ...collectLoadParams() };
     const resp = await authFetch(API + '/swap', {
@@ -91,6 +92,7 @@ modelSelect.addEventListener('change', async () => {
     if (data.error) { showToast('Swap error: ' + data.error, 'error'); }
     else if (data.applied) { showToast(`Loaded: ctx=${data.applied.ctx_size}, gpu=${data.applied.gpu_layers}`); }
   } catch (e) { showToast('Swap error: ' + e.message, 'error'); }
+  modelSelect.disabled = false;
   badge.style.background = ''; loadStatus(); loadModels();
 });
 
