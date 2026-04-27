@@ -180,8 +180,9 @@ Organized by priority tier. Check items off as completed.
   - Affects: nav tabs, icon buttons, chat input buttons, photo cards
   - Added `@media (pointer: coarse)` rule enforcing 44px min on all interactive elements
 
-- [ ] **Handle virtual keyboard on mobile**
+- [x] **Handle virtual keyboard on mobile**
   - Chat input `max-height: calc(100dvh - 140px)` breaks when keyboard opens
+  - Done: visualViewport resize listener adjusts chat-container height on <=480px (April 2026)
   - Use `visualViewport` API to adjust layout
 
 ### Accessibility
@@ -301,9 +302,10 @@ Organized by priority tier. Check items off as completed.
 
 ## P5 — New Features / Nice-to-Have
 
-- [ ] **Dark/light theme toggle**
+- [x] **Dark/light theme toggle**
   - All CSS is dark-mode only — add `prefers-color-scheme` support
   - Store preference in localStorage, add toggle button in header
+  - Done: body.light-theme CSS vars, &#9788; button in header, localStorage persistence (April 2026)
 
 - [x] **Keyboard shortcuts for dashboard**
   - `1-9` to switch tabs, `/` to focus search, `Ctrl+Enter` to send chat

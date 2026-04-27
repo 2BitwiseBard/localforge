@@ -121,6 +121,28 @@ try {
   }
 } catch {}
 
+// Dark/light theme toggle
+try {
+  if (localStorage.getItem('theme') === 'light') document.body.classList.add('light-theme');
+} catch {}
+document.getElementById('theme-toggle')?.addEventListener('click', () => {
+  const light = document.body.classList.toggle('light-theme');
+  try { localStorage.setItem('theme', light ? 'light' : 'dark'); } catch {}
+});
+
+// Virtual keyboard: adjust chat container height when software keyboard opens
+if (window.visualViewport) {
+  const _adjustChat = () => {
+    if (!window.matchMedia('(max-width: 480px)').matches) return;
+    const el = document.querySelector('#tab-chat .chat-container');
+    if (!el) return;
+    const hdr = document.querySelector('header')?.offsetHeight ?? 49;
+    const nav = document.querySelector('.mobile-nav')?.offsetHeight ?? 56;
+    el.style.maxHeight = `${window.visualViewport.height - hdr - nav - 16}px`;
+  };
+  window.visualViewport.addEventListener('resize', _adjustChat);
+}
+
 // Notification permission + Web Push subscription
 if ('Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window) {
   function _urlBase64ToUint8Array(b64) {

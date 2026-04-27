@@ -14,6 +14,16 @@
   --radius: 8px;
 }
 
+body.light-theme {
+  --bg: #ffffff;
+  --surface: #f6f8fa;
+  --border: #d0d7de;
+  --text: #1f2328;
+  --text-dim: #6e7781;
+  --accent: #0969da;
+  --accent-dim: #0550ae;
+}
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
