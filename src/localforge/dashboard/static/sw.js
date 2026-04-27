@@ -1,5 +1,5 @@
 // AI Hub Service Worker — stale-while-revalidate for static, network-first for API
-const CACHE_VERSION = 38;  // Bump on every static file change
+const CACHE_VERSION = 39;  // Bump on every static file change
 const CACHE_NAME = `ai-hub-v${CACHE_VERSION}`;
 const STATIC_ASSETS = [
   '/',
@@ -49,7 +49,25 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // API / health: always network, never cache
+  // Read-only API endpoints: stale-while-revalidate so the PWA stays useful when
+  // the backend is briefly unreachable (model swap, restart, flaky wifi).
+  const CACHEABLE_API = ['/api/status', '/api/models', '/api/agents', '/api/mesh/status'];
+  if (CACHEABLE_API.some(p => url.pathname === p) && event.request.method === 'GET') {
+    event.respondWith(
+      caches.open(CACHE_NAME).then(cache =>
+        cache.match(event.request).then(cached => {
+          const networkFetch = fetch(event.request).then(resp => {
+            if (resp.ok) cache.put(event.request, resp.clone());
+            return resp;
+          }).catch(() => cached);
+          return cached || networkFetch;
+        })
+      )
+    );
+    return;
+  }
+
+  // All other API / MCP / health: always network, never cache
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/mcp') || url.pathname === '/health') {
     return;
   }

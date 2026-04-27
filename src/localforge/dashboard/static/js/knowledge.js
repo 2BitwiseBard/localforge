@@ -8,7 +8,7 @@ export async function loadKGStats() {
     let html = statusRow('Entities', data.total_entities || 0, 'ok') + statusRow('Relations', data.total_relations || 0, 'ok');
     if (data.entities_by_type) {
       html += '<div style="margin-top:8px">';
-      for (const [t, c] of Object.entries(data.entities_by_type)) html += `<span class="type-badge type-${t}">${t}:${c}</span> `;
+      for (const [t, c] of Object.entries(data.entities_by_type)) html += `<span class="type-badge type-${escapeAttr(t)}">${escapeHtml(t)}:${c}</span> `;
       html += '</div>';
     }
     el.innerHTML = html;
@@ -27,7 +27,7 @@ document.getElementById('kg-timeline-btn')?.addEventListener('click', async () =
     if (!entries.length) { panel.innerHTML = '<div class="empty-state">No entities yet</div>'; return; }
     panel.innerHTML = '<div class="kg-timeline-list">' + entries.map(e => `
       <div class="kg-timeline-entry">
-        <span class="type-badge type-${e.type || 'concept'}">${e.type || 'concept'}</span>
+        <span class="type-badge type-${escapeAttr(e.type || 'concept')}">${escapeHtml(e.type || 'concept')}</span>
         <span class="kg-tl-name">${escapeHtml(e.name)}</span>
         <span class="kg-tl-time">${timeAgo(e.updated_at)}</span>
         <div class="kg-tl-content">${escapeHtml((e.content || '').substring(0, 120))}</div>
@@ -51,12 +51,12 @@ async function doKGSearch() {
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ query, entity_type: type }),
     }).then(r => r.json());
-    if (data.error) { el.innerHTML = `<div class="error-msg">${data.error}</div>`; return; }
+    if (data.error) { el.innerHTML = `<div class="error-msg">${escapeHtml(data.error)}</div>`; return; }
     if (!data.results?.length) { el.innerHTML = '<div class="empty-state">No entities found</div>'; return; }
     el.innerHTML = data.results.map(e => `
       <div class="entity-card" data-name="${escapeAttr(e.name)}">
         <div class="entity-header">
-          <span class="type-badge type-${e.type || 'concept'}">${e.type || 'concept'}</span>
+          <span class="type-badge type-${escapeAttr(e.type || 'concept')}">${escapeHtml(e.type || 'concept')}</span>
           <span class="entity-name">${escapeHtml(e.name)}</span>
           <div class="entity-actions">
             <button class="btn-small entity-explore-btn" data-name="${escapeAttr(e.name)}" title="Explore in graph">&#9906;</button>
@@ -80,13 +80,13 @@ async function doKGSearch() {
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify({ name: card.dataset.name }),
           }).then(r => r.json());
-          if (ctx.error || !ctx.entity) { rel.innerHTML = ctx.error || 'Not found'; return; }
+          if (ctx.error || !ctx.entity) { rel.innerHTML = '<div class="error-msg">' + escapeHtml(ctx.error || 'Not found') + '</div>'; return; }
           const rels = ctx.relations || [];
           rel.innerHTML = rels.length
             ? '<div class="relation-tree">' + rels.map(r => `
                 <div class="relation-item">
-                  <span class="relation-dir ${r.direction}">${r.direction === 'outgoing' ? '→' : '←'}</span>
-                  <span class="relation-type">${r.relation}</span>
+                  <span class="relation-dir ${escapeAttr(r.direction || '')}">${r.direction === 'outgoing' ? '→' : '←'}</span>
+                  <span class="relation-type">${escapeHtml(r.relation || '')}</span>
                   <span class="relation-target">${escapeHtml(r.entity_name || '')}</span>
                 </div>`).join('') + '</div>'
             : '<div class="empty-state">No relations</div>';

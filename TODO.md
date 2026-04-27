@@ -26,10 +26,12 @@ Organized by priority tier. Check items off as completed.
   - `auth.py:111` — `return provided == stored` is vulnerable to timing attacks
   - One-line fix: `return hmac.compare_digest(provided, stored)`
 
-- [ ] **Audit all innerHTML assignments in app.js (105 total)**
+- [x] **Audit all innerHTML assignments in app.js (105 total)**
   - Replace with `textContent` or DOM methods where content is untrusted
   - Ensure model responses always go through `escapeHtml()` before rendering
   - High-risk paths: chat messages, agent logs, KG entity content, note content
+  - renderMarkdown() confirmed safe (calls escapeHtml first). Notes, agents: safe.
+  - Fixed: knowledge.js entity type badges, relation types, error messages (April 2026)
 
 - [x] **Add CSP (Content-Security-Policy) header to gateway**
   - Block inline scripts, restrict sources to self
@@ -149,11 +151,12 @@ Organized by priority tier. Check items off as completed.
 ## P3 — Frontend Improvements
 
 ### Code Organization
-- [ ] **Split app.js into ES modules**
+- [x] **Split app.js into ES modules**
   - Suggested modules: `auth.js`, `status.js`, `chat.js`, `photos.js`, `kg.js`,
     `agents.js`, `config.js`, `training.js`, `utils.js`
   - Use `<script type="module">` — no build step needed
   - Each module manages its own state and cleanup
+  - Completed: 17 ES modules in dashboard/static/js/ (April 2026)
 
 - [ ] **Add cleanup pattern for tab switches**
   - Clear intervals, revoke blob URLs, remove event listeners when leaving a tab
@@ -224,10 +227,11 @@ Organized by priority tier. Check items off as completed.
   - Delete chat, delete index, delete note — immediate with no recovery
   - At minimum: confirmation dialog. Better: soft-delete with 30s undo toast
 
-- [ ] **Service worker: stale-while-revalidate for read-only endpoints**
+- [x] **Service worker: stale-while-revalidate for read-only endpoints**
   - `/api/status`, `/api/models`, `/api/agents` — cache last response
   - Show cached data immediately, update when network responds
   - Makes PWA useful when backend is briefly down
+  - Implemented in sw.js v39: /api/status, /api/models, /api/agents, /api/mesh/status (April 2026)
 
 ---
 
