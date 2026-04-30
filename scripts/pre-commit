@@ -12,13 +12,17 @@
 
 set -euo pipefail
 
-# Worker scripts watched by this hook
+# Worker scripts watched by this hook (primary scripts + static copies served
+# to users via the dashboard; both get linted and the primary four go through
+# the cross-platform parity checker as well)
 WORKER_GLOBS=(
     "scripts/setup-worker.sh"
     "scripts/setup-worker-darwin.sh"
     "scripts/setup-worker-termux.sh"
     "scripts/setup-worker.ps1"
     "scripts/check_script_parity.py"
+    "src/localforge/dashboard/static/setup-worker.sh"
+    "src/localforge/dashboard/static/setup-worker.ps1"
 )
 
 # ------------------------------------------------------------------
@@ -61,6 +65,13 @@ if command -v shellcheck &>/dev/null; then
     shellcheck --severity=warning --shell=bash scripts/setup-worker-termux.sh \
         && echo "  OK  setup-worker-termux.sh" \
         || { echo "  FAIL  setup-worker-termux.sh"; FAILED=1; }
+
+    STATIC_SH="src/localforge/dashboard/static/setup-worker.sh"
+    if [[ -f "$STATIC_SH" ]]; then
+        shellcheck --severity=warning "$STATIC_SH" \
+            && echo "  OK  $STATIC_SH" \
+            || { echo "  FAIL  $STATIC_SH"; FAILED=1; }
+    fi
 else
     echo ""
     echo "ShellCheck  [SKIPPED — not installed]"
@@ -75,26 +86,41 @@ if command -v pwsh &>/dev/null; then
     echo ""
     echo "PSScriptAnalyzer"
     echo "----------------"
-    if pwsh -NoProfile -NonInteractive -Command "
-        \$ErrorActionPreference = 'Stop'
-        if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
-            Write-Host '  Installing PSScriptAnalyzer...'
-            Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -Repository PSGallery
-        }
-        \$results = Invoke-ScriptAnalyzer \`
-            -Path scripts/setup-worker.ps1 \`
-            -Severity @('Warning', 'Error') \`
-            -ReportSummary
-        if (\$results) {
-            \$results | Format-List RuleName, Severity, Line, Column, Message
-            exit 1
-        }
-        Write-Host '  OK  setup-worker.ps1'
-    "; then
-        : # already printed OK inside the pwsh block
+    _ps_analyze() {
+        local target="$1"
+        pwsh -NoProfile -NonInteractive -Command "
+            \$ErrorActionPreference = 'Stop'
+            if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+                Write-Host '  Installing PSScriptAnalyzer...'
+                Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -Repository PSGallery
+            }
+            \$results = Invoke-ScriptAnalyzer \`
+                -Path '$target' \`
+                -Severity @('Warning', 'Error') \`
+                -ReportSummary
+            if (\$results) {
+                \$results | Format-List RuleName, Severity, Line, Column, Message
+                exit 1
+            }
+            Write-Host '  OK  $target'
+        "
+    }
+
+    if _ps_analyze "scripts/setup-worker.ps1"; then
+        :
     else
         echo "  FAIL  setup-worker.ps1"
         FAILED=1
+    fi
+
+    STATIC_PS1="src/localforge/dashboard/static/setup-worker.ps1"
+    if [[ -f "$STATIC_PS1" ]]; then
+        if _ps_analyze "$STATIC_PS1"; then
+            :
+        else
+            echo "  FAIL  $STATIC_PS1"
+            FAILED=1
+        fi
     fi
 else
     echo ""

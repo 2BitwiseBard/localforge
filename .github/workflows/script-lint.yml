@@ -8,6 +8,8 @@ on:
       - "scripts/setup-worker*.sh"
       - "scripts/setup-worker*.ps1"
       - "scripts/check_script_parity.py"
+      - "src/localforge/dashboard/static/setup-worker*.sh"
+      - "src/localforge/dashboard/static/setup-worker*.ps1"
       - ".github/workflows/script-lint.yml"
   pull_request:
     branches: [main]
@@ -15,13 +17,16 @@ on:
       - "scripts/setup-worker*.sh"
       - "scripts/setup-worker*.ps1"
       - "scripts/check_script_parity.py"
+      - "src/localforge/dashboard/static/setup-worker*.sh"
+      - "src/localforge/dashboard/static/setup-worker*.ps1"
       - ".github/workflows/script-lint.yml"
 
 jobs:
   # --------------------------------------------------------------------------
-  # 1. ShellCheck — static analysis for the three bash scripts
-  #    (Linux, macOS, Android/Termux).  ShellCheck follows each script's own
-  #    shebang to determine the target shell, so no --shell flag is needed.
+  # 1. ShellCheck — static analysis for the bash scripts.
+  #    ShellCheck follows each script's own shebang to determine the target
+  #    shell, so no --shell flag is needed except for the Termux script whose
+  #    shebang points to a non-standard Termux path.
   # --------------------------------------------------------------------------
   shellcheck:
     name: ShellCheck (bash scripts)
@@ -43,12 +48,15 @@ jobs:
         # tell ShellCheck explicitly which shell to target.
         run: shellcheck --severity=warning --shell=bash scripts/setup-worker-termux.sh
 
+      - name: Lint dashboard/static/setup-worker.sh (served to users)
+        run: shellcheck --severity=warning src/localforge/dashboard/static/setup-worker.sh
+
   # --------------------------------------------------------------------------
-  # 2. PSScriptAnalyzer — static analysis for the Windows PowerShell script.
+  # 2. PSScriptAnalyzer — static analysis for the Windows PowerShell scripts.
   #    Runs on ubuntu-latest using the pre-installed PowerShell Core (pwsh).
   # --------------------------------------------------------------------------
   psscriptanalyzer:
-    name: PSScriptAnalyzer (Windows script)
+    name: PSScriptAnalyzer (Windows scripts)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,9 +76,23 @@ jobs:
             -ReportSummary
 
           if ($results) {
-            # Print findings with source location for easy navigation
             $results | Format-List RuleName, Severity, Line, Column, Message
             Write-Host "::error::PSScriptAnalyzer found $($results.Count) issue(s) in setup-worker.ps1"
+            exit 1
+          }
+          Write-Host "PSScriptAnalyzer: no warnings or errors found."
+
+      - name: Analyze dashboard/static/setup-worker.ps1 (served to users)
+        shell: pwsh
+        run: |
+          $results = Invoke-ScriptAnalyzer `
+            -Path src/localforge/dashboard/static/setup-worker.ps1 `
+            -Severity @('Warning', 'Error') `
+            -ReportSummary
+
+          if ($results) {
+            $results | Format-List RuleName, Severity, Line, Column, Message
+            Write-Host "::error::PSScriptAnalyzer found $($results.Count) issue(s) in dashboard/static/setup-worker.ps1"
             exit 1
           }
           Write-Host "PSScriptAnalyzer: no warnings or errors found."
@@ -78,8 +100,9 @@ jobs:
   # --------------------------------------------------------------------------
   # 3. Parity check — verifies that every LOCALFORGE_* env var added to one
   #    platform's script is mirrored in all others (or explicitly declared
-  #    platform-specific), and that shared constants (port, repo URL,
-  #    registration endpoint, Python version floor) are consistent.
+  #    platform-specific), that shared constants (port, repo URL, registration
+  #    endpoint, Python version floor) are consistent, and that each script
+  #    references the correct platform-specific env-file path.
   # --------------------------------------------------------------------------
   parity:
     name: Cross-platform env-var parity
@@ -93,3 +116,36 @@ jobs:
 
       - name: Run parity checker
         run: python scripts/check_script_parity.py
+
+  # --------------------------------------------------------------------------
+  # 4. CI gate — single required status that aggregates all three jobs above.
+  #    Branch protection rules should require this job, not the individual
+  #    ones, so adding new lint jobs in the future never requires updating
+  #    branch protection settings.
+  # --------------------------------------------------------------------------
+  ci-gate:
+    name: All script checks passed
+    runs-on: ubuntu-latest
+    needs: [shellcheck, psscriptanalyzer, parity]
+    # Run even when upstream jobs are skipped (e.g. on a non-script PR) so
+    # the gate always has a result for branch protection to evaluate.
+    if: always()
+    steps:
+      - name: Check upstream results
+        run: |
+          results='${{ toJSON(needs) }}'
+          echo "Upstream job results: $results"
+
+          failed=$(echo "$results" | python3 -c "
+          import sys, json
+          needs = json.load(sys.stdin)
+          failed = [name for name, v in needs.items() if v['result'] not in ('success', 'skipped')]
+          print('\n'.join(failed))
+          ")
+
+          if [ -n "$failed" ]; then
+            echo "::error::The following checks failed or were cancelled:"
+            echo "$failed"
+            exit 1
+          fi
+          echo "All checks passed or were skipped (no script files changed)."
