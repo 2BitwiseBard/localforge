@@ -1,0 +1,72 @@
+id: validate-templates
+name: Workflow Template Schema Health Check
+description: >
+  Detects recent changes to workflow templates or schema.py, reads the schema
+  definition, and uses the local model to identify compatibility issues between
+  the Python models and the YAML templates. Complements the deterministic
+  yaml-schema-validator agent with an LLM-based analysis layer.
+variables:
+  directory: ""
+  schema_path: "src/localforge/workflows/schema.py"
+
+nodes:
+  - id: get-recent-changes
+    type: tool
+    config:
+      tool_name: git_context
+      arguments:
+        directory: "{variables.directory}"
+        include_diff: true
+        log_count: 10
+
+  - id: read-schema
+    type: tool
+    config:
+      tool_name: file_qa
+      arguments:
+        file_path: "{variables.schema_path}"
+        question: >
+          What node types are supported? What required config keys does each
+          node type need? What placeholder syntax do templates use?
+
+  - id: check-compatibility
+    type: prompt
+    config:
+      template: |
+        You are a workflow schema compatibility checker. Your job is to
+        determine whether recent changes to schema.py could silently break
+        any existing YAML workflow templates.
+
+        ## Schema Definition
+        {node.read-schema}
+
+        ## Recent Git Changes
+        {node.get-recent-changes}
+
+        Analyse the above and report:
+        1. Node type additions, removals, or renames in schema.py.
+        2. Required config keys that were added or removed per node type.
+        3. Changes to placeholder syntax — "node.<id>", "variables.<name>", or "input" references.
+        4. Specific templates mentioned in the diff that may be at risk.
+        5. An overall verdict — COMPATIBLE or BREAKING — with a one-line
+           justification.
+
+        If no schema.py changes appear in the diff, state that templates are
+        likely unaffected and recommend running the yaml-schema-validator
+        agent as a final check.
+
+  - id: save-report
+    type: tool
+    config:
+      tool_name: save_note
+      arguments:
+        topic: "schema-compat-check"
+        content: "{node.check-compatibility}"
+
+edges:
+  - from_id: get-recent-changes
+    to_id: check-compatibility
+  - from_id: read-schema
+    to_id: check-compatibility
+  - from_id: check-compatibility
+    to_id: save-report
