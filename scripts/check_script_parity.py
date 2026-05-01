@@ -6,14 +6,17 @@ Run from the repository root:
     python scripts/check_script_parity.py
 
 Checks:
-  1. ShellCheck-style: all bash scripts have 'set -euo pipefail'
+  1. Safe-shell mode: bash scripts have 'set -euo pipefail'; PowerShell has
+     '$ErrorActionPreference = "Stop"'
   2. Env-var parity: every LOCALFORGE_* variable written to an env file in
      one script appears in all others (unless declared platform-specific below)
   3. Shared constants: default port, git repo URL, and registration endpoint
      are identical across all four scripts
-  4. CLI argument parity: bash scripts share a consistent set of CLI flags;
+  4. Env-file paths: each script references the expected platform-specific
+     path pattern for its persistent env file
+  5. CLI argument parity: bash scripts share a consistent set of CLI flags;
      the PS1 script has equivalent named parameters
-  5. Platform registration: each script's registration payload contains the
+  6. Platform registration: each script's registration payload contains the
      correct platform identifier string
 
 Exit codes:
@@ -72,6 +75,18 @@ SHARED_CONSTANTS: dict[str, str] = {
 }
 
 # ---------------------------------------------------------------------------
+# Platform-specific env-file path patterns
+#
+# At least one substring from each list must appear in that platform's script.
+# These anchor the persistent credential file to the correct OS location so
+# a typo or copy-paste from another platform is caught immediately.
+# ---------------------------------------------------------------------------
+ENV_FILE_PATTERNS: dict[str, list[str]] = {
+    "linux":   [".config/localforge"],
+    "darwin":  ["Library/Application Support/LocalForge"],
+    "android": [".localforge"],
+    # Windows builds the path via Join-Path rather than a string literal
+    "windows": [r'Join-Path $InstallDir "env.ps1"', r"LocalForge\env.ps1"],
 # CLI argument parity
 #
 # Every bash script must handle each of these flags. The PS1 script must
@@ -146,6 +161,42 @@ def _check_safe_shell(platform: str, text: str) -> list[str]:
             f"SAFE-SHELL: {SCRIPTS[platform].name} is missing 'set -euo pipefail'"
         ]
     return []
+
+
+def _check_ps_error_action(platform: str, text: str) -> list[str]:
+    """Verify the PowerShell script sets $ErrorActionPreference = 'Stop'."""
+    if platform not in PS_SCRIPTS:
+        return []
+    if (
+        '$ErrorActionPreference = "Stop"' not in text
+        and "$ErrorActionPreference = 'Stop'" not in text
+    ):
+        return [
+            f"SAFE-SHELL: {SCRIPTS[platform].name} is missing "
+            f"'$ErrorActionPreference = \"Stop\"' (PowerShell safe-mode)"
+        ]
+    return []
+
+
+def _check_env_file_paths(scripts_text: dict[str, str]) -> list[str]:
+    """
+    Verify each script references the correct platform-specific env-file path.
+
+    Catches copy-paste errors where a path from another platform's script
+    ends up in the wrong place, and flags drift when the expected location
+    changes without updating this registry.
+    """
+    errors: list[str] = []
+    for platform, patterns in ENV_FILE_PATTERNS.items():
+        text = scripts_text.get(platform, "")
+        if not any(p in text for p in patterns):
+            errors.append(
+                f"ENV-PATH: {SCRIPTS[platform].name} ({platform}) does not reference "
+                f"the expected env-file path. Expected one of: {patterns!r}.\n"
+                f"         If the path changed intentionally, update ENV_FILE_PATTERNS "
+                f"in {Path(__file__).name}."
+            )
+    return errors
 
 
 def _check_env_parity(env_vars: dict[str, set[str]]) -> list[str]:
@@ -259,6 +310,10 @@ def run_checks() -> list[str]:
     # --- per-script structural checks ---------------------------------------
     for platform, text in scripts_text.items():
         errors.extend(_check_safe_shell(platform, text))
+        errors.extend(_check_ps_error_action(platform, text))
+
+    # --- env-file path patterns ---------------------------------------------
+    errors.extend(_check_env_file_paths(scripts_text))
 
     # --- cross-script env-var parity ----------------------------------------
     env_vars = {p: _find_localforge_vars(t) for p, t in scripts_text.items()}
@@ -294,6 +349,9 @@ def main() -> int:
         for label, value in SHARED_CONSTANTS.items():
             print(f"  {label}: {value!r}")
         print()
+        print("Env-file path patterns verified per platform:")
+        for platform, patterns in ENV_FILE_PATTERNS.items():
+            print(f"  {platform:8s}  {patterns[0]!r}")
         print("CLI args verified in all bash scripts:")
         for arg in sorted(BASH_CLI_ARGS):
             print(f"  bash: {arg}")
