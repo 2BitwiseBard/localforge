@@ -1,0 +1,71 @@
+# LocalForge agent configuration.
+#
+# The supervisor reads this file on startup and spawns every enabled agent.
+# Copy this file to your data directory (~/.local/share/localforge/agents.yaml)
+# to persist custom settings across reinstalls, or set LOCALFORGE_AGENTS_CONFIG
+# to point at a different path.
+#
+# Trigger types
+# -------------
+# cron          schedule: "*/30 * * * *"   (standard cron expression)
+# file_watch    paths: [...]  patterns: ["*.py"]  debounce: 10  (seconds)
+# manual        dashboard "Run now" button only
+# chain         target: <agent-id>  (fires after another agent completes)
+
+supervisor:
+  workers: 2          # task-queue worker threads
+  max_errors: 5       # error-budget: failures before auto-pause
+  error_window: 300   # seconds over which errors are counted
+
+agents:
+
+  # ---------------------------------------------------------------------------
+  # YAML Schema Validator
+  # Watches schema.py and the templates directory; validates every workflow
+  # YAML against WorkflowDef on each change and on a nightly sweep.
+  # Trust level MONITOR means it can only read data — no writes to tools.
+  # ---------------------------------------------------------------------------
+  yaml-schema-validator:
+    type: yaml-schema-validator
+    enabled: true
+    trust: monitor
+    schedule: "0 3 * * *"       # nightly sweep at 03:00
+    triggers:
+      - type: file_watch
+        paths:
+          - src/localforge/workflows/schema.py
+          - src/localforge/workflows/templates
+        patterns:
+          - "*.py"
+          - "*.yaml"
+          - "*.yml"
+        debounce: 15             # seconds — avoids thrash during rapid edits
+    config:
+      watch_dirs:
+        - src/localforge/workflows/templates
+
+  # ---------------------------------------------------------------------------
+  # Code Watcher
+  # Monitors git changes and saves a review note on each commit to the repo.
+  # ---------------------------------------------------------------------------
+  code-watcher:
+    type: code-watcher
+    enabled: false               # enable once a local LLM backend is configured
+    trust: safe
+    schedule: "*/15 * * * *"
+    config:
+      watch_dirs:
+        - src/
+      max_diff_lines: 500
+
+  # ---------------------------------------------------------------------------
+  # Research Agent
+  # Processes queued research tasks and saves findings to the knowledge graph.
+  # ---------------------------------------------------------------------------
+  research-agent:
+    type: research-agent
+    enabled: false               # enable once a local LLM backend is configured
+    trust: safe
+    schedule: "*/30 * * * *"
+    config:
+      max_sources: 5

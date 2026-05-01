@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Pre-commit hook: static analysis for worker enrollment scripts.
+# Pre-commit hook: static analysis for workflow templates and worker scripts.
 #
-# Triggers whenever any setup-worker* script or check_script_parity.py is
-# staged.  Runs ShellCheck, PSScriptAnalyzer (if pwsh is available), and the
-# cross-platform parity checker — the same three gates as the CI workflow.
+# Gate 0 — YAML schema validation (schema.py or templates/*.yaml changed):
+#   Runs scripts/validate_templates.py to ensure every workflow YAML still
+#   passes WorkflowDef.validate() after schema or template edits.
+#
+# Gates 1-3 — Worker-script analysis (setup-worker* or parity script staged):
+#   ShellCheck, PSScriptAnalyzer (if pwsh available), cross-platform parity.
 #
 # Install (one-time):
 #   bash scripts/install-hooks.sh
@@ -25,25 +28,72 @@ WORKER_GLOBS=(
     "src/localforge/dashboard/static/setup-worker.ps1"
 )
 
+# Files whose change should trigger YAML template validation
+SCHEMA_GLOBS=(
+    "src/localforge/workflows/schema.py"
+    "src/localforge/workflows/templates/"
+    "src/localforge/agents.yaml"
+)
+
 # ------------------------------------------------------------------
-# Determine whether any watched file is staged
+# Determine which checks to run based on what is staged
 # ------------------------------------------------------------------
-TRIGGERED=0
+WORKER_TRIGGERED=0
 for f in "${WORKER_GLOBS[@]}"; do
     if git diff --cached --name-only | grep -qF "$f"; then
-        TRIGGERED=1
+        WORKER_TRIGGERED=1
         break
     fi
 done
 
-if [[ $TRIGGERED -eq 0 ]]; then
+SCHEMA_TRIGGERED=0
+for f in "${SCHEMA_GLOBS[@]}"; do
+    if git diff --cached --name-only | grep -qF "$f"; then
+        SCHEMA_TRIGGERED=1
+        break
+    fi
+done
+
+if [[ $WORKER_TRIGGERED -eq 0 && $SCHEMA_TRIGGERED -eq 0 ]]; then
     exit 0
 fi
 
-echo "pre-commit: worker script changes staged — running analysis"
-echo "============================================================"
+echo "pre-commit: staged changes require static analysis"
+echo "==================================================="
 
 FAILED=0
+
+# ------------------------------------------------------------------
+# 0. YAML workflow template validation (schema.py or templates changed)
+# ------------------------------------------------------------------
+if [[ $SCHEMA_TRIGGERED -eq 1 ]]; then
+    echo ""
+    echo "YAML schema validation"
+    echo "----------------------"
+    if python3 scripts/validate_templates.py; then
+        : # validator prints its own OK summary
+    else
+        echo "  FAIL  one or more workflow templates are invalid"
+        FAILED=1
+    fi
+fi
+
+if [[ $WORKER_TRIGGERED -eq 0 ]]; then
+    # Nothing else to check — skip straight to the result block
+    echo ""
+    echo "==================================================="
+    if [[ $FAILED -ne 0 ]]; then
+        echo "pre-commit: FAILED — fix the issues above before committing."
+        echo "Emergency bypass: git commit --no-verify"
+        exit 1
+    fi
+    echo "pre-commit: all checks passed."
+    exit 0
+fi
+
+echo ""
+echo "Worker-script analysis"
+echo "----------------------"
 
 # ------------------------------------------------------------------
 # 1. ShellCheck — bash scripts
@@ -144,7 +194,7 @@ fi
 # Result
 # ------------------------------------------------------------------
 echo ""
-echo "============================================================"
+echo "==================================================="
 if [[ $FAILED -ne 0 ]]; then
     echo "pre-commit: FAILED — fix the issues above before committing."
     echo "Emergency bypass: git commit --no-verify"
