@@ -11,12 +11,17 @@ Checks:
      one script appears in all others (unless declared platform-specific below)
   3. Shared constants: default port, git repo URL, and registration endpoint
      are identical across all four scripts
+  4. CLI argument parity: bash scripts share a consistent set of CLI flags;
+     the PS1 script has equivalent named parameters
+  5. Platform registration: each script's registration payload contains the
+     correct platform identifier string
 
 Exit codes:
     0  all checks passed
     1  one or more issues found (details printed to stdout)
 """
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -66,13 +71,66 @@ SHARED_CONSTANTS: dict[str, str] = {
     "minimum Python version":   "3.11",
 }
 
+# ---------------------------------------------------------------------------
+# CLI argument parity
+#
+# Every bash script must handle each of these flags. The PS1 script must
+# expose the listed named parameters (PowerShell uses `-Name` style).
+# Add a new entry here whenever a new flag is added to any script.
+# ---------------------------------------------------------------------------
+BASH_CLI_ARGS: frozenset[str] = frozenset([
+    "--hub",
+    "--key",
+    "--token",
+    "--port",
+    "--repo",
+    "--help",
+])
+
+# PowerShell parameters are declared as $Name inside the param() block.
+# We search for the variable-form (e.g. "$Hub") which appears in both the
+# param declaration and all usages, so it's unambiguous.
+PS1_PARAMS: frozenset[str] = frozenset([
+    "$Hub",
+    "$Token",
+    "$Port",
+    "$GitRepo",
+])
+
+# ---------------------------------------------------------------------------
+# Platform registration markers
+#
+# Each script embeds a unique platform string in its POST /api/mesh/register
+# payload. The bash scripts use a Python heredoc with json.dumps literals;
+# the PS1 uses a PowerShell hashtable. We search for the minimal substring
+# that unambiguously identifies the correct platform value.
+# ---------------------------------------------------------------------------
+PLATFORM_REGISTRATION: dict[str, str] = {
+    "linux":   '"platform": "linux"',
+    "darwin":  '"platform": "darwin"',
+    "android": '"platform": "android"',
+    # PS1 hashtable syntax: `platform = "win32"` (spacing may vary)
+    "windows": '"win32"',
+}
+
 # Regex: match any LOCALFORGE_WORD token in a file
 _LOCALFORGE_RE = re.compile(r"LOCALFORGE_([A-Z][A-Z0-9_]*)")
+
+# True when running inside GitHub Actions
+_IN_CI = os.getenv("GITHUB_ACTIONS") == "true"
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _emit(msg: str) -> None:
+    """Print an error line, prefixed with a GHA annotation when in CI."""
+    if _IN_CI:
+        print(f"::error::{msg}")
+    else:
+        print(f"  {msg}")
+
 
 def _find_localforge_vars(text: str) -> set[str]:
     """Return the set of 'LOCALFORGE_FOO' names that appear in *text*."""
@@ -131,6 +189,54 @@ def _check_constants(scripts_text: dict[str, str]) -> list[str]:
     return errors
 
 
+def _check_cli_args(scripts_text: dict[str, str]) -> list[str]:
+    """
+    Verify CLI argument consistency.
+
+    All bash scripts must handle every flag in BASH_CLI_ARGS.
+    The PS1 script must declare every parameter in PS1_PARAMS.
+    This catches drift where a new flag is added on one platform but
+    forgotten on the others.
+    """
+    errors: list[str] = []
+
+    for platform in sorted(BASH_SCRIPTS):
+        text = scripts_text.get(platform, "")
+        for arg in sorted(BASH_CLI_ARGS):
+            if arg not in text:
+                errors.append(
+                    f"CLI-ARGS: '{arg}' not found in "
+                    f"{SCRIPTS[platform].name} ({platform})."
+                )
+
+    ps1_text = scripts_text.get("windows", "")
+    for param in sorted(PS1_PARAMS):
+        if param not in ps1_text:
+            errors.append(
+                f"CLI-ARGS: PowerShell param '{param}' not found in "
+                f"{SCRIPTS['windows'].name} (windows)."
+            )
+
+    return errors
+
+
+def _check_platform_strings(scripts_text: dict[str, str]) -> list[str]:
+    """
+    Verify each script embeds the correct platform identifier in its
+    POST /api/mesh/register payload. Catches accidental copy-paste where
+    a script reports the wrong platform to the hub.
+    """
+    errors: list[str] = []
+    for platform, marker in PLATFORM_REGISTRATION.items():
+        text = scripts_text.get(platform, "")
+        if marker not in text:
+            errors.append(
+                f"PLATFORM: Expected registration marker {marker!r} not found "
+                f"in {SCRIPTS[platform].name} ({platform})."
+            )
+    return errors
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -161,6 +267,12 @@ def run_checks() -> list[str]:
     # --- shared constant consistency ----------------------------------------
     errors.extend(_check_constants(scripts_text))
 
+    # --- CLI argument consistency -------------------------------------------
+    errors.extend(_check_cli_args(scripts_text))
+
+    # --- platform registration string ---------------------------------------
+    errors.extend(_check_platform_strings(scripts_text))
+
     return errors
 
 
@@ -181,15 +293,29 @@ def main() -> int:
         print("Shared constants verified in all scripts:")
         for label, value in SHARED_CONSTANTS.items():
             print(f"  {label}: {value!r}")
+        print()
+        print("CLI args verified in all bash scripts:")
+        for arg in sorted(BASH_CLI_ARGS):
+            print(f"  bash: {arg}")
+        print("PS1 parameters verified in windows script:")
+        for param in sorted(PS1_PARAMS):
+            print(f"  ps1:  {param}")
+        print()
+        print("Platform registration markers verified:")
+        for platform, marker in PLATFORM_REGISTRATION.items():
+            print(f"  {platform:8s}  {marker!r}")
         return 0
 
     print(f"{len(errors)} issue(s) found:\n")
     for i, err in enumerate(errors, 1):
-        print(f"  {i}. {err}")
+        _emit(err)
     print()
     print("To fix env-var gaps: add the missing variable to the flagged script,")
     print("or — if it is intentionally absent on that platform — add an entry to")
     print(f"PLATFORM_SPECIFIC in {Path(__file__).name}.")
+    print()
+    print("To fix CLI-arg gaps: add the missing flag/param to the flagged script,")
+    print(f"or update BASH_CLI_ARGS / PS1_PARAMS in {Path(__file__).name}.")
     return 1
 
 
