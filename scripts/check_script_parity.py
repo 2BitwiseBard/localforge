@@ -87,6 +87,9 @@ ENV_FILE_PATTERNS: dict[str, list[str]] = {
     "android": [".localforge"],
     # Windows builds the path via Join-Path rather than a string literal
     "windows": [r'Join-Path $InstallDir "env.ps1"', r"LocalForge\env.ps1"],
+}
+
+# ---------------------------------------------------------------------------
 # CLI argument parity
 #
 # Every bash script must handle each of these flags. The PS1 script must
