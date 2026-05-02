@@ -41,6 +41,7 @@ agents:
           - "*.yml"
         debounce: 15             # seconds — avoids thrash during rapid edits
     config:
+      repo_root: "auto"          # scan entire git repo; matches CI behaviour
       watch_dirs:
         - src/localforge/workflows/templates
 

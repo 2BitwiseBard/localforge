@@ -6,10 +6,16 @@ Triggered by:
   - manual trigger from the dashboard
 
 On each run:
-  1. Discovers every .yaml/.yml file under configured ``watch_dirs``.
+  1. Discovers every .yaml/.yml file under the configured scan scope.
   2. Filters to files whose top-level dict contains a ``nodes`` key.
   3. Loads via WorkflowDef.from_yaml() and calls WorkflowDef.validate().
   4. Saves a summary note; fires a warning notification for any failures.
+
+Scan scope (configured via ``repo_root`` or ``watch_dirs``):
+  - ``repo_root: "auto"`` (recommended) — auto-detects the git repository root
+    and scans the entire tree, matching CI behaviour in validate_templates.py.
+  - ``repo_root: "/path/to/repo"`` — scan from a specific directory.
+  - ``watch_dirs: [...]`` (legacy) — scan only the listed directories.
 
 Example agents.yaml entry::
 
@@ -22,14 +28,15 @@ Example agents.yaml entry::
           - src/localforge/workflows/schema.py
           - src/localforge/workflows/templates
       config:
-        watch_dirs:
-          - src/localforge/workflows/templates
+        repo_root: "auto"
 """
 
 import time
 from pathlib import Path
 
 import yaml
+
+from localforge.workflows.scanner import discover_workflow_yamls, resolve_repo_root
 
 from .base import BaseAgent, TrustLevel
 from .supervisor import register_agent
@@ -52,14 +59,9 @@ class YamlSchemaValidator(BaseAgent):
     async def run(self):
         from localforge.workflows.schema import WorkflowDef
 
-        watch_dirs = self.config.get("watch_dirs", [])
-        if not watch_dirs:
-            # Default to the built-in templates directory relative to this file
-            watch_dirs = [str(Path(__file__).parent.parent / "workflows" / "templates")]
-
-        yaml_files = self._discover_workflow_yamls(watch_dirs)
+        yaml_files = self._collect_yaml_files()
         if not yaml_files:
-            self.state.log("No workflow YAML files found in watch_dirs")
+            self.state.log("No workflow YAML files found")
             return
 
         self.state.log(f"Validating {len(yaml_files)} workflow template(s)…")
@@ -142,8 +144,27 @@ class YamlSchemaValidator(BaseAgent):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _discover_workflow_yamls(self, watch_dirs: list[str]) -> list[Path]:
-        """Return all .yaml/.yml files under watch_dirs that look like workflow defs."""
+    def _collect_yaml_files(self) -> list[Path]:
+        """Return the list of workflow YAML files to validate.
+
+        When ``repo_root`` is configured the entire repository tree is scanned
+        (matching CI behaviour).  Otherwise falls back to the legacy
+        ``watch_dirs`` list.
+        """
+        repo_root = self.config.get("repo_root")
+        if repo_root:
+            root = resolve_repo_root(str(repo_root))
+            self.state.log(f"Scanning repo root: {root}")
+            return discover_workflow_yamls(root)
+
+        # Legacy path: scan only the configured watch_dirs.
+        watch_dirs = self.config.get("watch_dirs", [])
+        if not watch_dirs:
+            watch_dirs = [str(Path(__file__).parent.parent / "workflows" / "templates")]
+        return self._discover_workflow_yamls_legacy(watch_dirs)
+
+    def _discover_workflow_yamls_legacy(self, watch_dirs: list[str]) -> list[Path]:
+        """Scan a list of directories (original behaviour before repo_root)."""
         results: list[Path] = []
         seen: set[Path] = set()
         for dir_str in watch_dirs:
@@ -151,8 +172,7 @@ class YamlSchemaValidator(BaseAgent):
             if not root.exists():
                 self.state.log(f"Warning: watch_dir does not exist: {root}")
                 continue
-            candidates = sorted(root.rglob("*.yaml")) + sorted(root.rglob("*.yml"))
-            for path in candidates:
+            for path in sorted(root.rglob("*.yaml")) + sorted(root.rglob("*.yml")):
                 if path in seen:
                     continue
                 seen.add(path)

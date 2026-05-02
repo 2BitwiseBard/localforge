@@ -200,3 +200,65 @@ class TestSchemaValidationLogic:
         wf = self._make_wf([{"id": "n", "type": "teleport", "config": {}}])
         errors = wf.validate()
         assert any("unknown type 'teleport'" in e for e in errors)
+
+
+class TestYamlSchemaValidatorDiscovery:
+    """Tests for the scanner helpers used by yaml_schema_validator and CI."""
+
+    def test_discover_finds_bundled_templates(self):
+        """discover_workflow_yamls on the repo root finds all four bundled templates."""
+        from localforge.workflows.scanner import discover_workflow_yamls
+
+        found = discover_workflow_yamls(_REPO_ROOT)
+        names = {p.name for p in found}
+        assert {"deep-analyze.yaml", "full-review.yaml",
+                "onboard-project.yaml", "validate-templates.yaml"}.issubset(names)
+
+    def test_discover_ignores_non_workflow_yaml(self, tmp_path):
+        """Files without a top-level 'nodes' key are skipped."""
+        from localforge.workflows.scanner import discover_workflow_yamls
+
+        (tmp_path / "config.yaml").write_text("key: value\n")
+        (tmp_path / "workflow.yaml").write_text(
+            "id: w\nname: w\nnodes:\n"
+            "  - id: a\n    type: prompt\n    config:\n      template: hi\n"
+        )
+        found = discover_workflow_yamls(tmp_path)
+        assert len(found) == 1
+        assert found[0].name == "workflow.yaml"
+
+    def test_discover_skips_unparseable_yaml(self, tmp_path):
+        """Malformed YAML files do not raise — they are silently skipped."""
+        from localforge.workflows.scanner import discover_workflow_yamls
+
+        (tmp_path / "broken.yaml").write_text("nodes: [\n  unclosed")
+        found = discover_workflow_yamls(tmp_path)
+        assert found == []
+
+    def test_resolve_repo_root_auto_returns_repo(self):
+        """resolve_repo_root('auto') returns the directory containing src/localforge."""
+        from localforge.workflows.scanner import resolve_repo_root
+
+        root = resolve_repo_root("auto")
+        assert root.is_dir()
+        assert (root / "src" / "localforge").is_dir()
+
+    def test_resolve_repo_root_literal_path(self, tmp_path):
+        """resolve_repo_root accepts a literal path string."""
+        from localforge.workflows.scanner import resolve_repo_root
+
+        result = resolve_repo_root(str(tmp_path))
+        assert result == tmp_path.resolve()
+
+    def test_discover_repo_root_all_templates_valid(self):
+        """Every template found via repo-root scan passes schema validation."""
+        from localforge.workflows.scanner import discover_workflow_yamls
+        from localforge.workflows.schema import WorkflowDef
+
+        for path in discover_workflow_yamls(_REPO_ROOT):
+            wf = WorkflowDef.from_yaml(path)
+            errors = wf.validate()
+            assert not errors, (
+                f"{path.name} failed when discovered via repo root: "
+                + ", ".join(errors)
+            )
