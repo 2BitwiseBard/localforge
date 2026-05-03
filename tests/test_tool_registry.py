@@ -27,11 +27,7 @@ from localforge.tools import (  # noqa: F401
     web,
 )
 
-<<<<<<< HEAD
-EXPECTED_TOOL_COUNT = 113  # 112 + validate_yaml_template (yaml-schema-validator)
-=======
 EXPECTED_TOOL_COUNT = 121  # 113 prior + 8 fs/shell tools
->>>>>>> d4a5583 (test: cover fs and shell tools, bump tool registry count)
 
 
 def test_all_tools_registered():
