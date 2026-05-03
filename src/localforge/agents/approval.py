@@ -37,6 +37,10 @@ APPROVAL_REQUIRED = {
     "delete_session",
     "set_generation_params",
     "reload_config",
+    "fs_write",
+    "fs_edit",
+    "fs_delete",
+    "shell_exec",
 }
 
 SCHEMA = """

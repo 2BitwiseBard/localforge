@@ -272,3 +272,18 @@ gateway:
   #   "
   vapid_public_key: ""   # URL-safe base64 uncompressed P-256 public key
   vapid_private_key: ""  # URL-safe base64 PEM-encoded P-256 private key
+
+# Filesystem & shell tools — workspace allowlist for fs_*/shell_exec.
+# Defaults to ["~/Development"] when omitted. An empty list disables
+# these tools entirely. Paths are resolved with realpath, so symlinks
+# and `..` traversal cannot escape the listed roots.
+# tool_workspaces:
+#   - ~/Development
+#   - ~/scratch
+
+# Extra regex patterns (re.search) that block shell_exec BEFORE approval
+# is requested. Built-in defaults already cover sudo, rm -rf /, curl|bash,
+# fork bomb, dd to a block device, mkfs, etc. Add project-specific extras here.
+# shell_deny:
+#   - "\\bnpm\\s+publish\\b"
+#   - "\\bgit\\s+push\\s+.*--force\\b"
