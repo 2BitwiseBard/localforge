@@ -90,6 +90,10 @@ TRUST_WHITELISTS: dict[TrustLevel, set[str]] = {
         "compute_status",
         "compute_route",
         "mesh_dispatch",
+        "fs_read",
+        "fs_list",
+        "fs_glob",
+        "fs_grep",
     },
     TrustLevel.FULL: set(),  # All tools allowed
 }

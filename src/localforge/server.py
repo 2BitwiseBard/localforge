@@ -38,6 +38,7 @@ from localforge.tools import (  # noqa: F401
     config_tools,
     context,
     diff,
+    filesystem,
     generation,
     git,
     infrastructure,
@@ -49,6 +50,7 @@ from localforge.tools import (  # noqa: F401
     rag,
     semantic,
     sessions,
+    shell,
     training,
     web,
 )
