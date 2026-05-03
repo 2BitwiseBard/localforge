@@ -147,6 +147,7 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
         import localforge.agents.index_maintainer  # noqa: F401
         import localforge.agents.news_agent  # noqa: F401
         import localforge.agents.research_agent  # noqa: F401
+        import localforge.agents.yaml_schema_validator  # noqa: F401
         from localforge.agents.supervisor import AgentSupervisor
 
         gateway_url = os.environ.get(
