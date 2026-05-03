@@ -64,7 +64,7 @@ agents = [
 
 # Web search and research tools
 web = [
-    "ddgs~=2.0",
+    "ddgs~=9.0",
     "trafilatura~=2.0",
 ]
 
