@@ -16,8 +16,10 @@ LocalForge includes an autonomous agent framework with trust-gated execution.
 ## Trust Levels
 
 - **monitor** — read-only. Can check status, search, and report. Also has `compute_status`/`compute_route`.
-- **safe** — can read files, make API calls, save notes, dispatch to mesh workers. Cannot modify code or run shell commands.
-- **full** — unrestricted, but destructive actions (swap_model, unload_model, delete_index, etc.) go through the **approval queue**. A human must approve via the dashboard before the action executes.
+- **safe** — can read files (`fs_read`, `fs_list`, `fs_glob`, `fs_grep`), make API calls, save notes, dispatch to mesh workers. Cannot modify code or run shell commands.
+- **full** — unrestricted, but destructive actions (`swap_model`, `unload_model`, `delete_index`, `fs_write`, `fs_edit`, `fs_delete`, `shell_exec`, etc.) go through the **approval queue**. A human must approve via the dashboard before the action executes. `shell_exec` additionally checks a configurable denylist (`shell_deny` in `config.yaml`) and rejects matches before the approval prompt is even surfaced.
+
+Filesystem and shell tools are sandboxed to the directories listed in `tool_workspaces` (see `docs/configuration.md`). Default: `["~/Development"]`.
 
 ## Creating a Custom Agent
 

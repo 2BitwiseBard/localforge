@@ -6,7 +6,21 @@ Last updated: 2026-04-27. Completed items stripped; see git log for history.
 
 ## Open Items
 
-### P2 — Code Quality
+- [x] **Add filesystem and shell MCP tools (`fs_*`, `shell_exec`)**
+  - New modules `tools/filesystem.py` and `tools/shell.py`
+  - Sandboxed to `tool_workspaces` (default `~/Development`); paths resolved via `os.path.realpath` so `..` and symlinks can't escape
+  - SAFE trust: `fs_read`, `fs_list`, `fs_glob`, `fs_grep`
+  - FULL trust + approval: `fs_write`, `fs_edit`, `fs_delete`, `shell_exec`
+  - `shell_exec` denylist (sudo, rm -rf /, curl|bash, fork bomb, dd to block device, mkfs) rejects before approval prompt; extend via `shell_deny:` in config
+  - Caveat (tracked separately): the approval gate runs in `BaseAgent.call_tool`; CLIs and external MCP clients still bypass it. A gateway-level approval gate would be the next step.
+
+- [x] **Fix keyboard-shortcuts overlay (`?`) rendering**
+  - HTML at `dashboard/static/index.html` uses `class="modal-overlay"` but the `[hidden]` attribute wasn't honored because no `.modal-overlay[hidden] { display: none }` rule existed
+  - Fixed in PR #10's ruff/format sweep alongside `.modal-box` styling
+
+---
+
+## P2 — Code Quality / Maintainability
 
 - [ ] **Replace bare `except Exception` with specific catches**
   - 176 instances across 37 files (51 in routes.py, many in supervisor.py, gateway.py)

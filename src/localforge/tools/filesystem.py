@@ -30,6 +30,7 @@ GREP_DEFAULT_MAX = 100
 # fs_read
 # ---------------------------------------------------------------------------
 
+
 @tool_handler(
     name="fs_read",
     description=(
@@ -94,6 +95,7 @@ async def fs_read(args: dict) -> str:
 # fs_list
 # ---------------------------------------------------------------------------
 
+
 @tool_handler(
     name="fs_list",
     description=(
@@ -145,11 +147,11 @@ async def fs_list(args: dict) -> str:
 # fs_glob
 # ---------------------------------------------------------------------------
 
+
 @tool_handler(
     name="fs_glob",
     description=(
-        "Glob a pattern (e.g. '**/*.py') under a workspace root. Returns one "
-        "path per line, capped at 500 entries."
+        "Glob a pattern (e.g. '**/*.py') under a workspace root. Returns one path per line, capped at 500 entries."
     ),
     schema={
         "type": "object",
@@ -193,6 +195,7 @@ async def fs_glob(args: dict) -> str:
 # ---------------------------------------------------------------------------
 # fs_grep
 # ---------------------------------------------------------------------------
+
 
 async def _ripgrep(pattern: str, path: Path, glob: str | None, max_count: int) -> str:
     rg = shutil.which("rg")
@@ -284,6 +287,7 @@ async def fs_grep(args: dict) -> str:
 # fs_write
 # ---------------------------------------------------------------------------
 
+
 @tool_handler(
     name="fs_write",
     description=(
@@ -324,6 +328,7 @@ async def fs_write(args: dict) -> str:
 # ---------------------------------------------------------------------------
 # fs_edit
 # ---------------------------------------------------------------------------
+
 
 @tool_handler(
     name="fs_edit",
@@ -369,10 +374,7 @@ async def fs_edit(args: dict) -> str:
     if occurrences == 0:
         return f"Error: old_string not found in {path}"
     if occurrences > 1 and not replace_all:
-        return (
-            f"Error: old_string found {occurrences} times in {path}. "
-            "Make it unique or pass replace_all=true."
-        )
+        return f"Error: old_string found {occurrences} times in {path}. Make it unique or pass replace_all=true."
 
     if replace_all:
         updated = original.replace(old_string, new_string)
@@ -391,12 +393,10 @@ async def fs_edit(args: dict) -> str:
 # fs_delete
 # ---------------------------------------------------------------------------
 
+
 @tool_handler(
     name="fs_delete",
-    description=(
-        "Delete a single file inside a workspace. Refuses directories. "
-        "Requires approval at FULL trust."
-    ),
+    description=("Delete a single file inside a workspace. Refuses directories. Requires approval at FULL trust."),
     schema={
         "type": "object",
         "properties": {

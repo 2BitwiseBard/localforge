@@ -20,14 +20,14 @@ MAX_TIMEOUT = 300
 OUTPUT_TRUNCATE = 4000
 
 SHELL_DENY_DEFAULTS: tuple[str, ...] = (
-    r"\brm\s+-rf\s+/(?!\w)",                       # rm -rf / and rm -rf /<space>
-    r"\bsudo\b",                                   # any sudo
-    r":\s*\(\s*\)\s*\{.*:\s*\|\s*:\s*&.*\}",       # fork bomb
-    r"curl\s+[^|]*\|\s*(bash|sh)\b",               # curl ... | bash
-    r"wget\s+[^|]*\|\s*(bash|sh)\b",               # wget ... | bash
-    r"\bdd\s+[^&|;]*\bof=/dev/(sd|nvme|hd)",       # dd to a block device
-    r">\s*/dev/(sd|nvme|hd)",                      # redirect to a block device
-    r"\bmkfs(\.\w+)?\b",                           # filesystem creation
+    r"\brm\s+-rf\s+/(?!\w)",  # rm -rf / and rm -rf /<space>
+    r"\bsudo\b",  # any sudo
+    r":\s*\(\s*\)\s*\{.*:\s*\|\s*:\s*&.*\}",  # fork bomb
+    r"curl\s+[^|]*\|\s*(bash|sh)\b",  # curl ... | bash
+    r"wget\s+[^|]*\|\s*(bash|sh)\b",  # wget ... | bash
+    r"\bdd\s+[^&|;]*\bof=/dev/(sd|nvme|hd)",  # dd to a block device
+    r">\s*/dev/(sd|nvme|hd)",  # redirect to a block device
+    r"\bmkfs(\.\w+)?\b",  # filesystem creation
 )
 
 
@@ -97,7 +97,9 @@ async def shell_exec(args: dict) -> str:
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            "/bin/bash", "-c", command,
+            "/bin/bash",
+            "-c",
+            command,
             cwd=str(cwd),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

@@ -150,3 +150,33 @@ See [Multi-Device Setup](multi-device.md) for adding workers to the mesh.
 ## Agent Configuration
 
 See `examples/agents.yaml.example` for agent setup (schedules, trust levels, triggers).
+
+## Filesystem & Shell Tools
+
+The `fs_*` and `shell_exec` tools let agents (and any MCP client of the gateway) read, edit, and run commands inside an allowlisted set of directories.
+
+```yaml
+# Directories that fs_* and shell_exec are allowed to touch.
+# Defaults to ["~/Development"] when omitted. An explicitly-empty list
+# disables these tools.
+tool_workspaces:
+  - ~/Development
+  - ~/scratch
+
+# Extra regex patterns that block shell_exec before approval is even
+# requested. These extend the built-in defaults (sudo, rm -rf /, curl|bash,
+# fork bomb, dd to a block device, mkfs, etc.). Patterns are passed to
+# re.search against the raw command string.
+shell_deny:
+  - "\\bnpm\\s+publish\\b"
+  - "\\bgit\\s+push\\s+.*--force\\b"
+```
+
+**Security model:**
+
+- **Workspace sandbox** — every path is resolved with `os.path.realpath` (collapses `..` AND symlinks) and must live inside a configured root. `..` traversal and symlink escapes both fail.
+- **Trust gating** — agents at SAFE trust can call `fs_read` / `fs_list` / `fs_glob` / `fs_grep`. `fs_write` / `fs_edit` / `fs_delete` / `shell_exec` are FULL-trust only and route through the approval queue (`agents/approval.py`).
+- **Shell denylist** — matches happen *before* any approval prompt; a banned pattern can never reach the human reviewer or the shell.
+- **Output caps** — `fs_read` caps at 2000 lines / 256 KiB; `shell_exec` truncates combined stdout+stderr at 4000 chars; `shell_exec` defaults to a 30 s timeout (max 300 s).
+
+**Caveat:** the approval gate runs inside `BaseAgent.call_tool`. CLIs and external MCP clients (e.g. `cli/local`) bypass it and can call destructive tools directly — keep workspace roots tight and the operator's API key secret. A gateway-level approval gate is tracked as future work.
