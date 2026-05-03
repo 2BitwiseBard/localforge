@@ -94,9 +94,7 @@ async def call_tool(name: str, arguments: dict):
     except httpx.HTTPStatusError as e:
         return _error(f"HTTP error from text-generation-webui: {e}")
     except httpx.ReadTimeout:
-        return _error(
-            "Request timed out (120s). The model may be overloaded or the prompt too long."
-        )
+        return _error("Request timed out (120s). The model may be overloaded or the prompt too long.")
     except (KeyError, IndexError) as e:
         return _error(f"Unexpected response format: {e}")
     except Exception as e:

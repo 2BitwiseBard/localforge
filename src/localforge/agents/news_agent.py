@@ -42,17 +42,19 @@ class NewsAgent(BaseAgent):
         seen[article_hash] = time.time()
         # Prune entries older than 48h
         cutoff = time.time() - (48 * 3600)
-        self.state.data["seen_hashes"] = {
-            k: v for k, v in seen.items() if v > cutoff
-        }
+        self.state.data["seen_hashes"] = {k: v for k, v in seen.items() if v > cutoff}
 
     async def _fetch_rss(self, feed_url: str, max_items: int = 5) -> list[dict]:
         """Fetch articles from an RSS feed via web_fetch + parsing."""
         try:
-            result = await self.call_tool("web_fetch", {
-                "url": feed_url,
-                "max_length": 10000,
-            }, timeout=15)
+            result = await self.call_tool(
+                "web_fetch",
+                {
+                    "url": feed_url,
+                    "max_length": 10000,
+                },
+                timeout=15,
+            )
             text = self.extract_text(result)
             if not text or text.startswith(("Timeout", "Fetch error", "Could not")):
                 return []
@@ -65,11 +67,13 @@ class NewsAgent(BaseAgent):
             items = []
             # Skip first title/link (feed-level)
             for i in range(1, min(len(titles), max_items + 1)):
-                items.append({
-                    "title": titles[i] if i < len(titles) else "",
-                    "url": links[i] if i < len(links) else "",
-                    "body": descriptions[i] if i < len(descriptions) else "",
-                })
+                items.append(
+                    {
+                        "title": titles[i] if i < len(titles) else "",
+                        "url": links[i] if i < len(links) else "",
+                        "body": descriptions[i] if i < len(descriptions) else "",
+                    }
+                )
             return items
         except Exception:
             return []
@@ -90,10 +94,14 @@ class NewsAgent(BaseAgent):
         # --- DuckDuckGo search per topic ---
         for topic in topics:
             self.state.log(f"Searching news: {topic}")
-            result = await self.call_tool("web_search", {
-                "query": f"{topic} news today",
-                "max_results": max_articles,
-            }, timeout=30)
+            result = await self.call_tool(
+                "web_search",
+                {
+                    "query": f"{topic} news today",
+                    "max_results": max_articles,
+                },
+                timeout=30,
+            )
             text = self.extract_text(result)
 
             if not text or text.startswith(("Search error", "No results")):
@@ -165,26 +173,33 @@ class NewsAgent(BaseAgent):
 
         # --- Synthesize summary ---
         self.state.log(f"Generating summary ({total_new} new articles across {len(categorized)} categories)...")
-        summary_result = await self.call_tool("local_chat", {
-            "prompt": (
-                f"Create a concise news briefing from these articles. "
-                f"Organize by category/topic. For each topic:\n"
-                f"- 1-2 sentence summary of key developments\n"
-                f"- Note any particularly significant or breaking news\n\n"
-                f"{raw_digest[:5000]}"
-            ),
-        }, timeout=90)
+        summary_result = await self.call_tool(
+            "local_chat",
+            {
+                "prompt": (
+                    f"Create a concise news briefing from these articles. "
+                    f"Organize by category/topic. For each topic:\n"
+                    f"- 1-2 sentence summary of key developments\n"
+                    f"- Note any particularly significant or breaking news\n\n"
+                    f"{raw_digest[:5000]}"
+                ),
+            },
+            timeout=90,
+        )
         summary = self.extract_text(summary_result)
 
         # --- Save to KG (as event entities) ---
         for category in categorized:
             topic_slug = re.sub(r"[^a-z0-9]+", "-", category.lower())[:50].strip("-")
             try:
-                await self.call_tool("kg_add", {
-                    "name": f"news-{topic_slug}-{date_str}",
-                    "entity_type": "event",
-                    "content": f"News digest for {category} on {date_str}",
-                })
+                await self.call_tool(
+                    "kg_add",
+                    {
+                        "name": f"news-{topic_slug}-{date_str}",
+                        "entity_type": "event",
+                        "content": f"News digest for {category} on {date_str}",
+                    },
+                )
             except Exception:
                 pass
 
@@ -196,10 +211,13 @@ class NewsAgent(BaseAgent):
             f"---\n\n"
             f"## Raw Articles\n\n{raw_digest[:3000]}"
         )
-        await self.call_tool("save_note", {
-            "topic": f"news-digest-{date_str}",
-            "content": digest_content,
-        })
+        await self.call_tool(
+            "save_note",
+            {
+                "topic": f"news-digest-{date_str}",
+                "content": digest_content,
+            },
+        )
         self.state.log(f"Saved news digest: {total_new} articles, {len(categorized)} categories")
 
         # Notify

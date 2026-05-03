@@ -14,10 +14,10 @@ log = logging.getLogger("localforge")
 # ---------------------------------------------------------------------------
 # Model names
 # ---------------------------------------------------------------------------
-DENSE_MODEL = "jinaai/jina-embeddings-v2-base-code"        # 768 dims, code-tuned
+DENSE_MODEL = "jinaai/jina-embeddings-v2-base-code"  # 768 dims, code-tuned
 SPARSE_MODEL = "Qdrant/bm42-all-minilm-l6-v2-attentions"  # SPLADE sparse
-COLBERT_MODEL = "colbert-ir/colbertv2.0"                   # late interaction
-RERANKER_MODEL = "Xenova/ms-marco-MiniLM-L-6-v2"          # cross-encoder
+COLBERT_MODEL = "colbert-ir/colbertv2.0"  # late interaction
+RERANKER_MODEL = "Xenova/ms-marco-MiniLM-L-6-v2"  # cross-encoder
 
 # ---------------------------------------------------------------------------
 # Lazy-loaded singletons
@@ -33,6 +33,7 @@ def get_embedding_model():
     global _embedding_model
     if _embedding_model is None:
         from fastembed import TextEmbedding
+
         log.info("Loading dense embedding model: %s", DENSE_MODEL)
         _embedding_model = TextEmbedding(DENSE_MODEL, cache_dir=str(fastembed_cache_dir()))
         log.info("Dense embedding model loaded.")
@@ -44,6 +45,7 @@ def get_sparse_model():
     global _sparse_model
     if _sparse_model is None:
         from fastembed import SparseTextEmbedding
+
         log.info("Loading sparse model: %s", SPARSE_MODEL)
         _sparse_model = SparseTextEmbedding(SPARSE_MODEL, cache_dir=str(fastembed_cache_dir()))
         log.info("Sparse model loaded.")
@@ -55,6 +57,7 @@ def get_colbert_model():
     global _colbert_model
     if _colbert_model is None:
         from fastembed import LateInteractionTextEmbedding
+
         log.info("Loading ColBERT model: %s", COLBERT_MODEL)
         _colbert_model = LateInteractionTextEmbedding(COLBERT_MODEL, cache_dir=str(fastembed_cache_dir()))
         log.info("ColBERT model loaded.")
@@ -66,6 +69,7 @@ def get_reranker():
     global _reranker_model
     if _reranker_model is None:
         from fastembed.rerank.cross_encoder import TextCrossEncoder
+
         log.info("Loading reranker: %s", RERANKER_MODEL)
         _reranker_model = TextCrossEncoder(RERANKER_MODEL, cache_dir=str(fastembed_cache_dir()))
         log.info("Reranker loaded.")
@@ -75,6 +79,7 @@ def get_reranker():
 # ---------------------------------------------------------------------------
 # Embedding operations
 # ---------------------------------------------------------------------------
+
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed a list of texts with the dense code model. Returns list of 768-dim vectors."""
@@ -87,10 +92,12 @@ def sparse_embed_texts(texts: list[str]) -> list[dict]:
     model = get_sparse_model()
     results = []
     for sparse_vec in model.embed(texts):
-        results.append({
-            "indices": sparse_vec.indices.tolist(),
-            "values": sparse_vec.values.tolist(),
-        })
+        results.append(
+            {
+                "indices": sparse_vec.indices.tolist(),
+                "values": sparse_vec.values.tolist(),
+            }
+        )
     return results
 
 
@@ -103,6 +110,7 @@ def colbert_embed_texts(texts: list[str]) -> list[list[list[float]]]:
 # ---------------------------------------------------------------------------
 # Similarity functions
 # ---------------------------------------------------------------------------
+
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
     """Cosine similarity between two dense vectors."""

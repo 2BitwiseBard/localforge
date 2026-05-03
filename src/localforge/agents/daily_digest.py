@@ -29,9 +29,12 @@ class DailyDigest(BaseAgent):
         sections = []
 
         # --- News digest ---
-        news = await self.call_tool("recall_note", {
-            "topic": f"news-digest-{date_str}",
-        })
+        news = await self.call_tool(
+            "recall_note",
+            {
+                "topic": f"news-digest-{date_str}",
+            },
+        )
         news_text = self.extract_text(news)
         if news_text and "not found" not in news_text.lower():
             # Trim to just the summary part
@@ -42,10 +45,14 @@ class DailyDigest(BaseAgent):
 
         # --- Research findings ---
         # Check for any research notes from today
-        research_notes = await self.call_tool("search_index", {
-            "index_name": "__knowledge_base__",
-            "query": f"research {date_str}",
-        }, timeout=30)
+        research_notes = await self.call_tool(
+            "search_index",
+            {
+                "index_name": "__knowledge_base__",
+                "query": f"research {date_str}",
+            },
+            timeout=30,
+        )
         research_text = self.extract_text(research_notes)
         if research_text and "no " not in research_text.lower()[:20]:
             sections.append(f"## Research\n\n{research_text[:800]}")
@@ -69,9 +76,12 @@ class DailyDigest(BaseAgent):
             sections.append("## Code Review Findings\n\n" + "\n\n".join(code_findings))
 
         # --- Health alerts ---
-        alerts = await self.call_tool("recall_note", {
-            "topic": f"alerts-{date_str}",
-        })
+        alerts = await self.call_tool(
+            "recall_note",
+            {
+                "topic": f"alerts-{date_str}",
+            },
+        )
         alerts_text = self.extract_text(alerts)
         if alerts_text and "not found" not in alerts_text.lower():
             sections.append(f"## Alerts\n\n{alerts_text[:500]}")
@@ -80,14 +90,19 @@ class DailyDigest(BaseAgent):
         # Check messages from code-watcher for project directories
         projects = self.config.get("projects", [])
         for project in projects[:3]:
-            git_result = await self.call_tool("git_context", {
-                "directory": project,
-                "log_count": 10,
-                "include_diff": False,
-            }, timeout=15)
+            git_result = await self.call_tool(
+                "git_context",
+                {
+                    "directory": project,
+                    "log_count": 10,
+                    "include_diff": False,
+                },
+                timeout=15,
+            )
             git_text = self.extract_text(git_result)
             if git_text and "error" not in git_text.lower()[:20]:
                 import os
+
                 project_name = os.path.basename(os.path.expanduser(project))
                 sections.append(f"## Git Activity: {project_name}\n\n{git_text[:500]}")
 
@@ -99,26 +114,28 @@ class DailyDigest(BaseAgent):
         raw_digest = "\n\n---\n\n".join(sections)
         self.state.log(f"Synthesizing {len(sections)} sections...")
 
-        summary_result = await self.call_tool("local_chat", {
-            "prompt": (
-                f"Create a brief daily activity summary from the following sections. "
-                f"Highlight the most important items. Be concise.\n\n"
-                f"{raw_digest[:5000]}"
-            ),
-        }, timeout=90)
+        summary_result = await self.call_tool(
+            "local_chat",
+            {
+                "prompt": (
+                    f"Create a brief daily activity summary from the following sections. "
+                    f"Highlight the most important items. Be concise.\n\n"
+                    f"{raw_digest[:5000]}"
+                ),
+            },
+            timeout=90,
+        )
         summary = self.extract_text(summary_result)
 
         # --- Save ---
-        digest_content = (
-            f"# Daily Digest — {date_str}\n\n"
-            f"{summary}\n\n"
-            f"---\n\n"
-            f"## Details\n\n{raw_digest[:3000]}"
+        digest_content = f"# Daily Digest — {date_str}\n\n{summary}\n\n---\n\n## Details\n\n{raw_digest[:3000]}"
+        await self.call_tool(
+            "save_note",
+            {
+                "topic": f"daily-digest-{date_str}",
+                "content": digest_content,
+            },
         )
-        await self.call_tool("save_note", {
-            "topic": f"daily-digest-{date_str}",
-            "content": digest_content,
-        })
         self.state.log(f"Daily digest saved for {date_str} ({len(sections)} sections)")
 
         await self.notify(

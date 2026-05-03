@@ -27,14 +27,15 @@ from localforge.paths import data_dir
 log = logging.getLogger("localforge.enrollment")
 
 # Defaults — tuned so the one-liner can be copy/pasted without the user racing a clock.
-ENROLLMENT_TTL_SECONDS = 600           # 10 minutes
-WORKER_KEY_BYTES = 32                  # 256-bit random, URL-safe
-MAX_ACTIVE_TOKENS = 32                 # defense against runaway mint loops
+ENROLLMENT_TTL_SECONDS = 600  # 10 minutes
+WORKER_KEY_BYTES = 32  # 256-bit random, URL-safe
+MAX_ACTIVE_TOKENS = 32  # defense against runaway mint loops
 
 
 # ---------------------------------------------------------------------------
 # Short-lived enrollment tokens
 # ---------------------------------------------------------------------------
+
 
 class EnrollmentStore:
     """In-memory TTL store for bootstrap tokens. Single-process only."""
@@ -92,6 +93,7 @@ class EnrollmentStore:
 # ---------------------------------------------------------------------------
 # Long-lived worker keys — bcrypt-hashed on disk
 # ---------------------------------------------------------------------------
+
 
 class WorkerRegistry:
     """File-backed registry of worker API keys.
@@ -155,8 +157,7 @@ class WorkerRegistry:
 
     # -- API -----------------------------------------------------------------
 
-    def register(self, *, hostname: str, platform: str, hardware: dict,
-                 enrolled_by: str) -> tuple[str, str]:
+    def register(self, *, hostname: str, platform: str, hardware: dict, enrolled_by: str) -> tuple[str, str]:
         """Create a new worker entry and return (worker_id, plaintext_api_key).
 
         The plaintext key is only returned here; the stored form is a bcrypt hash.
@@ -184,8 +185,7 @@ class WorkerRegistry:
             data = self._load()
             data["workers"][worker_id] = record
             self._save(data)
-        log.info("Worker registered: %s (hostname=%s, platform=%s, by=%s)",
-                 worker_id, hostname, platform, enrolled_by)
+        log.info("Worker registered: %s (hostname=%s, platform=%s, by=%s)", worker_id, hostname, platform, enrolled_by)
         return worker_id, plaintext
 
     def find_by_key(self, token: str) -> dict | None:
@@ -217,10 +217,7 @@ class WorkerRegistry:
     def list_workers(self) -> list[dict]:
         with self._lock:
             data = self._load()
-            return [
-                {k: v for k, v in r.items() if k != "api_key_hash"}
-                for r in data["workers"].values()
-            ]
+            return [{k: v for k, v in r.items() if k != "api_key_hash"} for r in data["workers"].values()]
 
     def revoke(self, worker_id: str) -> bool:
         with self._lock:
@@ -251,8 +248,7 @@ class WorkerRegistry:
           max_concurrent    int
           min_battery_pct   int  — phones only
         """
-        allowed = {"nickname", "allowed_tasks", "priority",
-                   "max_concurrent", "min_battery_pct"}
+        allowed = {"nickname", "allowed_tasks", "priority", "max_concurrent", "min_battery_pct"}
         clean = {k: v for k, v in config.items() if k in allowed}
         with self._lock:
             data = self._load()

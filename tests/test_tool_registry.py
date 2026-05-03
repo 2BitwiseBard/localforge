@@ -25,7 +25,7 @@ from localforge.tools import (  # noqa: F401
     web,
 )
 
-EXPECTED_TOOL_COUNT = 112  # 111 + kg_rebuild_fts
+EXPECTED_TOOL_COUNT = 113  # 112 + validate_yaml_template (yaml-schema-validator)
 
 
 def test_all_tools_registered():

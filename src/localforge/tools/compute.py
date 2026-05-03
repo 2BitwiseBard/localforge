@@ -31,14 +31,13 @@ async def compute_status_tool(args: dict) -> str:
                     f"type={b['model_type']}, active={b['active_requests']}"
                 )
 
-    if _gpu_pool and hasattr(_gpu_pool, '_compute_nodes'):
+    if _gpu_pool and hasattr(_gpu_pool, "_compute_nodes"):
         nodes = _gpu_pool.compute_status()
         if nodes:
             parts.append("\n## Compute Mesh Nodes")
             for n in nodes:
                 caps = n.get("capabilities", {})
-                cap_flags = [k for k, v in caps.items()
-                             if isinstance(v, bool) and v]
+                cap_flags = [k for k, v in caps.items() if isinstance(v, bool) and v]
                 parts.append(
                     f"  {n['name']}: tier={n['tier']}, "
                     f"{'healthy' if n['healthy'] else 'unhealthy'}, "
@@ -52,8 +51,7 @@ async def compute_status_tool(args: dict) -> str:
         parts.append("\n## Mesh Workers (heartbeat)")
         for w in mesh_workers:
             caps = w.get("capabilities", {})
-            cap_flags = [k for k, v in caps.items()
-                         if isinstance(v, bool) and v]
+            cap_flags = [k for k, v in caps.items() if isinstance(v, bool) and v]
             health = "healthy" if w.get("healthy") else "stale"
             stats = w.get("stats", {})
             completed = stats.get("tasks_completed", 0)
@@ -103,10 +101,15 @@ async def compute_route_tool(args: dict) -> str:
         caps = w.get("capabilities", {})
         # Check capability match
         cap_map = {
-            "inference": "inference", "chat": "inference",
-            "embeddings": "embeddings", "tts": "tts", "stt": "stt",
-            "reranking": "reranking", "rerank": "reranking",
-            "classification": "classification", "classify": "classification",
+            "inference": "inference",
+            "chat": "inference",
+            "embeddings": "embeddings",
+            "tts": "tts",
+            "stt": "stt",
+            "reranking": "reranking",
+            "rerank": "reranking",
+            "classification": "classification",
+            "classify": "classification",
         }
         needed_cap = cap_map.get(task_type, task_type)
         if caps.get(needed_cap):
@@ -157,8 +160,11 @@ async def mesh_dispatch_tool(args: dict) -> str:
     if not target:
         mesh_workers = _get_mesh_workers()
         cap_map = {
-            "chat": "inference", "embeddings": "embeddings",
-            "tts": "tts", "stt": "stt", "classify": "classification",
+            "chat": "inference",
+            "embeddings": "embeddings",
+            "tts": "tts",
+            "stt": "stt",
+            "classify": "classification",
             "rerank": "reranking",
         }
         needed = cap_map.get(task_type, task_type)
@@ -219,6 +225,7 @@ async def mesh_dispatch_tool(args: dict) -> str:
 )
 async def mesh_fan_out_tool(args: dict) -> str:
     import asyncio
+
     import httpx
 
     prompts = args["prompts"]
@@ -291,6 +298,7 @@ async def mesh_fan_out_tool(args: dict) -> str:
 )
 async def mesh_batch_embed_tool(args: dict) -> str:
     import asyncio
+
     import httpx
 
     texts = args["texts"]
@@ -305,7 +313,7 @@ async def mesh_batch_embed_tool(args: dict) -> str:
         return "No workers with embeddings capability available."
 
     # Split into batches
-    batches = [texts[i:i + batch_size] for i in range(0, len(texts), batch_size)]
+    batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
 
     async def _embed_batch(batch_idx: int, batch: list[str], worker_url: str) -> tuple[int, list | str]:
         payload = {"type": "embeddings", "texts": batch}
@@ -378,6 +386,7 @@ async def mesh_model_recommend_tool(args: dict) -> str:
     else:
         # Use local detection
         from localforge.workers.detect import detect
+
         hw = detect()
 
     rec = hw.recommended_model()
@@ -414,8 +423,11 @@ def _get_healthy_worker_urls(capability: str = "inference") -> list[str]:
         for node in _gpu_pool.get_all_healthy_workers():
             caps = node.capabilities
             cap_map = {
-                "inference": "inference", "embeddings": "embeddings",
-                "reranking": "reranking", "tts": "tts", "stt": "stt",
+                "inference": "inference",
+                "embeddings": "embeddings",
+                "reranking": "reranking",
+                "tts": "tts",
+                "stt": "stt",
                 "classification": "classification",
             }
             needed = cap_map.get(capability, capability)
@@ -469,31 +481,35 @@ async def compute_test_tool(args: dict) -> str:
         start = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(url, json={
-                    "type": "chat",
-                    "prompt": prompt,
-                    "max_tokens": 32,
-                })
+                resp = await client.post(
+                    url,
+                    json={
+                        "type": "chat",
+                        "prompt": prompt,
+                        "max_tokens": 32,
+                    },
+                )
                 elapsed = time.monotonic() - start
                 data = resp.json()
                 if "error" in data:
-                    return {"worker": key, "status": "error", "error": data["error"],
-                            "latency_ms": int(elapsed * 1000)}
+                    return {"worker": key, "status": "error", "error": data["error"], "latency_ms": int(elapsed * 1000)}
                 response_text = data.get("response", "")[:100]
-                return {"worker": key, "status": "ok", "response": response_text,
-                        "latency_ms": int(elapsed * 1000)}
+                return {"worker": key, "status": "ok", "response": response_text, "latency_ms": int(elapsed * 1000)}
         except asyncio.TimeoutError:
-            return {"worker": key, "status": "timeout",
-                    "latency_ms": int((time.monotonic() - start) * 1000)}
+            return {"worker": key, "status": "timeout", "latency_ms": int((time.monotonic() - start) * 1000)}
         except Exception as e:
-            return {"worker": key, "status": "error", "error": str(e),
-                    "latency_ms": int((time.monotonic() - start) * 1000)}
+            return {
+                "worker": key,
+                "status": "error",
+                "error": str(e),
+                "latency_ms": int((time.monotonic() - start) * 1000),
+            }
 
     tasks = [_test_worker(w) for w in healthy]
     results = await asyncio.gather(*tasks)
 
     # Format output
-    lines = [f"Mesh test: {len(healthy)} healthy worker(s), prompt: \"{prompt[:50]}\"", ""]
+    lines = [f'Mesh test: {len(healthy)} healthy worker(s), prompt: "{prompt[:50]}"', ""]
     ok_count = 0
     for r in results:
         status_icon = "✓" if r["status"] == "ok" else "✗"
@@ -501,7 +517,7 @@ async def compute_test_tool(args: dict) -> str:
             ok_count += 1
         line = f"  {status_icon} {r['worker']}: {r['status']} ({r['latency_ms']}ms)"
         if r.get("response"):
-            line += f" → \"{r['response']}\""
+            line += f' → "{r["response"]}"'
         if r.get("error"):
             line += f" — {r['error']}"
         lines.append(line)

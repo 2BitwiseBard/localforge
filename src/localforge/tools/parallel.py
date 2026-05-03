@@ -6,8 +6,6 @@ Otherwise, everything runs on the hub model.
 
 import asyncio
 import logging
-import os
-from pathlib import Path
 from typing import Any
 
 from localforge import config as cfg
@@ -21,6 +19,7 @@ def _get_mesh_worker_urls() -> list[str]:
     """Return URLs of healthy mesh workers with inference capability."""
     try:
         from localforge.tools.compute import _get_healthy_worker_urls
+
         return _get_healthy_worker_urls("inference")
     except ImportError:
         return []
@@ -37,6 +36,7 @@ async def _chat_to_mesh_or_hub(body: dict, worker_url: str | None = None) -> str
     if worker_url:
         try:
             import httpx
+
             # Convert chat body to worker task format
             payload = {
                 "type": "chat",
@@ -58,9 +58,9 @@ async def _chat_to_mesh_or_hub(body: dict, worker_url: str | None = None) -> str
     return await _chat_to_backend(cfg.TGWUI_BASE, body)
 
 
-async def _local_analyze_one(file_path: str, concern: str, preamble: str | None,
-                              gen_params: dict[str, Any],
-                              worker_url: str | None = None) -> dict[str, str]:
+async def _local_analyze_one(
+    file_path: str, concern: str, preamble: str | None, gen_params: dict[str, Any], worker_url: str | None = None
+) -> dict[str, str]:
     """Analyze a single file for a concern. Returns {file, verdict, details}.
 
     If worker_url is provided, dispatches to that mesh worker instead of the hub.
@@ -197,7 +197,10 @@ async def fan_out(args: dict) -> str:
                 "items": {"type": "string"},
                 "description": "List of file paths to review",
             },
-            "concern": {"type": "string", "description": "What to check for (e.g. 'error handling', 'security issues')"},
+            "concern": {
+                "type": "string",
+                "description": "What to check for (e.g. 'error handling', 'security issues')",
+            },
         },
         "required": ["file_paths", "concern"],
     },
@@ -230,8 +233,7 @@ async def parallel_file_review(args: dict) -> str:
     fails = sum(1 for r in results if r["verdict"] == "FAIL")
     skips = sum(1 for r in results if r["verdict"] in ("SKIP", "ERROR"))
 
-    lines = [f"Reviewed {len(results)} files for: {concern}",
-             f"Results: {passes} PASS, {fails} FAIL, {skips} SKIP\n"]
+    lines = [f"Reviewed {len(results)} files for: {concern}", f"Results: {passes} PASS, {fails} FAIL, {skips} SKIP\n"]
 
     for r in results:
         marker = {"PASS": "ok", "FAIL": "ISSUE", "SKIP": "skip", "ERROR": "err"}.get(r["verdict"], "?")
@@ -256,7 +258,10 @@ async def parallel_file_review(args: dict) -> str:
         "type": "object",
         "properties": {
             "directory": {"type": "string", "description": "Directory to sweep (absolute or ~ relative)"},
-            "glob_pattern": {"type": "string", "description": "Glob pattern for files (e.g. '*.rs', '*.py', '**/*.ts')"},
+            "glob_pattern": {
+                "type": "string",
+                "description": "Glob pattern for files (e.g. '*.rs', '*.py', '**/*.ts')",
+            },
             "criterion": {"type": "string", "description": "Quality criterion to check"},
             "max_files": {"type": "integer", "description": "Max files to check (default: 20)"},
         },
@@ -268,6 +273,7 @@ async def quality_sweep(args: dict) -> str:
         cfg.MODEL = await resolve_model()
 
     from localforge.tools.utils import validate_directory
+
     directory, err = validate_directory(args["directory"])
     if err:
         return err

@@ -25,9 +25,9 @@ from pathlib import Path
 from typing import AsyncIterator
 
 import uvicorn
-import yaml
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
+from starlette.middleware.base import BaseHTTPMiddleware as _BaseMiddleware
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Mount, Route
@@ -38,7 +38,6 @@ from localforge.config import load_config_cached
 from localforge.dashboard.routes import dashboard_routes
 from localforge.gpu_pool import GPUPool
 from localforge.log import setup_logging
-from localforge.paths import config_path
 from localforge.server import app as mcp_app
 
 log = logging.getLogger("mcp-gateway")
@@ -120,14 +119,17 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
 
     # Make GPU pool accessible to compute tools
     from localforge.tools import compute as _compute_tools
+
     _compute_tools._gpu_pool = gpu_pool
 
     # Make GPU pool accessible to client.py for mesh-aware routing
     from localforge import client as _client_mod
+
     _client_mod.set_gpu_pool(gpu_pool)
 
     # Make GPU pool accessible to dashboard routes for heartbeat registration
     from localforge.dashboard import routes as _dash_routes
+
     _dash_routes._gpu_pool_ref = gpu_pool
 
     # Start agent supervisor
@@ -158,6 +160,7 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
         await agent_supervisor.start()
         # Make supervisor, bus, and task queue accessible to dashboard routes
         from localforge.dashboard import routes as _routes
+
         _routes._supervisor = agent_supervisor
         _routes._message_bus = agent_supervisor.bus
         _routes._task_queue = agent_supervisor.task_queue
@@ -165,10 +168,13 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
         try:
             from localforge.agents.approval import ApprovalQueue
             from localforge.agents.message_bus import Message as _Msg
+
             _aq = ApprovalQueue()
-            _aq.on_notify(lambda payload: agent_supervisor.bus.publish(
-                _Msg(sender="approval-gate", topic="agent.notification", payload=payload)
-            ))
+            _aq.on_notify(
+                lambda payload: agent_supervisor.bus.publish(
+                    _Msg(sender="approval-gate", topic="agent.notification", payload=payload)
+                )
+            )
             _aq.start_warning_loop()
             _routes._approval_queue = _aq
         except Exception as exc:
@@ -179,6 +185,7 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
 
     # Auto-load startup model if configured (off by default)
     import json as _json
+
     sc_path = Path(os.environ.get("LOCALFORGE_DATA_DIR", ".")) / "startup_config.json"
     if sc_path.exists():
         try:
@@ -199,6 +206,7 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
                     "settings": {"truncation_length": ctx_size},
                 }
                 import httpx as _httpx
+
                 try:
                     async with _httpx.AsyncClient(timeout=180) as _hc:
                         r = await _hc.post(f"{backend_url}/internal/model/load", json=load_payload)
@@ -222,6 +230,7 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
     # Checkpoint SQLite WAL files for clean shutdown
     try:
         import sqlite3
+
         for db_file in Path(os.environ.get("LOCALFORGE_DATA_DIR", ".")).glob("*.db"):
             conn = sqlite3.connect(str(db_file))
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -236,7 +245,9 @@ starlette_app = Starlette(
         Route("/health", health, methods=["GET"]),
         Mount("/mcp", app=session_manager.handle_request),
         Mount("/api", routes=dashboard_routes),
-        Mount("/static/workers", app=StaticFiles(directory=str(Path(__file__).parent / "workers")), name="worker-files"),
+        Mount(
+            "/static/workers", app=StaticFiles(directory=str(Path(__file__).parent / "workers")), name="worker-files"
+        ),
         Mount("/static", app=StaticFiles(directory=str(STATIC_DIR)), name="static"),
         Route("/", lambda r: FileResponse(str(STATIC_DIR / "index.html"))),
     ],
@@ -248,9 +259,6 @@ starlette_app.add_middleware(BearerAuthMiddleware)
 # ---------------------------------------------------------------------------
 # Security headers middleware (CSP, etc.)
 # ---------------------------------------------------------------------------
-from starlette.middleware.base import BaseHTTPMiddleware as _BaseMiddleware
-
-
 class SecurityHeadersMiddleware(_BaseMiddleware):
     """Add Content-Security-Policy and other security headers to all responses."""
 
@@ -321,7 +329,9 @@ class RequestIDMiddleware(_BaseMiddleware):
 
     async def dispatch(self, request, call_next):
         import uuid
+
         from localforge.log import set_request_id
+
         rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
         set_request_id(rid)
         response = await call_next(request)
@@ -354,25 +364,35 @@ async def run_http(
 
 def main():
     import os
+
     parser = argparse.ArgumentParser(description="MCP HTTP Gateway")
     parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8100, help="Port (default: 8100)")
-    parser.add_argument("--log-format", choices=["human", "json"], default="human",
-                        help="Log output format (default: human)")
+    parser.add_argument(
+        "--log-format", choices=["human", "json"], default="human", help="Log output format (default: human)"
+    )
     parser.add_argument("--log-level", default="INFO", help="Log level (default: INFO)")
-    parser.add_argument("--ssl-certfile", default=os.environ.get("LOCALFORGE_SSL_CERTFILE"),
-                        help="TLS cert file (enables HTTPS). Env: LOCALFORGE_SSL_CERTFILE")
-    parser.add_argument("--ssl-keyfile", default=os.environ.get("LOCALFORGE_SSL_KEYFILE"),
-                        help="TLS key file (enables HTTPS). Env: LOCALFORGE_SSL_KEYFILE")
+    parser.add_argument(
+        "--ssl-certfile",
+        default=os.environ.get("LOCALFORGE_SSL_CERTFILE"),
+        help="TLS cert file (enables HTTPS). Env: LOCALFORGE_SSL_CERTFILE",
+    )
+    parser.add_argument(
+        "--ssl-keyfile",
+        default=os.environ.get("LOCALFORGE_SSL_KEYFILE"),
+        help="TLS key file (enables HTTPS). Env: LOCALFORGE_SSL_KEYFILE",
+    )
     args = parser.parse_args()
 
     setup_logging(fmt=args.log_format, level=args.log_level)
-    asyncio.run(run_http(
-        host=args.host,
-        port=args.port,
-        ssl_certfile=args.ssl_certfile,
-        ssl_keyfile=args.ssl_keyfile,
-    ))
+    asyncio.run(
+        run_http(
+            host=args.host,
+            port=args.port,
+            ssl_certfile=args.ssl_certfile,
+            ssl_keyfile=args.ssl_keyfile,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -14,11 +14,12 @@ import os
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 try:
     import psutil  # type: ignore
+
     _HAS_PSUTIL = True
 except ImportError:  # pragma: no cover - psutil is listed as worker dep
     _HAS_PSUTIL = False
@@ -26,11 +27,22 @@ except ImportError:  # pragma: no cover - psutil is listed as worker dep
 
 # Adreno GPU → estimated usable VRAM (MB) for inference
 _ADRENO_VRAM: dict[str, int] = {
-    "530": 1536, "540": 2048,
-    "612": 1536, "615": 2048, "616": 2048, "618": 2048,
-    "619": 2048, "620": 2048, "630": 2048, "640": 3072,
-    "642L": 2048, "650": 3072, "660": 3072,
-    "730": 4096, "740": 4096, "750": 4096,
+    "530": 1536,
+    "540": 2048,
+    "612": 1536,
+    "615": 2048,
+    "616": 2048,
+    "618": 2048,
+    "619": 2048,
+    "620": 2048,
+    "630": 2048,
+    "640": 3072,
+    "642L": 2048,
+    "650": 3072,
+    "660": 3072,
+    "730": 4096,
+    "740": 4096,
+    "750": 4096,
     "830": 4096,
 }
 
@@ -44,25 +56,26 @@ _MODEL_RECOMMENDATIONS: list[tuple[dict, str, float]] = [
 @dataclass
 class HardwareInfo:
     """Detected hardware capabilities."""
+
     platform: str = ""
-    gpu_type: str = "none"         # nvidia, apple_silicon, adreno, amd, none
+    gpu_type: str = "none"  # nvidia, apple_silicon, adreno, amd, none
     gpu_name: str = ""
     vram_mb: int = 0
     ram_mb: int = 0
     cpu_cores: int = 0
     # Capabilities
     inference: bool = False
-    embeddings: bool = True        # Always true (CPU fastembed)
-    reranking: bool = True         # Always true (CPU cross-encoder)
-    classification: bool = True    # Always true (small models)
+    embeddings: bool = True  # Always true (CPU fastembed)
+    reranking: bool = True  # Always true (CPU cross-encoder)
+    classification: bool = True  # Always true (small models)
     tts: bool = False
     stt: bool = False
     vision: bool = False
-    max_model_params: int = 0      # Estimated max model size (B)
+    max_model_params: int = 0  # Estimated max model size (B)
     # Backend hints
-    mlx_available: bool = False    # Apple Silicon — prefer MLX over llama.cpp
+    mlx_available: bool = False  # Apple Silicon — prefer MLX over llama.cpp
     # Thermal/battery (mobile + laptop)
-    battery_pct: int = -1          # -1 = not available
+    battery_pct: int = -1  # -1 = not available
     battery_charging: bool = False
     thermal_throttled: bool = False
 
@@ -169,7 +182,8 @@ def detect() -> HardwareInfo:
             elif sys.platform == "darwin":
                 result = subprocess.run(
                     ["sysctl", "-n", "hw.memsize"],
-                    capture_output=True, text=True,
+                    capture_output=True,
+                    text=True,
                 )
                 if result.returncode == 0:
                     info.ram_mb = int(result.stdout.strip()) // (1024 * 1024)
@@ -179,9 +193,9 @@ def detect() -> HardwareInfo:
     # --- NVIDIA GPU ---
     try:
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.total",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True,
+            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
         )
         if result.returncode == 0:
             parts = result.stdout.strip().split(", ")
@@ -200,7 +214,8 @@ def detect() -> HardwareInfo:
         try:
             result = subprocess.run(
                 ["sysctl", "-n", "machdep.cpu.brand_string"],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             if result.returncode == 0 and "Apple" in result.stdout:
                 info.gpu_type = "apple_silicon"
@@ -230,7 +245,8 @@ def detect() -> HardwareInfo:
             if not gpu_model and shutil.which("getprop"):
                 result = subprocess.run(
                     ["getprop", "ro.hardware.chipname"],
-                    capture_output=True, text=True,
+                    capture_output=True,
+                    text=True,
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     gpu_model = f"Adreno ({result.stdout.strip()})"
@@ -257,10 +273,12 @@ def detect() -> HardwareInfo:
                 # macOS: system_profiler for AMD GPUs (Intel Macs)
                 result = subprocess.run(
                     ["system_profiler", "SPDisplaysDataType", "-json"],
-                    capture_output=True, text=True,
+                    capture_output=True,
+                    text=True,
                 )
                 if result.returncode == 0:
                     import json
+
                     sp_data = json.loads(result.stdout)
                     for display in sp_data.get("SPDisplaysDataType", []):
                         chipset = display.get("sppci_model", "")
@@ -299,10 +317,12 @@ def detect() -> HardwareInfo:
                                     if shutil.which("rocm-smi"):
                                         result = subprocess.run(
                                             ["rocm-smi", "--showmeminfo", "vram", "--json"],
-                                            capture_output=True, text=True,
+                                            capture_output=True,
+                                            text=True,
                                         )
                                         if result.returncode == 0:
                                             import json
+
                                             rocm = json.loads(result.stdout)
                                             for card in rocm.values():
                                                 if isinstance(card, dict):
@@ -321,6 +341,7 @@ def detect() -> HardwareInfo:
     if info.gpu_type == "none" and sys.platform == "win32":
         try:
             import wmi  # type: ignore
+
             c = wmi.WMI()
             for gpu in c.Win32_VideoController():
                 name = (gpu.Name or "").strip()
@@ -351,7 +372,8 @@ def detect() -> HardwareInfo:
         try:
             result = subprocess.run(
                 ["vulkaninfo", "--summary"],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             if result.returncode == 0:
                 output = result.stdout
@@ -385,11 +407,8 @@ def detect() -> HardwareInfo:
         info.max_model_params = max(1, info.ram_mb // 2000)  # Very rough
 
     # --- TTS/STT ---
-    info.tts = (shutil.which("piper") is not None or
-                _has_package("TTS") or
-                _has_package("piper"))
-    info.stt = (_has_package("whisper") or
-                _has_package("faster_whisper"))
+    info.tts = shutil.which("piper") is not None or _has_package("TTS") or _has_package("piper")
+    info.stt = _has_package("whisper") or _has_package("faster_whisper")
 
     # --- Thermal / Battery ---
     _detect_thermal_battery(info)
@@ -415,9 +434,11 @@ def _detect_thermal_battery(info: HardwareInfo) -> None:
 
     # --- Battery (Linux / Android sysfs fallback) ---
     if info.battery_pct == -1:
-        for bat_path in ["/sys/class/power_supply/battery",
-                         "/sys/class/power_supply/BAT0",
-                         "/sys/class/power_supply/BAT1"]:
+        for bat_path in [
+            "/sys/class/power_supply/battery",
+            "/sys/class/power_supply/BAT0",
+            "/sys/class/power_supply/BAT1",
+        ]:
             cap_file = os.path.join(bat_path, "capacity")
             status_file = os.path.join(bat_path, "status")
             if os.path.exists(cap_file):
@@ -436,7 +457,8 @@ def _detect_thermal_battery(info: HardwareInfo) -> None:
         try:
             result = subprocess.run(
                 ["pmset", "-g", "batt"],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
@@ -486,6 +508,7 @@ def _detect_thermal_battery(info: HardwareInfo) -> None:
 
 if __name__ == "__main__":
     import json
+
     hw = detect()
     print(f"Tier: {hw.tier()}")
     rec = hw.recommended_model()

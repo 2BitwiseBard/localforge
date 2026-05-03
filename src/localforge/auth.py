@@ -23,13 +23,11 @@ import logging
 import os
 import time
 
-import yaml
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from localforge.config import load_config_cached as _load_config
-from localforge.paths import config_path
 
 log = logging.getLogger("localforge.auth")
 
@@ -50,9 +48,9 @@ PUBLIC_PATHS = {
 # Rate limiter — token bucket per IP
 # ---------------------------------------------------------------------------
 _rate_buckets: dict[str, tuple[float, float]] = {}  # ip -> (tokens, last_refill_time)
-RATE_LIMIT = 60       # requests per window
-RATE_WINDOW = 60.0    # window in seconds
-RATE_BURST = 20       # max burst above steady rate
+RATE_LIMIT = 60  # requests per window
+RATE_WINDOW = 60.0  # window in seconds
+RATE_BURST = 20  # max burst above steady rate
 
 
 def _check_rate_limit(ip: str) -> bool:
@@ -94,6 +92,7 @@ def _check_key(provided: str, stored: str) -> bool:
     if stored.startswith("$2b$") or stored.startswith("$2a$"):
         try:
             import bcrypt
+
             return bcrypt.checkpw(provided.encode(), stored.encode())
         except ImportError:
             log.warning("bcrypt not installed — cannot verify hashed key")
@@ -136,6 +135,7 @@ def _load_and_check_key(token: str) -> str | None:
     # 5. Worker registry — long-lived, scoped mesh-only keys
     try:
         from localforge.enrollment import worker_registry
+
         if worker_registry().find_by_key(token) is not None:
             return token  # sentinel: worker key lookup handled by _resolve_user
     except Exception as e:  # pragma: no cover — don't let optional lookup break auth
@@ -177,6 +177,7 @@ def _resolve_user(token: str) -> dict:
     # Worker registry — scoped to mesh
     try:
         from localforge.enrollment import worker_registry
+
         record = worker_registry().find_by_key(token)
         if record is not None:
             return {
@@ -224,6 +225,7 @@ def require_role(request: Request, role: str) -> JSONResponse | None:
 # ---------------------------------------------------------------------------
 # Middleware
 # ---------------------------------------------------------------------------
+
 
 class BearerAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):

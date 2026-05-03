@@ -10,7 +10,8 @@ from localforge.tools import tool_handler
 async def _run_git(*args: str, cwd: str | None = None) -> str:
     """Run a git command and return stdout."""
     proc = await asyncio.create_subprocess_exec(
-        "git", *args,
+        "git",
+        *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
@@ -58,7 +59,10 @@ async def git_context(args: dict) -> str:
     parts.append(f"Branch: {branch}")
 
     log_output = await _run_git(
-        "log", "--oneline", f"-{log_count}", "--no-decorate",
+        "log",
+        "--oneline",
+        f"-{log_count}",
+        "--no-decorate",
         cwd=cwd,
     )
     if log_output and not log_output.startswith("(git error"):

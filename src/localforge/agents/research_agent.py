@@ -41,8 +41,7 @@ class ResearchAgent(BaseAgent):
             self.state.log("No research queries queued")
             return
 
-        queries = [q.strip() for q in text.strip().splitlines()
-                   if q.strip() and not q.startswith("#")]
+        queries = [q.strip() for q in text.strip().splitlines() if q.strip() and not q.startswith("#")]
         if not queries:
             self.state.log("Research queue is empty")
             return
@@ -53,10 +52,13 @@ class ResearchAgent(BaseAgent):
         # Clear processed queries
         remaining = queries[3:]
         if remaining:
-            await self.call_tool("save_note", {
-                "topic": "research-queue",
-                "content": "\n".join(remaining),
-            })
+            await self.call_tool(
+                "save_note",
+                {
+                    "topic": "research-queue",
+                    "content": "\n".join(remaining),
+                },
+            )
         else:
             await self.call_tool("delete_note", {"topic": "research-queue"})
 
@@ -64,9 +66,13 @@ class ResearchAgent(BaseAgent):
         """Check if this topic was recently researched (within 7 days)."""
         topic_slug = re.sub(r"[^a-z0-9]+", "-", query.lower())[:50].strip("-")
         try:
-            result = await self.call_tool("kg_query", {
-                "query": topic_slug,
-            }, timeout=15)
+            result = await self.call_tool(
+                "kg_query",
+                {
+                    "query": topic_slug,
+                },
+                timeout=15,
+            )
             text = self.extract_text(result)
             if text and "no " not in text.lower()[:20]:
                 if "updated_at" in text:
@@ -88,10 +94,14 @@ class ResearchAgent(BaseAgent):
             return
 
         # Step 1: Web search
-        search_result = await self.call_tool("web_search", {
-            "query": query,
-            "max_results": 5,
-        }, timeout=30)
+        search_result = await self.call_tool(
+            "web_search",
+            {
+                "query": query,
+                "max_results": 5,
+            },
+            timeout=30,
+        )
         search_text = self.extract_text(search_result)
 
         if not search_text or search_text.startswith(("Search error", "No results")):
@@ -104,10 +114,14 @@ class ResearchAgent(BaseAgent):
         # Step 2: Fetch top pages
         fetched_content = []
         for url in urls:
-            fetch_result = await self.call_tool("web_fetch", {
-                "url": url,
-                "max_length": 3000,
-            }, timeout=15)
+            fetch_result = await self.call_tool(
+                "web_fetch",
+                {
+                    "url": url,
+                    "max_length": 3000,
+                },
+                timeout=15,
+            )
             page_text = self.extract_text(fetch_result)
             if page_text and not page_text.startswith(("Timeout", "Fetch error", "Could not")):
                 fetched_content.append(f"[Source: {url}]\n{page_text[:2000]}")
@@ -132,39 +146,48 @@ class ResearchAgent(BaseAgent):
 
         # Step 4: Save to knowledge graph
         try:
-            await self.call_tool("kg_add", {
-                "name": topic_slug,
-                "entity_type": "concept",
-                "content": f"Research: {query}\n\n{answer[:500]}",
-            })
+            await self.call_tool(
+                "kg_add",
+                {
+                    "name": topic_slug,
+                    "entity_type": "concept",
+                    "content": f"Research: {query}\n\n{answer[:500]}",
+                },
+            )
             for url in urls:
                 source_slug = re.sub(r"https?://", "", url)[:80]
-                await self.call_tool("kg_add", {
-                    "name": source_slug,
-                    "entity_type": "tool",
-                    "content": f"Source URL for research on: {query}",
-                })
-                await self.call_tool("kg_relate", {
-                    "from_entity": source_slug,
-                    "to_entity": topic_slug,
-                    "relation": "REFERENCES",
-                })
+                await self.call_tool(
+                    "kg_add",
+                    {
+                        "name": source_slug,
+                        "entity_type": "tool",
+                        "content": f"Source URL for research on: {query}",
+                    },
+                )
+                await self.call_tool(
+                    "kg_relate",
+                    {
+                        "from_entity": source_slug,
+                        "to_entity": topic_slug,
+                        "relation": "REFERENCES",
+                    },
+                )
         except Exception:
             self.state.log(f"  KG save failed for: {query}")
 
         # Step 5: Save summary to notes
         date_str = time.strftime("%Y-%m-%d")
-        citation_lines = [f"[{i+1}] {u}" for i, u in enumerate(urls)]
-        note_content = (
-            f"# Research: {query}\n"
-            f"Date: {date_str}\n\n"
-            f"{answer[:2000]}\n\n"
-            f"## Sources\n" + "\n".join(citation_lines)
+        citation_lines = [f"[{i + 1}] {u}" for i, u in enumerate(urls)]
+        note_content = f"# Research: {query}\nDate: {date_str}\n\n{answer[:2000]}\n\n## Sources\n" + "\n".join(
+            citation_lines
         )
-        await self.call_tool("save_note", {
-            "topic": f"research-{topic_slug}",
-            "content": note_content,
-        })
+        await self.call_tool(
+            "save_note",
+            {
+                "topic": f"research-{topic_slug}",
+                "content": note_content,
+            },
+        )
         self.state.log(f"  Saved findings for: {query}")
 
         # Notify

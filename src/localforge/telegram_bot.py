@@ -59,27 +59,41 @@ class TelegramBot:
     async def send_message(self, chat_id: int, text: str, client: httpx.AsyncClient):
         """Send a text message, splitting if > 4096 chars."""
         for i in range(0, len(text), 4096):
-            chunk = text[i:i + 4096]
-            await client.post(f"{self.tg_api}/sendMessage", json={
-                "chat_id": chat_id,
-                "text": chunk,
-                "parse_mode": "Markdown",
-            })
+            chunk = text[i : i + 4096]
+            await client.post(
+                f"{self.tg_api}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": chunk,
+                    "parse_mode": "Markdown",
+                },
+            )
 
     async def handle_text(self, chat_id: int, text: str, client: httpx.AsyncClient):
         """Handle a text message — chat with local model."""
         # Special commands
         if text.startswith("/research "):
             query = text[10:].strip()
-            return await self._gateway_tool(chat_id, "deep_research", {
-                "question": query,
-            }, client, timeout=120)
+            return await self._gateway_tool(
+                chat_id,
+                "deep_research",
+                {
+                    "question": query,
+                },
+                client,
+                timeout=120,
+            )
 
         if text.startswith("/search "):
             query = text[8:].strip()
-            return await self._gateway_tool(chat_id, "web_search", {
-                "query": query,
-            }, client)
+            return await self._gateway_tool(
+                chat_id,
+                "web_search",
+                {
+                    "query": query,
+                },
+                client,
+            )
 
         if text == "/status":
             try:
@@ -88,15 +102,18 @@ class TelegramBot:
                 model = data.get("model", {}).get("model_name", "unknown")
                 uptime = data.get("uptime_seconds", 0)
                 h, m = divmod(int(uptime) // 60, 60)
-                await self.send_message(chat_id,
+                await self.send_message(
+                    chat_id,
                     f"*AI Hub Status*\nModel: `{model}`\nUptime: {h}h {m}m\nStatus: {data.get('status', 'unknown')}",
-                    client)
+                    client,
+                )
             except Exception as e:
                 await self.send_message(chat_id, f"Error: {e}", client)
             return
 
         if text == "/help":
-            await self.send_message(chat_id,
+            await self.send_message(
+                chat_id,
                 "*AI Hub Bot*\n\n"
                 "Send any message to chat with the AI.\n\n"
                 "*Commands:*\n"
@@ -107,7 +124,8 @@ class TelegramBot:
                 "*Media:*\n"
                 "Send a photo for vision analysis\n"
                 "Send a voice message for transcription + chat",
-                client)
+                client,
+            )
             return
 
         # Regular chat
@@ -149,9 +167,7 @@ class TelegramBot:
             file_path = file_resp.json()["result"]["file_path"]
 
             # Download audio (with size limit)
-            audio_resp = await client.get(
-                f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
-            )
+            audio_resp = await client.get(f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}")
             if len(audio_resp.content) > 20 * 1024 * 1024:  # 20 MB
                 await self.send_message(chat_id, "Audio file too large (max 20MB).", client)
                 return
@@ -175,8 +191,7 @@ class TelegramBot:
         except Exception as e:
             await self.send_message(chat_id, f"Voice error: {e}", client)
 
-    async def handle_photo(self, chat_id: int, file_id: str,
-                           caption: str, client: httpx.AsyncClient):
+    async def handle_photo(self, chat_id: int, file_id: str, caption: str, client: httpx.AsyncClient):
         """Handle photo: download → analyze with vision model."""
         try:
             # Get file path
@@ -184,9 +199,7 @@ class TelegramBot:
             file_path = file_resp.json()["result"]["file_path"]
 
             # Download photo (with size limit)
-            photo_resp = await client.get(
-                f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
-            )
+            photo_resp = await client.get(f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}")
             if len(photo_resp.content) > 20 * 1024 * 1024:  # 20 MB
                 await self.send_message(chat_id, "Photo too large (max 20MB).", client)
                 return
@@ -220,8 +233,7 @@ class TelegramBot:
         except Exception as e:
             await self.send_message(chat_id, f"Photo error: {e}", client)
 
-    async def _gateway_tool(self, chat_id: int, tool: str, args: dict,
-                            client: httpx.AsyncClient, timeout: int = 60):
+    async def _gateway_tool(self, chat_id: int, tool: str, args: dict, client: httpx.AsyncClient, timeout: int = 60):
         """Call an MCP tool via the gateway and send result."""
         try:
             # Initialize MCP session
@@ -232,21 +244,33 @@ class TelegramBot:
             }
             url = f"{self.gateway_url}/mcp/"
 
-            await client.post(url, json={
-                "jsonrpc": "2.0", "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-03-26",
-                    "capabilities": {},
-                    "clientInfo": {"name": "telegram-bot", "version": "1.0"},
+            await client.post(
+                url,
+                json={
+                    "jsonrpc": "2.0",
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-03-26",
+                        "capabilities": {},
+                        "clientInfo": {"name": "telegram-bot", "version": "1.0"},
+                    },
+                    "id": 1,
                 },
-                "id": 1,
-            }, headers=headers, timeout=10)
+                headers=headers,
+                timeout=10,
+            )
 
-            resp = await client.post(url, json={
-                "jsonrpc": "2.0", "method": "tools/call",
-                "params": {"name": tool, "arguments": args},
-                "id": 2,
-            }, headers=headers, timeout=timeout)
+            resp = await client.post(
+                url,
+                json={
+                    "jsonrpc": "2.0",
+                    "method": "tools/call",
+                    "params": {"name": tool, "arguments": args},
+                    "id": 2,
+                },
+                headers=headers,
+                timeout=timeout,
+            )
 
             # Parse SSE
             result_text = ""
@@ -272,10 +296,14 @@ class TelegramBot:
             log.info("Telegram bot started polling...")
             while True:
                 try:
-                    resp = await client.get(f"{self.tg_api}/getUpdates", params={
-                        "offset": self.offset,
-                        "timeout": 30,
-                    }, timeout=40)
+                    resp = await client.get(
+                        f"{self.tg_api}/getUpdates",
+                        params={
+                            "offset": self.offset,
+                            "timeout": 30,
+                        },
+                        timeout=40,
+                    )
 
                     if resp.status_code != 200:
                         log.error(f"Telegram API error: {resp.status_code}")
@@ -294,16 +322,11 @@ class TelegramBot:
 
                         # Route by message type
                         if "voice" in message:
-                            await self.handle_voice(
-                                chat_id, message["voice"]["file_id"], client
-                            )
+                            await self.handle_voice(chat_id, message["voice"]["file_id"], client)
                         elif "photo" in message:
                             # Use highest resolution photo
                             photo = message["photo"][-1]
-                            await self.handle_photo(
-                                chat_id, photo["file_id"],
-                                message.get("caption", ""), client
-                            )
+                            await self.handle_photo(chat_id, photo["file_id"], message.get("caption", ""), client)
                         elif "text" in message:
                             await self.handle_text(chat_id, message["text"], client)
 

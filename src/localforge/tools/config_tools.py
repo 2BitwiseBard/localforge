@@ -92,7 +92,10 @@ async def get_generation_params_tool(args: dict) -> str:
             "top_k": {"type": "integer", "description": "Top-k sampling"},
             "min_p": {"type": "number", "description": "Min-p sampling threshold"},
             "repetition_penalty": {"type": "number", "description": "Repetition penalty (1.0 = none)"},
-            "enable_thinking": {"type": "boolean", "description": "Enable model thinking/reasoning (true/false). Controls <think> block generation."},
+            "enable_thinking": {
+                "type": "boolean",
+                "description": "Enable model thinking/reasoning (true/false). Controls <think> block generation.",
+            },
             "mode": {"type": "string", "description": "Chat mode: 'instruct', 'chat', or 'chat-instruct'"},
             "system_suffix": {"type": "string", "description": "System instruction appended to all calls"},
         },
@@ -104,10 +107,23 @@ async def set_generation_params_tool(args: dict) -> str:
         cfg._runtime_overrides.clear()
         return "All runtime overrides cleared. Falling back to config.yaml + webui settings."
 
-    allowed = {"temperature", "max_tokens", "top_p", "top_k", "min_p",
-               "repetition_penalty", "enable_thinking", "mode", "system_suffix",
-               "seed", "custom_token_bans", "ban_eos_token", "reasoning_effort",
-               "prompt_lookup_num_tokens", "max_tokens_second"}
+    allowed = {
+        "temperature",
+        "max_tokens",
+        "top_p",
+        "top_k",
+        "min_p",
+        "repetition_penalty",
+        "enable_thinking",
+        "mode",
+        "system_suffix",
+        "seed",
+        "custom_token_bans",
+        "ban_eos_token",
+        "reasoning_effort",
+        "prompt_lookup_num_tokens",
+        "max_tokens_second",
+    }
     changed = []
     for k, v in args.items():
         if k not in allowed:

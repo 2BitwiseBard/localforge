@@ -17,10 +17,7 @@ SESSIONS_DIR = sessions_dir()
 
 @tool_handler(
     name="save_session",
-    description=(
-        "Save a multi-turn conversation to disk so it survives server restarts. "
-        "Sessions are stored as JSON."
-    ),
+    description=("Save a multi-turn conversation to disk so it survives server restarts. Sessions are stored as JSON."),
     schema={
         "type": "object",
         "properties": {
@@ -135,7 +132,10 @@ async def list_sessions(args: dict) -> str:
         "type": "object",
         "properties": {
             "session_id": {"type": "string", "description": "Session ID to delete"},
-            "from_memory": {"type": "boolean", "description": "Also remove from in-memory conversations (default: true)"},
+            "from_memory": {
+                "type": "boolean",
+                "description": "Also remove from in-memory conversations (default: true)",
+            },
         },
         "required": ["session_id"],
     },

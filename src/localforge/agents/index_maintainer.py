@@ -30,9 +30,13 @@ class IndexMaintainer(BaseAgent):
                         dir_path = os.path.expanduser(directory)
                         index_name = os.path.basename(dir_path)
                         self.state.log(f"Re-indexing changed directory: {index_name}")
-                        result = await self.call_tool("incremental_index", {
-                            "index_name": index_name,
-                        }, timeout=120)
+                        result = await self.call_tool(
+                            "incremental_index",
+                            {
+                                "index_name": index_name,
+                            },
+                            timeout=120,
+                        )
                         text = self.extract_text(result)
                         self.state.log(f"  {index_name}: {text[:100]}")
             return
@@ -53,8 +57,12 @@ class IndexMaintainer(BaseAgent):
                 continue
 
             self.state.log(f"Updating index: {index_name}")
-            result = await self.call_tool("incremental_index", {
-                "index_name": index_name,
-            }, timeout=120)
+            result = await self.call_tool(
+                "incremental_index",
+                {
+                    "index_name": index_name,
+                },
+                timeout=120,
+            )
             text = self.extract_text(result)
             self.state.log(f"  {index_name}: {text[:100]}")

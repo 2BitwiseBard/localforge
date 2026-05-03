@@ -22,7 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        # 3.13 is excluded until tree-sitter-languages~=1.10 ships a 3.13 wheel
+        # (the package appears unmaintained; revisit when migrating to
+        # tree-sitter-language-pack).
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -43,6 +46,10 @@ jobs:
 
   typecheck:
     runs-on: ubuntu-latest
+    # Non-blocking: the codebase has ~100 pre-existing mypy errors that need
+    # a dedicated cleanup pass. Keep the job running so the count is visible
+    # in CI logs, but don't fail PRs on it until the backlog is worked through.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

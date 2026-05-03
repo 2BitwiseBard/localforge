@@ -37,12 +37,22 @@ CREATE INDEX IF NOT EXISTS idx_research_status ON research_sessions(status, upda
 
 # Domain credibility tiers
 HIGH_TRUST_DOMAINS = {
-    "arxiv.org", "github.com", "docs.python.org", "docs.rs",
-    "developer.mozilla.org", "stackoverflow.com", "en.wikipedia.org",
-    "pytorch.org", "huggingface.co", "openai.com", "anthropic.com",
+    "arxiv.org",
+    "github.com",
+    "docs.python.org",
+    "docs.rs",
+    "developer.mozilla.org",
+    "stackoverflow.com",
+    "en.wikipedia.org",
+    "pytorch.org",
+    "huggingface.co",
+    "openai.com",
+    "anthropic.com",
 }
 LOW_TRUST_DOMAINS = {
-    "pinterest.com", "quora.com", "medium.com",
+    "pinterest.com",
+    "quora.com",
+    "medium.com",
 }
 
 
@@ -116,8 +126,7 @@ class ResearchSession:
         log.info(f"Created research session {session_id}: {question[:80]}")
         return session_id
 
-    def add_finding(self, session_id: str, url: str, title: str,
-                    excerpt: str, credibility_score: float = 0.5):
+    def add_finding(self, session_id: str, url: str, title: str, excerpt: str, credibility_score: float = 0.5):
         """Add a source finding to a session."""
         conn = self._get_conn()
         row = conn.execute(
@@ -128,13 +137,15 @@ class ResearchSession:
             return
 
         findings = json.loads(row[0])
-        findings.append({
-            "url": url,
-            "title": title,
-            "excerpt": excerpt[:1000],
-            "credibility": credibility_score,
-            "found_at": time.time(),
-        })
+        findings.append(
+            {
+                "url": url,
+                "title": title,
+                "excerpt": excerpt[:1000],
+                "credibility": credibility_score,
+                "found_at": time.time(),
+            }
+        )
         conn.execute(
             "UPDATE research_sessions SET findings = ?, updated_at = ? WHERE id = ?",
             (json.dumps(findings), time.time(), session_id),
@@ -178,8 +189,11 @@ class ResearchSession:
         if not row:
             return None
         return {
-            "id": row[0], "question": row[1], "status": row[2],
-            "created_at": row[3], "updated_at": row[4],
+            "id": row[0],
+            "question": row[1],
+            "status": row[2],
+            "created_at": row[3],
+            "updated_at": row[4],
             "findings": json.loads(row[5]),
             "synthesis": row[6],
             "follow_up_urls": json.loads(row[7]),
@@ -201,8 +215,11 @@ class ResearchSession:
 
         return [
             {
-                "id": r[0], "question": r[1], "status": r[2],
-                "created_at": r[3], "updated_at": r[4],
+                "id": r[0],
+                "question": r[1],
+                "status": r[2],
+                "created_at": r[3],
+                "updated_at": r[4],
                 "finding_count": len(json.loads(r[5])),
             }
             for r in rows

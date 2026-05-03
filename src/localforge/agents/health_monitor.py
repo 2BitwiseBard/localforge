@@ -19,10 +19,7 @@ class HealthMonitor(BaseAgent):
         # Check for real issues — ignore optional backends being unreachable
         lines = text.splitlines()
         has_error = "error" in text.lower()
-        has_primary_down = any(
-            "unreachable" in line.lower() and "optional" not in line.lower()
-            for line in lines
-        )
+        has_primary_down = any("unreachable" in line.lower() and "optional" not in line.lower() for line in lines)
 
         if has_error or has_primary_down:
             self.state.log(f"ALERT: Health issue detected:\n{text}")

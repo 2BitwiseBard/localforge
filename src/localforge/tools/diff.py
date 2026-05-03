@@ -12,7 +12,10 @@ from localforge.tools import tool_handler
         "type": "object",
         "properties": {
             "diff": {"type": "string", "description": "Git diff output to review"},
-            "focus": {"type": "string", "description": "Optional focus area (e.g. 'security', 'performance', 'correctness')"},
+            "focus": {
+                "type": "string",
+                "description": "Optional focus area (e.g. 'security', 'performance', 'correctness')",
+            },
         },
         "required": ["diff"],
     },

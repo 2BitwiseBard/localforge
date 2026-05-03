@@ -9,10 +9,7 @@ from localforge.tools import tool_handler
 
 @tool_handler(
     name="web_search",
-    description=(
-        "Search the web via DuckDuckGo. Returns titles, URLs, and snippets. "
-        "Zero API keys required."
-    ),
+    description=("Search the web via DuckDuckGo. Returns titles, URLs, and snippets. Zero API keys required."),
     schema={
         "type": "object",
         "properties": {
@@ -44,11 +41,7 @@ async def web_search(args: dict) -> str:
 
         parts = []
         for i, r in enumerate(results, 1):
-            parts.append(
-                f"[{i}] {r.get('title', 'No title')}\n"
-                f"{r.get('href', '')}\n"
-                f"{r.get('body', '')}"
-            )
+            parts.append(f"[{i}] {r.get('title', 'No title')}\n{r.get('href', '')}\n{r.get('body', '')}")
         return "\n\n".join(parts)
     except Exception as e:
         return f"Search error: {e}"
@@ -56,10 +49,7 @@ async def web_search(args: dict) -> str:
 
 @tool_handler(
     name="web_fetch",
-    description=(
-        "Fetch a URL and extract readable text content. "
-        "Uses trafilatura for robust text extraction."
-    ),
+    description=("Fetch a URL and extract readable text content. Uses trafilatura for robust text extraction."),
     schema={
         "type": "object",
         "properties": {
@@ -81,9 +71,7 @@ async def web_fetch(args: dict) -> str:
                 return None
             return trafilatura.extract(downloaded)
 
-        text = await asyncio.wait_for(
-            asyncio.to_thread(_fetch_and_extract), timeout=10
-        )
+        text = await asyncio.wait_for(asyncio.to_thread(_fetch_and_extract), timeout=10)
 
         if not text:
             return f"Could not extract text from: {url}"
@@ -161,13 +149,14 @@ async def deep_research(args: dict) -> str:
         async with task_type_context("reasoning"):
             synthesis = await chat(synthesis_prompt)
 
-        citation_lines = [f"[{i+1}] {url}" for i, url in enumerate(sources)]
+        citation_lines = [f"[{i + 1}] {url}" for i, url in enumerate(sources)]
         result = f"{synthesis}\n\n---\nSources:\n" + "\n".join(citation_lines)
 
         # Step 5: Save to knowledge graph
         if save_to_kg:
             try:
                 from localforge.tools.knowledge import _get_kg
+
                 kg = _get_kg()
                 topic_slug = re.sub(r"[^a-z0-9]+", "-", question.lower())[:50]
                 topic_id = kg.add_entity(

@@ -29,15 +29,17 @@ log = logging.getLogger("gpu-pool")
 # Circuit breaker states
 # ---------------------------------------------------------------------------
 
+
 class CircuitState(Enum):
-    CLOSED = "closed"       # Normal operation, requests flow through
-    OPEN = "open"           # Failures exceeded threshold, skip until cooldown
+    CLOSED = "closed"  # Normal operation, requests flow through
+    OPEN = "open"  # Failures exceeded threshold, skip until cooldown
     HALF_OPEN = "half_open"  # Cooldown expired, try one probe
 
 
 @dataclass
 class CircuitBreaker:
     """Per-backend circuit breaker to avoid hammering failing backends."""
+
     failure_threshold: int = 5
     cooldown_s: float = 60.0
     state: CircuitState = CircuitState.CLOSED
@@ -73,11 +75,13 @@ class CircuitBreaker:
 # Device capabilities for the compute mesh
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class DeviceCapabilities:
     """What a device on the mesh can do."""
+
     inference: bool = False
-    max_model_params: int = 0      # Largest model (in B params)
+    max_model_params: int = 0  # Largest model (in B params)
     vram_mb: int = 0
     ram_mb: int = 0
     embeddings: bool = False
@@ -86,8 +90,8 @@ class DeviceCapabilities:
     stt: bool = False
     vision: bool = False
     classification: bool = False
-    platform: str = ""             # linux, darwin, android
-    gpu_type: str = ""             # nvidia, apple_silicon, adreno, amd, none
+    platform: str = ""  # linux, darwin, android
+    gpu_type: str = ""  # nvidia, apple_silicon, adreno, amd, none
     cpu_cores: int = 0
     battery_pct: int = -1
     battery_charging: bool = False
@@ -105,10 +109,11 @@ class DeviceCapabilities:
 @dataclass
 class ComputeNode:
     """A device on the compute mesh with capability-based routing."""
+
     name: str
     url: str
     capabilities: DeviceCapabilities = field(default_factory=DeviceCapabilities)
-    tier: str = "lightweight"      # gpu-primary, gpu-secondary, cpu-capable, lightweight
+    tier: str = "lightweight"  # gpu-primary, gpu-secondary, cpu-capable, lightweight
     healthy: bool = False
     last_check: float = 0
     missed_pings: int = 0
@@ -136,6 +141,7 @@ class ComputeNode:
 # Legacy Backend (text-gen-webui on :5000)
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class Backend:
     name: str
@@ -146,7 +152,7 @@ class Backend:
     last_check: float = 0
     missed_pings: int = 0
     active_requests: int = 0
-    active_slots: int = 0       # from /slots endpoint
+    active_slots: int = 0  # from /slots endpoint
     total_slots: int = 1
     circuit: CircuitBreaker = field(default_factory=CircuitBreaker)
 
@@ -250,10 +256,7 @@ class GPUPool:
                             slots = slots_resp.json()
                             if isinstance(slots, list):
                                 backend.total_slots = len(slots)
-                                backend.active_slots = sum(
-                                    1 for s in slots
-                                    if s.get("state", 0) != 0
-                                )
+                                backend.active_slots = sum(1 for s in slots if s.get("state", 0) != 0)
                     except httpx.HTTPError:
                         pass  # /slots is optional (llama.cpp only)
 
@@ -269,8 +272,7 @@ class GPUPool:
         backend.circuit.record_failure()
         if backend.missed_pings >= 3:
             if backend.healthy:
-                log.warning("Backend %s marked unhealthy after %d missed pings",
-                            backend.name, backend.missed_pings)
+                log.warning("Backend %s marked unhealthy after %d missed pings", backend.name, backend.missed_pings)
             backend.healthy = False
         backend.last_check = time.time()
         return False
@@ -300,7 +302,9 @@ class GPUPool:
         """Discover text-gen-webui instances on the Tailscale mesh."""
         try:
             proc = await asyncio.create_subprocess_exec(
-                "tailscale", "status", "--json",
+                "tailscale",
+                "status",
+                "--json",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -417,10 +421,14 @@ class GPUPool:
         best = min(pool, key=lambda x: x[1])
         source = "model-match" if candidates else "fallback"
         log.debug(
-            "route_request(%s): chose %s (model=%s, load=%.1f, source=%s, "
-            "candidates=%d, fallbacks=%d)",
-            task_type, best[0], best[2] or "?", best[1], source,
-            len(candidates), len(fallbacks),
+            "route_request(%s): chose %s (model=%s, load=%.1f, source=%s, candidates=%d, fallbacks=%d)",
+            task_type,
+            best[0],
+            best[2] or "?",
+            best[1],
+            source,
+            len(candidates),
+            len(fallbacks),
         )
         return best[0]
 
@@ -476,15 +484,15 @@ class GPUPool:
             self._worker_port = compute_cfg.get("worker_port", 8200)
             self._task_routing = compute_cfg.get("task_routing", {})
 
-    def register_compute_node(self, name: str, url: str,
-                               capabilities: dict = None,
-                               tier: str = "lightweight"):
+    def register_compute_node(self, name: str, url: str, capabilities: dict = None, tier: str = "lightweight"):
         """Register a compute node on the mesh."""
         self.__init_compute()
         caps = DeviceCapabilities.from_dict(capabilities or {})
         node = ComputeNode(
-            name=name, url=url.rstrip("/"),
-            capabilities=caps, tier=tier,
+            name=name,
+            url=url.rstrip("/"),
+            capabilities=caps,
+            tier=tier,
         )
         self._compute_nodes[name] = node
         log.info(f"Registered compute node: {name} ({tier}) at {url}")
@@ -496,8 +504,7 @@ class GPUPool:
                 resp = await client.get(f"{node.url}/health")
                 if resp.status_code == 200:
                     data = resp.json()
-                    node.capabilities = DeviceCapabilities.from_dict(
-                        data.get("capabilities", {}))
+                    node.capabilities = DeviceCapabilities.from_dict(data.get("capabilities", {}))
                     node.tier = data.get("tier", node.tier)
                     node.model_name = data.get("model_name", "")
                     node.healthy = True
@@ -600,12 +607,13 @@ class GPUPool:
         candidates.sort(key=sort_key)
         chosen = candidates[0]
         log.debug(
-            "route_task(%s): chose %s (tier=%s, model=%s, load=%.1f, "
-            "model_match=%s, candidates=%d)",
-            task_type, chosen.url, chosen.tier, chosen.model_name or "?",
+            "route_task(%s): chose %s (tier=%s, model=%s, load=%.1f, model_match=%s, candidates=%d)",
+            task_type,
+            chosen.url,
+            chosen.tier,
+            chosen.model_name or "?",
             chosen.load,
-            bool(prefer_model and chosen.model_name and
-                 prefer_model.lower() in chosen.model_name.lower()),
+            bool(prefer_model and chosen.model_name and prefer_model.lower() in chosen.model_name.lower()),
             len(candidates),
         )
         return candidates[0].url
@@ -679,12 +687,14 @@ class GPUPool:
             if age > 600:  # remove after 10 min
                 stale_keys.append(key)
                 continue
-            workers.append({
-                **w,
-                "key": key,
-                "healthy": healthy,
-                "heartbeat_age_s": round(age),
-            })
+            workers.append(
+                {
+                    **w,
+                    "key": key,
+                    "healthy": healthy,
+                    "heartbeat_age_s": round(age),
+                }
+            )
         for k in stale_keys:
             del self._heartbeat_nodes[k]
         return workers
@@ -709,7 +719,9 @@ class GPUPool:
         self.__init_compute()
         try:
             proc = await asyncio.create_subprocess_exec(
-                "tailscale", "status", "--json",
+                "tailscale",
+                "status",
+                "--json",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -746,8 +758,7 @@ class GPUPool:
                         async with self._lock:
                             self._compute_nodes[name] = node
                         self._discovery_failures.pop(name, None)
-                        log.info(f"Auto-discovered worker: {name} ({node.tier}, "
-                                 f"caps={node.capabilities.to_dict()})")
+                        log.info(f"Auto-discovered worker: {name} ({node.tier}, caps={node.capabilities.to_dict()})")
                         found = True
                         break
                 if not found:

@@ -25,6 +25,7 @@ INDEXES_DIR = indexes_dir()
 
 def _sanitize_topic(raw: str) -> str:
     import re
+
     return re.sub(r"[^a-zA-Z0-9_-]", "_", raw.strip())[:80]
 
 
@@ -55,12 +56,14 @@ async def embed_text(args: dict) -> str:
         return "Error: max 50 texts per call."
     try:
         vectors = embed_texts(texts)
-        return json.dumps({
-            "model": DENSE_MODEL,
-            "dimensions": len(vectors[0]) if vectors else 0,
-            "count": len(vectors),
-            "vectors": vectors,
-        })
+        return json.dumps(
+            {
+                "model": DENSE_MODEL,
+                "dimensions": len(vectors[0]) if vectors else 0,
+                "count": len(vectors),
+                "vectors": vectors,
+            }
+        )
     except Exception as e:
         return f"Error computing embeddings: {e}"
 
@@ -114,10 +117,7 @@ async def semantic_search(args: dict) -> str:
             rel = str(Path(chunk["file"]).relative_to(entry["meta"]["directory"]))
         except ValueError:
             rel = chunk["file"]
-        parts.append(
-            f"--- {rel}:{chunk['start_line']}-{chunk['end_line']} (sim: {score:.3f}) ---\n"
-            f"{chunk['content']}"
-        )
+        parts.append(f"--- {rel}:{chunk['start_line']}-{chunk['end_line']} (sim: {score:.3f}) ---\n{chunk['content']}")
 
     return f"Top {len(parts)} semantic matches for '{query}':\n\n" + "\n\n".join(parts)
 
@@ -230,10 +230,7 @@ async def hybrid_search(args: dict) -> str:
             rel = str(Path(chunk["file"]).relative_to(entry["meta"]["directory"]))
         except ValueError:
             rel = chunk["file"]
-        parts.append(
-            f"--- {rel}:{chunk['start_line']}-{chunk['end_line']} (rrf: {score:.4f}) ---\n"
-            f"{chunk['content']}"
-        )
+        parts.append(f"--- {rel}:{chunk['start_line']}-{chunk['end_line']} (rrf: {score:.4f}) ---\n{chunk['content']}")
 
     return f"Top {len(parts)} matches ({mode} fusion) for '{query}':\n\n" + "\n\n".join(parts)
 

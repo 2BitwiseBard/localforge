@@ -40,7 +40,10 @@ async def generate_test_stubs(args: dict) -> str:
         "type": "object",
         "properties": {
             "code": {"type": "string", "description": "Source code to refactor"},
-            "goal": {"type": "string", "description": "Refactoring goal (e.g. 'extract method', 'improve error handling')"},
+            "goal": {
+                "type": "string",
+                "description": "Refactoring goal (e.g. 'extract method', 'improve error handling')",
+            },
         },
         "required": ["code", "goal"],
     },
@@ -62,7 +65,10 @@ async def suggest_refactor(args: dict) -> str:
         "type": "object",
         "properties": {
             "code": {"type": "string", "description": "Source code to document"},
-            "style": {"type": "string", "description": "Doc style: 'inline' (doc comments), 'readme' (README section), 'api' (API reference)"},
+            "style": {
+                "type": "string",
+                "description": "Doc style: 'inline' (doc comments), 'readme' (README section), 'api' (API reference)",
+            },
             "language": {"type": "string", "description": "Language hint (optional, overrides context)"},
         },
         "required": ["code"],
@@ -77,11 +83,7 @@ async def draft_docs(args: dict) -> str:
         "api": "Write API reference documentation covering all public items, parameters, return types, and examples.",
     }
     instruction = style_map.get(style, style_map["inline"])
-    prompt = (
-        f"{instruction}\n\n"
-        f"Language: {lang or 'auto-detect'}\n\n"
-        f"```\n{args['code']}\n```"
-    )
+    prompt = f"{instruction}\n\nLanguage: {lang or 'auto-detect'}\n\n```\n{args['code']}\n```"
     return await chat(prompt, system=cfg.get_system_preamble())
 
 
@@ -120,7 +122,10 @@ async def translate_code(args: dict) -> str:
         "type": "object",
         "properties": {
             "description": {"type": "string", "description": "Natural language description of what to match"},
-            "flavor": {"type": "string", "description": "Regex flavor: 'pcre', 'python', 'javascript', 'rust' (default: 'pcre')"},
+            "flavor": {
+                "type": "string",
+                "description": "Regex flavor: 'pcre', 'python', 'javascript', 'rust' (default: 'pcre')",
+            },
             "examples": {"type": "string", "description": "Optional example strings that should/shouldn't match"},
         },
         "required": ["description"],
@@ -148,7 +153,10 @@ async def generate_regex(args: dict) -> str:
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "The query to optimize"},
-            "engine": {"type": "string", "description": "Query engine: 'sql', 'polars', 'duckdb' (default: auto-detect)"},
+            "engine": {
+                "type": "string",
+                "description": "Query engine: 'sql', 'polars', 'duckdb' (default: auto-detect)",
+            },
             "context": {"type": "string", "description": "Optional schema/table info or performance constraints"},
         },
         "required": ["query"],
@@ -182,19 +190,22 @@ async def optimize_query(args: dict) -> str:
         "properties": {
             "prompt": {"type": "string", "description": "What to generate as JSON"},
             "schema_hint": {"type": "string", "description": "Example JSON structure the output should follow"},
-            "use_grammar": {"type": "boolean", "description": "Use GBNF JSON grammar for guaranteed valid JSON (default: true)"},
+            "use_grammar": {
+                "type": "boolean",
+                "description": "Use GBNF JSON grammar for guaranteed valid JSON (default: true)",
+            },
         },
         "required": ["prompt"],
     },
 )
 async def structured_output(args: dict) -> str:
     from localforge.chunking import BUILTIN_GRAMMARS
+
     schema_block = ""
     if args.get("schema_hint"):
         schema_block = f"\n\nExpected structure:\n```json\n{args['schema_hint']}\n```"
     prompt = (
-        f"Respond with valid JSON only. No markdown, no explanation, just the JSON.\n\n"
-        f"{args['prompt']}{schema_block}"
+        f"Respond with valid JSON only. No markdown, no explanation, just the JSON.\n\n{args['prompt']}{schema_block}"
     )
     kwargs = {}
     if args.get("use_grammar", True):

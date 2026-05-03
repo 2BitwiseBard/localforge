@@ -19,10 +19,12 @@ _MIGRATIONS: dict[str, list[tuple[int, str, Callable[[sqlite3.Connection], None]
 
 def register(db_name: str, version: int, description: str):
     """Decorator to register a migration function."""
+
     def decorator(fn: Callable[[sqlite3.Connection], None]):
         _MIGRATIONS.setdefault(db_name, []).append((version, description, fn))
         _MIGRATIONS[db_name].sort(key=lambda x: x[0])
         return fn
+
     return decorator
 
 
@@ -35,9 +37,7 @@ def run_migrations(conn: sqlite3.Connection, db_name: str) -> int:
         "  updated_at TEXT DEFAULT (datetime('now'))"
         ")"
     )
-    conn.execute(
-        "INSERT OR IGNORE INTO schema_version (id, version) VALUES (1, 0)"
-    )
+    conn.execute("INSERT OR IGNORE INTO schema_version (id, version) VALUES (1, 0)")
 
     row = conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()
     current = row[0] if row else 0
@@ -68,6 +68,7 @@ def run_migrations(conn: sqlite3.Connection, db_name: str) -> int:
 
 # --- Knowledge Graph Migrations ---
 
+
 @register("knowledge", 1, "Initial schema (baseline)")
 def _kg_v1(conn: sqlite3.Connection):
     """Baseline — schema already exists, just mark as v1."""
@@ -82,12 +83,14 @@ def _kg_v2(conn: sqlite3.Connection):
 
 # --- Task Queue Migrations ---
 
+
 @register("task_queue", 1, "Initial schema (baseline)")
 def _tq_v1(conn: sqlite3.Connection):
     pass
 
 
 # --- Approval Queue Migrations ---
+
 
 @register("approval_queue", 1, "Initial schema (baseline)")
 def _aq_v1(conn: sqlite3.Connection):

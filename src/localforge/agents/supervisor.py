@@ -33,6 +33,7 @@ def _agents_config() -> Path:
     """Resolve agents.yaml path, preferring paths module."""
     try:
         from localforge.paths import agents_config_path
+
         return agents_config_path()
     except ImportError:
         return Path(__file__).parent.parent / "agents.yaml"
@@ -41,7 +42,9 @@ def _agents_config() -> Path:
 def _state_dir() -> Path:
     """Resolve agent state directory."""
     from localforge.paths import agent_state_dir
+
     return agent_state_dir()
+
 
 # Registry of agent classes
 _agent_classes: dict[str, type] = {}
@@ -75,8 +78,8 @@ class AgentSupervisor:
 
         # Error tracking per agent (for error budgets)
         self._error_counts: dict[str, list[float]] = {}  # agent_id -> [failure_timestamps]
-        self._max_errors = 5          # max failures in error window
-        self._error_window = 300.0    # 5 minute window
+        self._max_errors = 5  # max failures in error window
+        self._error_window = 300.0  # 5 minute window
         self._default_agent_timeout = 3600  # 1 hour default timeout per execution
 
     def load_config(self) -> dict:
@@ -126,8 +129,7 @@ class AgentSupervisor:
         # Start bus listener
         asyncio.create_task(self._bus_listener())
 
-        log.info(f"Supervisor started with {len(self._agents)} agents, "
-                 f"{self._worker_count} workers")
+        log.info(f"Supervisor started with {len(self._agents)} agents, {self._worker_count} workers")
 
     async def stop(self):
         """Stop all agents, workers, and save state."""
@@ -194,9 +196,7 @@ class AgentSupervisor:
         # Schedule
         schedule = config.get("schedule", "")
         if schedule:
-            self._tasks[agent_id] = asyncio.create_task(
-                self._schedule_loop(agent, schedule)
-            )
+            self._tasks[agent_id] = asyncio.create_task(self._schedule_loop(agent, schedule))
             agent.state.log(f"Started with schedule: {schedule}")
         elif not config.get("ephemeral"):
             # One-shot for non-ephemeral agents
@@ -249,9 +249,15 @@ class AgentSupervisor:
             return True
         return False
 
-    async def create_agent(self, agent_id: str, agent_type: str,
-                           trust: str = "monitor", schedule: str = "",
-                           config: dict = None, persist: bool = True) -> bool:
+    async def create_agent(
+        self,
+        agent_id: str,
+        agent_type: str,
+        trust: str = "monitor",
+        schedule: str = "",
+        config: dict = None,
+        persist: bool = True,
+    ) -> bool:
         """Create a new agent at runtime, optionally persisting to agents.yaml."""
         if agent_id in self._agents:
             return False
@@ -275,27 +281,27 @@ class AgentSupervisor:
 
     def _save_state(self, agent: BaseAgent):
         state_file = _state_dir() / f"{agent.agent_id}.json"
-        state_file.write_text(json.dumps({
-            "data": agent.state.data,
-            "run_count": agent.state.run_count,
-            "last_run": agent.state.last_run,
-            "logs": agent.state.logs[-100:],
-            "status": agent.state.status,
-            "last_error": agent.state.last_error,
-            "last_duration": agent.state.last_duration,
-            "total_duration": agent.state.total_duration,
-        }))
+        state_file.write_text(
+            json.dumps(
+                {
+                    "data": agent.state.data,
+                    "run_count": agent.state.run_count,
+                    "last_run": agent.state.last_run,
+                    "logs": agent.state.logs[-100:],
+                    "status": agent.state.status,
+                    "last_error": agent.state.last_error,
+                    "last_duration": agent.state.last_duration,
+                    "total_duration": agent.state.total_duration,
+                }
+            )
+        )
 
     async def _run_once(self, agent: BaseAgent):
-        timeout = self._configs.get(agent.agent_id, {}).get(
-            "timeout", self._default_agent_timeout
-        )
+        timeout = self._configs.get(agent.agent_id, {}).get("timeout", self._default_agent_timeout)
         try:
             await asyncio.wait_for(agent.execute(), timeout=timeout)
         except asyncio.TimeoutError:
-            log.error(
-                "Agent %s timed out after %ds", agent.agent_id, timeout
-            )
+            log.error("Agent %s timed out after %ds", agent.agent_id, timeout)
             agent.state.log(f"Execution timed out after {timeout}s")
             agent.state.last_error = f"Timed out after {timeout}s"
         self._save_state(agent)
@@ -303,6 +309,7 @@ class AgentSupervisor:
     async def _wait_for_gateway(self, max_wait: int = 60):
         """Wait for the MCP gateway to be reachable before running agents."""
         import httpx
+
         for i in range(max_wait):
             try:
                 async with httpx.AsyncClient(timeout=3) as client:
@@ -353,23 +360,25 @@ class AgentSupervisor:
                         f"Agent {agent_id} exceeded error budget "
                         f"({self._max_errors} failures in {self._error_window}s) — pausing"
                     )
-                    agent.state.log(f"Auto-paused: exceeded error budget")
+                    agent.state.log("Auto-paused: exceeded error budget")
                     self._paused.add(agent_id)
                     agent.state.status = "error-paused"
                     # Notify via bus
-                    await self.bus.publish(Message(
-                        sender="__supervisor__",
-                        topic="agent.notification",
-                        payload={
-                            "title": f"Agent {agent_id} auto-paused",
-                            "body": f"Exceeded {self._max_errors} failures in "
-                                    f"{self._error_window}s. Last error: {exc}",
-                            "level": "error",
-                            "agent_id": agent_id,
-                            "agent_type": agent.name,
-                            "timestamp": now,
-                        },
-                    ))
+                    await self.bus.publish(
+                        Message(
+                            sender="__supervisor__",
+                            topic="agent.notification",
+                            payload={
+                                "title": f"Agent {agent_id} auto-paused",
+                                "body": f"Exceeded {self._max_errors} failures in "
+                                f"{self._error_window}s. Last error: {exc}",
+                                "level": "error",
+                                "agent_id": agent_id,
+                                "agent_type": agent.name,
+                                "timestamp": now,
+                            },
+                        )
+                    )
                     break  # stop retrying
 
                 log.info(f"Respawning {agent_id} schedule loop in {backoff:.0f}s")
@@ -380,13 +389,17 @@ class AgentSupervisor:
     async def _schedule_inner(self, agent: BaseAgent, schedule: str):
         """Schedule using croniter for precise cron alignment; falls back to fixed interval."""
         import datetime
+
         try:
             from croniter import croniter as CronIter
+
             CronIter(schedule)  # validate expression early
         except ImportError:
             CronIter = None
-            log.warning("croniter not installed; pip install localforge[agents] for precise cron. "
-                        "Falling back to approximate interval scheduling.")
+            log.warning(
+                "croniter not installed; pip install localforge[agents] for precise cron. "
+                "Falling back to approximate interval scheduling."
+            )
         except Exception as exc:
             CronIter = None
             log.warning("Invalid cron expression %r (%s); defaulting to hourly", schedule, exc)
@@ -414,15 +427,11 @@ class AgentSupervisor:
                 next_run = time.monotonic() + interval
 
             if agent.agent_id not in self._paused:
-                timeout = self._configs.get(agent.agent_id, {}).get(
-                    "timeout", self._default_agent_timeout
-                )
+                timeout = self._configs.get(agent.agent_id, {}).get("timeout", self._default_agent_timeout)
                 try:
                     await asyncio.wait_for(agent.execute(), timeout=timeout)
                 except asyncio.TimeoutError:
-                    log.error(
-                        "Agent %s timed out after %ds", agent.agent_id, timeout
-                    )
+                    log.error("Agent %s timed out after %ds", agent.agent_id, timeout)
                     agent.state.log(f"Execution timed out after {timeout}s")
                     agent.state.last_error = f"Timed out after {timeout}s"
                 self._save_state(agent)
@@ -495,6 +504,7 @@ class AgentSupervisor:
         except ValueError:
             return 0
         import datetime
+
         now = datetime.datetime.now()
         target = now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
         if target <= now:
@@ -541,13 +551,17 @@ class AgentSupervisor:
         if task_type == "chat":
             # Simple chat completion
             import httpx
+
             prompt = payload.get("prompt", "")
             backend_url = payload.get("backend_url", "http://localhost:5000/v1")
             async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post(f"{backend_url}/chat/completions", json={
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": payload.get("max_tokens", 2048),
-                })
+                resp = await client.post(
+                    f"{backend_url}/chat/completions",
+                    json={
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": payload.get("max_tokens", 2048),
+                    },
+                )
                 data = resp.json()
                 return {"response": data["choices"][0]["message"]["content"]}
 
@@ -557,8 +571,7 @@ class AgentSupervisor:
             arguments = payload.get("arguments", {})
             # Create a temporary agent for the call
             tmp = BaseAgent("task-worker", {}, self.gateway_url, self.api_key)
-            result = await tmp.call_tool(tool_name, arguments,
-                                         timeout=payload.get("timeout", 60))
+            result = await tmp.call_tool(tool_name, arguments, timeout=payload.get("timeout", 60))
             return {"result": tmp.extract_text(result)}
 
         else:
@@ -608,8 +621,10 @@ class AgentSupervisor:
     def _handle_notification(self, msg: Message):
         """Handle agent.notification messages — push to SSE callbacks."""
         payload = msg.payload
-        log.info(f"Notification from {payload.get('agent_id', '?')}: "
-                 f"[{payload.get('level', 'info')}] {payload.get('title', '')}")
+        log.info(
+            f"Notification from {payload.get('agent_id', '?')}: "
+            f"[{payload.get('level', 'info')}] {payload.get('title', '')}"
+        )
         # Fire registered callbacks (e.g., gateway SSE push)
         for callback in getattr(self, "_notification_callbacks", []):
             try:
@@ -633,8 +648,7 @@ class AgentSupervisor:
     # Trigger system
     # -----------------------------------------------------------------------
 
-    async def trigger_agent(self, agent_id: str, trigger_type: str = "manual",
-                            payload: dict | None = None) -> str:
+    async def trigger_agent(self, agent_id: str, trigger_type: str = "manual", payload: dict | None = None) -> str:
         """Trigger an agent to run immediately, regardless of schedule."""
         agent = self._agents.get(agent_id)
         if not agent:
@@ -656,11 +670,13 @@ class AgentSupervisor:
                 # Check for chain triggers
                 await self._process_chains(agent_id)
                 # Notify via bus
-                await self.bus.publish(Message(
-                    sender="__supervisor__",
-                    topic="agent.completed",
-                    payload={"agent_id": agent_id, "trigger_type": trigger_type},
-                ))
+                await self.bus.publish(
+                    Message(
+                        sender="__supervisor__",
+                        topic="agent.completed",
+                        payload={"agent_id": agent_id, "trigger_type": trigger_type},
+                    )
+                )
             except Exception as e:
                 agent.state.log(f"Trigger error: {e}")
                 log.exception(f"Trigger error for {agent_id}")
@@ -697,12 +713,14 @@ class AgentSupervisor:
                     for p in paths:
                         expanded = os.path.expanduser(p)
                         if os.path.isdir(expanded):
-                            watch_configs.append({
-                                "agent_id": agent_id,
-                                "path": expanded,
-                                "patterns": patterns,
-                                "debounce": debounce,
-                            })
+                            watch_configs.append(
+                                {
+                                    "agent_id": agent_id,
+                                    "path": expanded,
+                                    "patterns": patterns,
+                                    "debounce": debounce,
+                                }
+                            )
 
         if not watch_configs:
             return
@@ -715,8 +733,7 @@ class AgentSupervisor:
             return
 
         class _DebouncedHandler(FileSystemEventHandler):
-            def __init__(self, agent_id: str, patterns: list[str], debounce: int,
-                         supervisor: "AgentSupervisor"):
+            def __init__(self, agent_id: str, patterns: list[str], debounce: int, supervisor: "AgentSupervisor"):
                 super().__init__()
                 self.agent_id = agent_id
                 self.patterns = patterns
@@ -730,6 +747,7 @@ class AgentSupervisor:
                 # Check glob patterns
                 path = event.src_path
                 import fnmatch
+
                 if not any(fnmatch.fnmatch(os.path.basename(path), p) for p in self.patterns):
                     return
                 # Debounce
@@ -744,8 +762,7 @@ class AgentSupervisor:
                     try:
                         asyncio.run_coroutine_threadsafe(
                             self.supervisor.trigger_agent(
-                                self.agent_id, "file_watch",
-                                {"path": path, "event": event.event_type}
+                                self.agent_id, "file_watch", {"path": path, "event": event.event_type}
                             ),
                             loop,
                         )
@@ -754,12 +771,11 @@ class AgentSupervisor:
 
         self._observer = Observer()
         for wc in watch_configs:
-            handler = _DebouncedHandler(
-                wc["agent_id"], wc["patterns"], wc["debounce"], self
-            )
+            handler = _DebouncedHandler(wc["agent_id"], wc["patterns"], wc["debounce"], self)
             self._observer.schedule(handler, wc["path"], recursive=True)
-            log.info(f"File watcher: {wc['path']} → {wc['agent_id']} "
-                     f"(patterns={wc['patterns']}, debounce={wc['debounce']}s)")
+            log.info(
+                f"File watcher: {wc['path']} → {wc['agent_id']} (patterns={wc['patterns']}, debounce={wc['debounce']}s)"
+            )
 
         self._observer.daemon = True
         self._observer.start()
@@ -773,38 +789,43 @@ class AgentSupervisor:
         for agent_id, agent in self._agents.items():
             acfg = self._configs.get(agent_id, {})
             triggers = [t.get("type", "unknown") for t in acfg.get("triggers", [])]
-            result.append({
-                "id": agent_id,
-                "type": agent.name,
-                "trust": agent.trust_level.value,
-                "status": agent.state.status,
-                "run_count": agent.state.run_count,
-                "last_run": agent.state.last_run,
-                "last_error": agent.state.last_error,
-                "last_duration": agent.state.last_duration,
-                "avg_duration": (agent.state.total_duration / agent.state.run_count
-                                 if agent.state.run_count else 0),
-                "triggers": triggers,
-                "children": agent._children,
-                "paused": agent_id in self._paused,
-            })
+            result.append(
+                {
+                    "id": agent_id,
+                    "type": agent.name,
+                    "trust": agent.trust_level.value,
+                    "status": agent.state.status,
+                    "run_count": agent.state.run_count,
+                    "last_run": agent.state.last_run,
+                    "last_error": agent.state.last_error,
+                    "last_duration": agent.state.last_duration,
+                    "avg_duration": (
+                        agent.state.total_duration / agent.state.run_count if agent.state.run_count else 0
+                    ),
+                    "triggers": triggers,
+                    "children": agent._children,
+                    "paused": agent_id in self._paused,
+                }
+            )
         # Also include disabled agents from config
         for agent_id, acfg in self._configs.items():
             if agent_id not in self._agents:
-                result.append({
-                    "id": agent_id,
-                    "type": acfg.get("type", agent_id),
-                    "trust": acfg.get("trust", "monitor"),
-                    "status": "disabled",
-                    "run_count": 0,
-                    "last_run": 0,
-                    "last_error": "",
-                    "last_duration": 0,
-                    "avg_duration": 0,
-                    "triggers": [t.get("type", "unknown") for t in acfg.get("triggers", [])],
-                    "children": [],
-                    "paused": False,
-                })
+                result.append(
+                    {
+                        "id": agent_id,
+                        "type": acfg.get("type", agent_id),
+                        "trust": acfg.get("trust", "monitor"),
+                        "status": "disabled",
+                        "run_count": 0,
+                        "last_run": 0,
+                        "last_error": "",
+                        "last_duration": 0,
+                        "avg_duration": 0,
+                        "triggers": [t.get("type", "unknown") for t in acfg.get("triggers", [])],
+                        "children": [],
+                        "paused": False,
+                    }
+                )
         return result
 
     def get_agent_logs(self, agent_id: str, lines: int = 50) -> list[str]:
@@ -821,9 +842,7 @@ class AgentSupervisor:
             "total_agents": len(self._agents),
             "running": sum(1 for a in self._agents.values() if a.state.status == "running"),
             "paused": len(self._paused),
-            "error_paused": sum(
-                1 for a in self._agents.values() if a.state.status == "error-paused"
-            ),
+            "error_paused": sum(1 for a in self._agents.values() if a.state.status == "error-paused"),
             "task_queue_depth": self.task_queue.queue_depth(),
             "bus_subscribers": self.bus.subscriber_count,
             "workers": self._worker_count,
@@ -832,9 +851,7 @@ class AgentSupervisor:
                 "error_window_s": self._error_window,
             },
             "agents": [
-                {**a.metrics(), "recent_errors": len(
-                    [t for t in self._error_counts.get(a.agent_id, []) if t > cutoff]
-                )}
+                {**a.metrics(), "recent_errors": len([t for t in self._error_counts.get(a.agent_id, []) if t > cutoff])}
                 for a in self._agents.values()
             ],
         }

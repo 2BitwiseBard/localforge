@@ -62,6 +62,7 @@ def _dataset_meta_path(dataset_path: Path) -> Path:
 def _write_dataset_meta(dataset_path: Path, examples: int, source: str = "", fmt: str = "") -> None:
     """Write a sidecar metadata file so train_list doesn't have to read the full JSONL."""
     import datetime
+
     meta = {
         "examples": examples,
         "source": source,
@@ -111,10 +112,7 @@ def _check_unsloth() -> str | None:
             f"Or set LOCALFORGE_UNSLOTH_ENV to your Unsloth venv path."
         )
     if not _TRAIN_SCRIPT.exists():
-        return (
-            f"Training script not found at {_TRAIN_SCRIPT}\n"
-            f"Expected train_qlora.py in the Unsloth environment root."
-        )
+        return f"Training script not found at {_TRAIN_SCRIPT}\nExpected train_qlora.py in the Unsloth environment root."
     return None
 
 
@@ -256,9 +254,12 @@ async def train_prepare(args: dict) -> str:
         directory = os.path.expanduser(directory)
         glob_pat = args.get("glob_pattern", "**/*.py")
         cmd += [
-            "--directory", directory,
-            "--glob", glob_pat,
-            "--output", str(output_path),
+            "--directory",
+            directory,
+            "--glob",
+            glob_pat,
+            "--output",
+            str(output_path),
         ]
 
     # HuggingFace downloads can take a while — raise timeout
@@ -508,23 +509,40 @@ async def train_start(args: dict) -> str:
     full_finetune = bool(args.get("full_finetune", False))
 
     cmd = [
-        str(_UNSLOTH_PYTHON), str(_TRAIN_SCRIPT),
-        "--model", base_model,
-        "--dataset", str(dataset_path),
-        "--output", str(run_dir / "output"),
-        "--epochs", str(epochs),
-        "--batch-size", str(batch_size),
-        "--grad-accum", str(grad_accum),
-        "--lr", str(lr),
-        "--lora-rank", str(lora_rank),
-        "--lora-alpha", str(lora_alpha),
-        "--max-seq-len", str(max_seq_len),
-        "--export-gguf", export_gguf,
-        "--lr-scheduler", lr_scheduler,
-        "--warmup-ratio", str(warmup_ratio),
-        "--val-split", str(val_split),
-        "--early-stopping", str(early_stopping),
-        "--max-grad-norm", str(max_grad_norm),
+        str(_UNSLOTH_PYTHON),
+        str(_TRAIN_SCRIPT),
+        "--model",
+        base_model,
+        "--dataset",
+        str(dataset_path),
+        "--output",
+        str(run_dir / "output"),
+        "--epochs",
+        str(epochs),
+        "--batch-size",
+        str(batch_size),
+        "--grad-accum",
+        str(grad_accum),
+        "--lr",
+        str(lr),
+        "--lora-rank",
+        str(lora_rank),
+        "--lora-alpha",
+        str(lora_alpha),
+        "--max-seq-len",
+        str(max_seq_len),
+        "--export-gguf",
+        export_gguf,
+        "--lr-scheduler",
+        lr_scheduler,
+        "--warmup-ratio",
+        str(warmup_ratio),
+        "--val-split",
+        str(val_split),
+        "--early-stopping",
+        str(early_stopping),
+        "--max-grad-norm",
+        str(max_grad_norm),
     ]
     if bf16_lora:
         cmd.append("--bf16")
@@ -672,7 +690,7 @@ async def train_status(args: dict) -> str:
     ]
 
     if is_running:
-        lines.append(f"Elapsed: {elapsed:.0f}s ({elapsed/60:.1f} min)")
+        lines.append(f"Elapsed: {elapsed:.0f}s ({elapsed / 60:.1f} min)")
     elif run_config.get("finished_at"):
         lines.append(f"Finished: {run_config['finished_at']}")
 
@@ -702,10 +720,7 @@ async def train_status(args: dict) -> str:
             gguf_files = list(gguf_dir.glob("*.gguf"))
             if gguf_files:
                 lines.append(f"GGUF model: {gguf_files[0]}")
-                lines.append(
-                    "To use: symlink to text-generation-webui/user_data/models/ "
-                    "and load via swap_model"
-                )
+                lines.append("To use: symlink to text-generation-webui/user_data/models/ and load via swap_model")
 
     return "\n".join(lines)
 
@@ -716,39 +731,221 @@ async def train_status(args: dict) -> str:
 # vram_gb = approximate training VRAM (model + optimizer + activations at batch=2).
 UNSLOTH_CATALOG: list[dict] = [
     # ── Qwen3 QLoRA (verified) ───────────────────────────────────────────
-    {"id": "unsloth/Qwen3-0.6B-bnb-4bit",   "name": "Qwen3 0.6B · QLoRA",  "vram_gb": 1,  "params_b": 0.6, "mode": "qlora", "tags": ["chat", "tiny"]},
-    {"id": "unsloth/Qwen3-1.7B-bnb-4bit",   "name": "Qwen3 1.7B · QLoRA",  "vram_gb": 2,  "params_b": 1.7, "mode": "qlora", "tags": ["chat", "tiny"]},
-    {"id": "unsloth/Qwen3-4B-bnb-4bit",     "name": "Qwen3 4B · QLoRA",    "vram_gb": 4,  "params_b": 4,   "mode": "qlora", "tags": ["chat", "fast"]},
-    {"id": "unsloth/Qwen3-8B-bnb-4bit",     "name": "Qwen3 8B · QLoRA",    "vram_gb": 6,  "params_b": 8,   "mode": "qlora", "tags": ["chat", "recommended"]},
-    {"id": "unsloth/Qwen3-14B-bnb-4bit",    "name": "Qwen3 14B · QLoRA",   "vram_gb": 9,  "params_b": 14,  "mode": "qlora", "tags": ["chat", "reasoning", "best-quality"]},
-    {"id": "unsloth/Qwen3-30B-A3B-bnb-4bit","name": "Qwen3 30B-A3B · QLoRA (MoE)", "vram_gb": 16, "params_b": 30, "mode": "qlora", "tags": ["chat", "reasoning", "moe"]},
+    {
+        "id": "unsloth/Qwen3-0.6B-bnb-4bit",
+        "name": "Qwen3 0.6B · QLoRA",
+        "vram_gb": 1,
+        "params_b": 0.6,
+        "mode": "qlora",
+        "tags": ["chat", "tiny"],
+    },
+    {
+        "id": "unsloth/Qwen3-1.7B-bnb-4bit",
+        "name": "Qwen3 1.7B · QLoRA",
+        "vram_gb": 2,
+        "params_b": 1.7,
+        "mode": "qlora",
+        "tags": ["chat", "tiny"],
+    },
+    {
+        "id": "unsloth/Qwen3-4B-bnb-4bit",
+        "name": "Qwen3 4B · QLoRA",
+        "vram_gb": 4,
+        "params_b": 4,
+        "mode": "qlora",
+        "tags": ["chat", "fast"],
+    },
+    {
+        "id": "unsloth/Qwen3-8B-bnb-4bit",
+        "name": "Qwen3 8B · QLoRA",
+        "vram_gb": 6,
+        "params_b": 8,
+        "mode": "qlora",
+        "tags": ["chat", "recommended"],
+    },
+    {
+        "id": "unsloth/Qwen3-14B-bnb-4bit",
+        "name": "Qwen3 14B · QLoRA",
+        "vram_gb": 9,
+        "params_b": 14,
+        "mode": "qlora",
+        "tags": ["chat", "reasoning", "best-quality"],
+    },
+    {
+        "id": "unsloth/Qwen3-30B-A3B-bnb-4bit",
+        "name": "Qwen3 30B-A3B · QLoRA (MoE)",
+        "vram_gb": 16,
+        "params_b": 30,
+        "mode": "qlora",
+        "tags": ["chat", "reasoning", "moe"],
+    },
     # ── Qwen3 bf16 ───────────────────────────────────────────────────────
-    {"id": "unsloth/Qwen3-0.6B",  "name": "Qwen3 0.6B · bf16",  "vram_gb": 1,  "params_b": 0.6, "mode": "bf16", "tags": ["chat", "tiny", "bf16"]},
-    {"id": "unsloth/Qwen3-1.7B",  "name": "Qwen3 1.7B · bf16",  "vram_gb": 3,  "params_b": 1.7, "mode": "bf16", "tags": ["chat", "tiny", "bf16"]},
-    {"id": "unsloth/Qwen3-4B",    "name": "Qwen3 4B · bf16",    "vram_gb": 8,  "params_b": 4,   "mode": "bf16", "tags": ["chat", "bf16"]},
-    {"id": "unsloth/Qwen3-8B",    "name": "Qwen3 8B · bf16",    "vram_gb": 16, "params_b": 8,   "mode": "bf16", "tags": ["chat", "bf16"]},
+    {
+        "id": "unsloth/Qwen3-0.6B",
+        "name": "Qwen3 0.6B · bf16",
+        "vram_gb": 1,
+        "params_b": 0.6,
+        "mode": "bf16",
+        "tags": ["chat", "tiny", "bf16"],
+    },
+    {
+        "id": "unsloth/Qwen3-1.7B",
+        "name": "Qwen3 1.7B · bf16",
+        "vram_gb": 3,
+        "params_b": 1.7,
+        "mode": "bf16",
+        "tags": ["chat", "tiny", "bf16"],
+    },
+    {
+        "id": "unsloth/Qwen3-4B",
+        "name": "Qwen3 4B · bf16",
+        "vram_gb": 8,
+        "params_b": 4,
+        "mode": "bf16",
+        "tags": ["chat", "bf16"],
+    },
+    {
+        "id": "unsloth/Qwen3-8B",
+        "name": "Qwen3 8B · bf16",
+        "vram_gb": 16,
+        "params_b": 8,
+        "mode": "bf16",
+        "tags": ["chat", "bf16"],
+    },
     # ── Gemma 3 QLoRA (verified) ─────────────────────────────────────────
-    {"id": "unsloth/gemma-3-1b-it-bnb-4bit",  "name": "Gemma 3 1B-IT · QLoRA",  "vram_gb": 2,  "params_b": 1,  "mode": "qlora", "tags": ["chat", "tiny"]},
-    {"id": "unsloth/gemma-3-4b-it-bnb-4bit",  "name": "Gemma 3 4B-IT · QLoRA",  "vram_gb": 4,  "params_b": 4,  "mode": "qlora", "tags": ["chat", "fast"]},
-    {"id": "unsloth/gemma-3-12b-it-bnb-4bit", "name": "Gemma 3 12B-IT · QLoRA", "vram_gb": 8,  "params_b": 12, "mode": "qlora", "tags": ["chat", "recommended"]},
-    {"id": "unsloth/gemma-3-27b-it-bnb-4bit", "name": "Gemma 3 27B-IT · QLoRA", "vram_gb": 15, "params_b": 27, "mode": "qlora", "tags": ["chat", "best-quality"]},
+    {
+        "id": "unsloth/gemma-3-1b-it-bnb-4bit",
+        "name": "Gemma 3 1B-IT · QLoRA",
+        "vram_gb": 2,
+        "params_b": 1,
+        "mode": "qlora",
+        "tags": ["chat", "tiny"],
+    },
+    {
+        "id": "unsloth/gemma-3-4b-it-bnb-4bit",
+        "name": "Gemma 3 4B-IT · QLoRA",
+        "vram_gb": 4,
+        "params_b": 4,
+        "mode": "qlora",
+        "tags": ["chat", "fast"],
+    },
+    {
+        "id": "unsloth/gemma-3-12b-it-bnb-4bit",
+        "name": "Gemma 3 12B-IT · QLoRA",
+        "vram_gb": 8,
+        "params_b": 12,
+        "mode": "qlora",
+        "tags": ["chat", "recommended"],
+    },
+    {
+        "id": "unsloth/gemma-3-27b-it-bnb-4bit",
+        "name": "Gemma 3 27B-IT · QLoRA",
+        "vram_gb": 15,
+        "params_b": 27,
+        "mode": "qlora",
+        "tags": ["chat", "best-quality"],
+    },
     # ── Gemma 3 bf16 ─────────────────────────────────────────────────────
-    {"id": "unsloth/gemma-3-1b-it",  "name": "Gemma 3 1B-IT · bf16",  "vram_gb": 2,  "params_b": 1,  "mode": "bf16", "tags": ["chat", "tiny", "bf16"]},
-    {"id": "unsloth/gemma-3-4b-it",  "name": "Gemma 3 4B-IT · bf16",  "vram_gb": 8,  "params_b": 4,  "mode": "bf16", "tags": ["chat", "bf16"]},
-    {"id": "unsloth/gemma-3-12b-it", "name": "Gemma 3 12B-IT · bf16", "vram_gb": 24, "params_b": 12, "mode": "bf16", "tags": ["chat", "bf16"]},
+    {
+        "id": "unsloth/gemma-3-1b-it",
+        "name": "Gemma 3 1B-IT · bf16",
+        "vram_gb": 2,
+        "params_b": 1,
+        "mode": "bf16",
+        "tags": ["chat", "tiny", "bf16"],
+    },
+    {
+        "id": "unsloth/gemma-3-4b-it",
+        "name": "Gemma 3 4B-IT · bf16",
+        "vram_gb": 8,
+        "params_b": 4,
+        "mode": "bf16",
+        "tags": ["chat", "bf16"],
+    },
+    {
+        "id": "unsloth/gemma-3-12b-it",
+        "name": "Gemma 3 12B-IT · bf16",
+        "vram_gb": 24,
+        "params_b": 12,
+        "mode": "bf16",
+        "tags": ["chat", "bf16"],
+    },
     # ── Llama 4 QLoRA (verified) ─────────────────────────────────────────
-    {"id": "unsloth/Llama-4-Scout-17B-16E-Instruct-unsloth-bnb-4bit", "name": "Llama 4 Scout 17B/16E · QLoRA (MoE)", "vram_gb": 10, "params_b": 17, "mode": "qlora", "tags": ["chat", "moe", "vision"]},
+    {
+        "id": "unsloth/Llama-4-Scout-17B-16E-Instruct-unsloth-bnb-4bit",
+        "name": "Llama 4 Scout 17B/16E · QLoRA (MoE)",
+        "vram_gb": 10,
+        "params_b": 17,
+        "mode": "qlora",
+        "tags": ["chat", "moe", "vision"],
+    },
     # ── Mistral Small 3.x QLoRA (verified) ───────────────────────────────
-    {"id": "unsloth/Mistral-Small-3.1-24B-Instruct-2503-bnb-4bit", "name": "Mistral Small 3.1 24B · QLoRA", "vram_gb": 13, "params_b": 24, "mode": "qlora", "tags": ["chat"]},
-    {"id": "unsloth/Mistral-Small-3.2-24B-Instruct-2506-bnb-4bit", "name": "Mistral Small 3.2 24B · QLoRA", "vram_gb": 13, "params_b": 24, "mode": "qlora", "tags": ["chat", "recommended"]},
+    {
+        "id": "unsloth/Mistral-Small-3.1-24B-Instruct-2503-bnb-4bit",
+        "name": "Mistral Small 3.1 24B · QLoRA",
+        "vram_gb": 13,
+        "params_b": 24,
+        "mode": "qlora",
+        "tags": ["chat"],
+    },
+    {
+        "id": "unsloth/Mistral-Small-3.2-24B-Instruct-2506-bnb-4bit",
+        "name": "Mistral Small 3.2 24B · QLoRA",
+        "vram_gb": 13,
+        "params_b": 24,
+        "mode": "qlora",
+        "tags": ["chat", "recommended"],
+    },
     # ── Phi-4 QLoRA / bf16 ───────────────────────────────────────────────
-    {"id": "unsloth/Phi-4-mini-instruct-bnb-4bit", "name": "Phi-4 mini 3.8B · QLoRA", "vram_gb": 3, "params_b": 3.8, "mode": "qlora", "tags": ["chat", "fast"]},
-    {"id": "unsloth/Phi-4-mini-instruct",          "name": "Phi-4 mini 3.8B · bf16",  "vram_gb": 8, "params_b": 3.8, "mode": "bf16",  "tags": ["chat", "bf16"]},
+    {
+        "id": "unsloth/Phi-4-mini-instruct-bnb-4bit",
+        "name": "Phi-4 mini 3.8B · QLoRA",
+        "vram_gb": 3,
+        "params_b": 3.8,
+        "mode": "qlora",
+        "tags": ["chat", "fast"],
+    },
+    {
+        "id": "unsloth/Phi-4-mini-instruct",
+        "name": "Phi-4 mini 3.8B · bf16",
+        "vram_gb": 8,
+        "params_b": 3.8,
+        "mode": "bf16",
+        "tags": ["chat", "bf16"],
+    },
     # ── Previous gen (stable, widely tested) ─────────────────────────────
-    {"id": "unsloth/Qwen2.5-7B-Instruct-bnb-4bit",       "name": "Qwen2.5 7B · QLoRA (prev gen)",      "vram_gb": 5,  "params_b": 7,  "mode": "qlora", "tags": ["chat", "reasoning", "stable"]},
-    {"id": "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit", "name": "Qwen2.5-Coder 7B · QLoRA (prev gen)", "vram_gb": 5, "params_b": 7,  "mode": "qlora", "tags": ["code", "stable"]},
-    {"id": "unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit","name": "Llama 3.1 8B · QLoRA (prev gen)",    "vram_gb": 6,  "params_b": 8,  "mode": "qlora", "tags": ["chat", "stable"]},
-    {"id": "unsloth/gemma-2-9b-it-bnb-4bit",             "name": "Gemma 2 9B-IT · QLoRA (prev gen)",  "vram_gb": 6,  "params_b": 9,  "mode": "qlora", "tags": ["chat", "stable"]},
+    {
+        "id": "unsloth/Qwen2.5-7B-Instruct-bnb-4bit",
+        "name": "Qwen2.5 7B · QLoRA (prev gen)",
+        "vram_gb": 5,
+        "params_b": 7,
+        "mode": "qlora",
+        "tags": ["chat", "reasoning", "stable"],
+    },
+    {
+        "id": "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit",
+        "name": "Qwen2.5-Coder 7B · QLoRA (prev gen)",
+        "vram_gb": 5,
+        "params_b": 7,
+        "mode": "qlora",
+        "tags": ["code", "stable"],
+    },
+    {
+        "id": "unsloth/Meta-Llama-3.1-8B-Instruct-bnb-4bit",
+        "name": "Llama 3.1 8B · QLoRA (prev gen)",
+        "vram_gb": 6,
+        "params_b": 8,
+        "mode": "qlora",
+        "tags": ["chat", "stable"],
+    },
+    {
+        "id": "unsloth/gemma-2-9b-it-bnb-4bit",
+        "name": "Gemma 2 9B-IT · QLoRA (prev gen)",
+        "vram_gb": 6,
+        "params_b": 9,
+        "mode": "qlora",
+        "tags": ["chat", "stable"],
+    },
 ]
 
 
@@ -780,13 +977,11 @@ async def train_base_models(args: dict) -> str:
     vram_limit = args.get("max_vram_gb", 99)
 
     filtered = [
-        m for m in UNSLOTH_CATALOG
-        if m["vram_gb"] <= vram_limit
-        and (not tag_filter or tag_filter in m["tags"])
+        m for m in UNSLOTH_CATALOG if m["vram_gb"] <= vram_limit and (not tag_filter or tag_filter in m["tags"])
     ]
 
     if not filtered:
-        return f"No models found with those filters. Try: tag=chat, code, vision, reasoning, bf16"
+        return "No models found with those filters. Try: tag=chat, code, vision, reasoning, bf16"
 
     lines = ["Available Unsloth training base models (verified to exist on HuggingFace):"]
     lines.append("")
@@ -824,10 +1019,7 @@ async def train_list(args: dict) -> str:
 
     if what in ("datasets", "all"):
         # Exclude -val.jsonl splits from the list (they're not for training)
-        datasets = sorted(
-            ds for ds in _datasets_dir().glob("*.jsonl")
-            if not ds.name.endswith("-val.jsonl")
-        )
+        datasets = sorted(ds for ds in _datasets_dir().glob("*.jsonl") if not ds.name.endswith("-val.jsonl"))
         if datasets:
             lines = ["── Datasets ──"]
             for ds in datasets:
@@ -882,8 +1074,7 @@ async def train_list(args: dict) -> str:
             fb_lines = [line for line in fb_path.read_text().splitlines() if line.strip()]
             positive = sum(1 for line in fb_lines if json.loads(line).get("rating", 0) >= 4)
             sections.append(
-                f"── Feedback ──\n"
-                f"  Total: {len(fb_lines)} entries ({positive} positive, usable for training)"
+                f"── Feedback ──\n  Total: {len(fb_lines)} entries ({positive} positive, usable for training)"
             )
 
     if not sections:
