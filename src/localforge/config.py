@@ -141,6 +141,8 @@ _KNOWN_TOP_LEVEL = frozenset(
         "compute_pool",
         "modes",
         "characters",
+        "tool_workspaces",
+        "shell_deny",
     }
 )
 
