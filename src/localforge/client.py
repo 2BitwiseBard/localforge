@@ -22,9 +22,7 @@ log = logging.getLogger("localforge")
 # Task type context — tools set this before calling chat() so routing
 # can pick the best backend without changing every tool's signature.
 # ---------------------------------------------------------------------------
-_task_type_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "_task_type_ctx", default="default"
-)
+_task_type_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("_task_type_ctx", default="default")
 
 # GPU pool reference — set by gateway.py during lifespan startup
 _gpu_pool = None
@@ -59,6 +57,7 @@ class task_type_context:
         async with task_type_context("code"):
             result = await chat(prompt)
     """
+
     __slots__ = ("_token",)
 
     def __init__(self, task_type: str):
@@ -70,6 +69,7 @@ class task_type_context:
     async def __aexit__(self, *exc):
         _task_type_ctx.reset(self._token)
         return False
+
 
 # ---------------------------------------------------------------------------
 # Connection pool
@@ -100,6 +100,7 @@ _session_stats: dict[str, Any] = {
 # Model resolution
 # ---------------------------------------------------------------------------
 
+
 async def resolve_model() -> str:
     """Get the currently loaded model name from text-gen-webui's internal API."""
     log.info("Resolving model from %s/model/info", cfg.TGWUI_INTERNAL)
@@ -116,6 +117,7 @@ async def resolve_model() -> str:
 # ---------------------------------------------------------------------------
 # Backend health and failover
 # ---------------------------------------------------------------------------
+
 
 async def check_backend_health(name: str) -> bool:
     """Check if a backend is reachable and has a model loaded."""
@@ -172,13 +174,17 @@ async def reload_webui_params_from_api() -> None:
     result = await fetch_resolved_params_from_api()
     if result is not None:
         cfg._webui_settings, cfg._webui_preset_name = result
-        log.info("Refreshed webui params from API. preset: %s, keys: %s",
-                 cfg._webui_preset_name, list(cfg._webui_settings.keys()))
+        log.info(
+            "Refreshed webui params from API. preset: %s, keys: %s",
+            cfg._webui_preset_name,
+            list(cfg._webui_settings.keys()),
+        )
 
 
 # ---------------------------------------------------------------------------
 # Chat completion with retry, caching, and backend fallback
 # ---------------------------------------------------------------------------
+
 
 async def _chat_to_backend(base_url: str, body: dict[str, Any]) -> str:
     """Send a chat completion to a specific backend URL. Returns response text."""
@@ -200,7 +206,9 @@ async def _chat_to_worker(worker_url: str, body: dict[str, Any]) -> str:
         "max_tokens": body.get("max_tokens", 1024),
         "temperature": body.get("temperature", 0.7),
     }
-    resp = await _client.post(f"{worker_url}/task", json=payload, timeout=httpx.Timeout(connect=10, read=120, write=10, pool=10))
+    resp = await _client.post(
+        f"{worker_url}/task", json=payload, timeout=httpx.Timeout(connect=10, read=120, write=10, pool=10)
+    )
     resp.raise_for_status()
     data = resp.json()
     if "error" in data:
@@ -237,9 +245,7 @@ def _extract_content(data: Any) -> str:
     try:
         return data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as e:
-        raise ValueError(
-            f"Malformed chat completion response (missing choices/message/content): {e}"
-        ) from e
+        raise ValueError(f"Malformed chat completion response (missing choices/message/content): {e}") from e
 
 
 @retry(
@@ -314,8 +320,7 @@ async def chat(prompt: str, system: str | None = None, **kwargs: Any) -> str:
             log.debug("Chat response: len=%d (via worker %s)", len(result), target_url)
         else:
             result = await _chat_to_backend(target_url, body)
-            log.debug("Chat response: len=%d (via %s)", len(result),
-                      "pool" if routed_via_pool else "primary")
+            log.debug("Chat response: len=%d (via %s)", len(result), "pool" if routed_via_pool else "primary")
         _session_stats["total_tokens_out_approx"] += len(result) // 4
         if cache_k:
             _cache.put(cache_k, result)
@@ -371,9 +376,7 @@ async def chat(prompt: str, system: str | None = None, **kwargs: Any) -> str:
                     if fb_backend:
                         fb_backend.circuit.record_failure()
 
-        raise BackendUnreachableError(
-            f"All backends unreachable. Target: {target_url}"
-        ) from primary_err
+        raise BackendUnreachableError(f"All backends unreachable. Target: {target_url}") from primary_err
 
 
 def _collect_fallback_urls(failed_url: str) -> list[tuple[str, str]]:

@@ -25,7 +25,10 @@ MAX_CONVERSATIONS = 50  # LRU eviction when exceeded
         "properties": {
             "prompt": {"type": "string", "description": "Your prompt or question"},
             "system": {"type": "string", "description": "Optional system message override (replaces context preamble)"},
-            "grammar": {"type": "string", "description": "Optional GBNF grammar constraint. Built-in: 'json', 'json_array', 'boolean'. Or provide a custom GBNF string."},
+            "grammar": {
+                "type": "string",
+                "description": "Optional GBNF grammar constraint. Built-in: 'json', 'json_array', 'boolean'. Or provide a custom GBNF string.",
+            },
         },
         "required": ["prompt"],
     },
@@ -49,7 +52,11 @@ async def local_chat(args: dict) -> str:
     schema={
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["new", "continue", "history", "list"], "description": "Action to perform"},
+            "action": {
+                "type": "string",
+                "enum": ["new", "continue", "history", "list"],
+                "description": "Action to perform",
+            },
             "session_id": {"type": "string", "description": "Session identifier (auto-generated if omitted for 'new')"},
             "message": {"type": "string", "description": "User message (required for 'new' and 'continue')"},
             "system": {"type": "string", "description": "System message (optional, only for 'new')"},
@@ -76,6 +83,7 @@ async def multi_turn_chat(args: dict) -> str:
             return "Error: 'message' is required to start a new conversation"
 
         import time
+
         session_id = args.get("session_id") or f"session-{int(time.time())}"
         messages: list[dict[str, str]] = []
 
@@ -87,6 +95,7 @@ async def multi_turn_chat(args: dict) -> str:
         # Get model response
         if cfg.MODEL is None:
             from localforge.client import resolve_model
+
             cfg.MODEL = await resolve_model()
 
         gen_params = cfg.get_generation_params(cfg.MODEL)
@@ -145,6 +154,7 @@ async def multi_turn_chat(args: dict) -> str:
 
         if cfg.MODEL is None:
             from localforge.client import resolve_model
+
             cfg.MODEL = await resolve_model()
 
         gen_params = cfg.get_generation_params(cfg.MODEL)
@@ -232,7 +242,10 @@ async def text_complete(args: dict) -> str:
                 "enum": ["json", "code", "answer", "custom"],
                 "description": "Validation mode",
             },
-            "custom_check": {"type": "string", "description": "Custom validation prompt (for mode='custom'). Use {response} placeholder."},
+            "custom_check": {
+                "type": "string",
+                "description": "Custom validation prompt (for mode='custom'). Use {response} placeholder.",
+            },
             "system": {"type": "string", "description": "Optional system message"},
             "max_retries": {"type": "integer", "description": "Max retry attempts (default: 1)"},
         },
@@ -241,6 +254,7 @@ async def text_complete(args: dict) -> str:
 )
 async def validated_chat(args: dict) -> str:
     import logging
+
     log = logging.getLogger("localforge")
 
     prompt = args["prompt"]

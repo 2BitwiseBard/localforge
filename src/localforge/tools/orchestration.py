@@ -31,7 +31,10 @@ def _sanitize_topic(raw: str) -> str:
         "type": "object",
         "properties": {
             "task": {"type": "string", "description": "Description of the task to route"},
-            "auto_load": {"type": "boolean", "description": "Auto-load the recommended model if not already loaded (default: false)"},
+            "auto_load": {
+                "type": "boolean",
+                "description": "Auto-load the recommended model if not already loaded (default: false)",
+            },
             "auto_context": {"type": "boolean", "description": "Auto-detect and set project context (default: false)"},
         },
         "required": ["task"],
@@ -70,9 +73,15 @@ async def auto_route(args: dict) -> str:
         cwd = Path.cwd()
         cwd_name = cwd.name.lower()
         lang_markers = {
-            "Cargo.toml": "rust", "pyproject.toml": "python", "setup.py": "python",
-            "package.json": "javascript", "go.mod": "go", "build.gradle": "java",
-            "Gemfile": "ruby", "mix.exs": "elixir", "CMakeLists.txt": "cpp",
+            "Cargo.toml": "rust",
+            "pyproject.toml": "python",
+            "setup.py": "python",
+            "package.json": "javascript",
+            "go.mod": "go",
+            "build.gradle": "java",
+            "Gemfile": "ruby",
+            "mix.exs": "elixir",
+            "CMakeLists.txt": "cpp",
         }
         detected_lang = None
         for marker, lang in lang_markers.items():
@@ -103,12 +112,7 @@ async def auto_route(args: dict) -> str:
 
     pipeline_str = " -> ".join(suggested_tools) if suggested_tools else "(general chat)"
 
-    return (
-        f"{classification}"
-        f"{context_msg}"
-        f"{load_msg}"
-        f"\n\nSuggested pipeline: {pipeline_str}"
-    )
+    return f"{classification}{context_msg}{load_msg}\n\nSuggested pipeline: {pipeline_str}"
 
 
 @tool_handler(
@@ -156,8 +160,7 @@ async def workflow_tool(args: dict) -> str:
             system=cfg.get_system_preamble(),
         )
         explanation = await chat(
-            f"Explain what this git diff does in plain English. "
-            f"Focus on what changed and why.\n\n```diff\n{diff}\n```",
+            f"Explain what this git diff does in plain English. Focus on what changed and why.\n\n```diff\n{diff}\n```",
             system=cfg.get_system_preamble(),
         )
         return f"## Review\n\n{review}\n\n## Summary\n\n{explanation}"
@@ -177,16 +180,24 @@ async def workflow_tool(args: dict) -> str:
                 ext_counts[f.suffix] = ext_counts.get(f.suffix, 0) + 1
 
         top_ext = max(ext_counts, key=ext_counts.get) if ext_counts else "*.*"
-        ext_to_glob = {".rs": "**/*.rs", ".py": "**/*.py", ".ts": "**/*.ts",
-                       ".tsx": "**/*.tsx", ".js": "**/*.js", ".go": "**/*.go"}
+        ext_to_glob = {
+            ".rs": "**/*.rs",
+            ".py": "**/*.py",
+            ".ts": "**/*.ts",
+            ".tsx": "**/*.tsx",
+            ".js": "**/*.js",
+            ".go": "**/*.go",
+        }
         glob_pattern = ext_to_glob.get(top_ext, "**/*.*")
 
         index_name = _sanitize_topic(dir_path.name)
-        idx_result = await index_directory({
-            "name": index_name,
-            "directory": directory,
-            "glob_pattern": glob_pattern,
-        })
+        idx_result = await index_directory(
+            {
+                "name": index_name,
+                "directory": directory,
+                "glob_pattern": glob_pattern,
+            }
+        )
 
         questions = [
             "What are the main entry points and how is the application structured?",
@@ -214,8 +225,14 @@ async def workflow_tool(args: dict) -> str:
             if f.is_file() and f.suffix in TEXT_EXTENSIONS:
                 ext_counts[f.suffix] = ext_counts.get(f.suffix, 0) + 1
 
-        ext_to_lang = {".rs": "rust", ".py": "python", ".ts": "typescript",
-                       ".tsx": "typescript", ".js": "javascript", ".go": "go"}
+        ext_to_lang = {
+            ".rs": "rust",
+            ".py": "python",
+            ".ts": "typescript",
+            ".tsx": "typescript",
+            ".js": "javascript",
+            ".go": "go",
+        }
         top_ext = max(ext_counts, key=ext_counts.get) if ext_counts else ""
         lang = ext_to_lang.get(top_ext, "auto")
 
@@ -224,18 +241,36 @@ async def workflow_tool(args: dict) -> str:
         cfg._context["language"] = lang
         cfg._context["project"] = project_name
 
-        ext_to_glob = {".rs": "**/*.rs", ".py": "**/*.py", ".ts": "**/*.{ts,tsx}",
-                       ".tsx": "**/*.{ts,tsx}", ".js": "**/*.{js,jsx}", ".go": "**/*.go"}
+        ext_to_glob = {
+            ".rs": "**/*.rs",
+            ".py": "**/*.py",
+            ".ts": "**/*.{ts,tsx}",
+            ".tsx": "**/*.{ts,tsx}",
+            ".js": "**/*.{js,jsx}",
+            ".go": "**/*.go",
+        }
         glob_pattern = ext_to_glob.get(top_ext, "**/*.*")
         index_name = _sanitize_topic(project_name)
-        idx_result = await index_directory({
-            "name": index_name,
-            "directory": directory,
-            "glob_pattern": glob_pattern,
-        })
+        idx_result = await index_directory(
+            {
+                "name": index_name,
+                "directory": directory,
+                "glob_pattern": glob_pattern,
+            }
+        )
 
-        entry_candidates = ["main.rs", "lib.rs", "main.py", "app.py", "index.ts",
-                           "index.js", "main.go", "mod.rs", "Cargo.toml", "package.json"]
+        entry_candidates = [
+            "main.rs",
+            "lib.rs",
+            "main.py",
+            "app.py",
+            "index.ts",
+            "index.js",
+            "main.go",
+            "mod.rs",
+            "Cargo.toml",
+            "package.json",
+        ]
         found_entries = []
         for candidate in entry_candidates:
             matches = list(dir_path.rglob(candidate))
@@ -277,6 +312,7 @@ async def workflow_tool(args: dict) -> str:
 
         rag_context = ""
         from localforge.chunking import _index_cache
+
         indexes = list(_index_cache.keys())
         if indexes:
             idx_name = indexes[0]
@@ -291,8 +327,7 @@ async def workflow_tool(args: dict) -> str:
                 pass
 
         explanation = await chat(
-            f"Explain what this git diff does in plain English. "
-            f"Focus on what changed and why.\n\n```diff\n{diff}\n```",
+            f"Explain what this git diff does in plain English. Focus on what changed and why.\n\n```diff\n{diff}\n```",
             system=cfg.get_system_preamble(),
         )
 
@@ -306,23 +341,23 @@ async def workflow_tool(args: dict) -> str:
         kg = _get_kg()
         existing = kg.query(question, max_results=3)
         if existing:
-            recent = [e for e in existing
-                      if time.time() - e.get("updated_at", 0) < 7 * 86400]
+            recent = [e for e in existing if time.time() - e.get("updated_at", 0) < 7 * 86400]
             if recent:
-                context_parts = [f"- **{e['name']}** ({e['type']}): {e['content']}"
-                                 for e in recent]
+                context_parts = [f"- **{e['name']}** ({e['type']}): {e['content']}" for e in recent]
                 return (
                     "## Existing Research Found\n\n"
                     "Recent KG entries (within 7 days):\n\n"
-                    + "\n".join(context_parts) +
-                    "\n\nTo force new research, use `deep_research` directly."
+                    + "\n".join(context_parts)
+                    + "\n\nTo force new research, use `deep_research` directly."
                 )
 
-        return await deep_research({
-            "question": question,
-            "max_sources": args.get("max_sources", 3),
-            "save_to_kg": True,
-        })
+        return await deep_research(
+            {
+                "question": question,
+                "max_sources": args.get("max_sources", 3),
+                "save_to_kg": True,
+            }
+        )
 
     return f"Unknown workflow: {wf_name}"
 
@@ -343,7 +378,10 @@ async def workflow_tool(args: dict) -> str:
                 "items": {
                     "type": "object",
                     "properties": {
-                        "prompt": {"type": "string", "description": "Prompt template (use {input} for previous output)"},
+                        "prompt": {
+                            "type": "string",
+                            "description": "Prompt template (use {input} for previous output)",
+                        },
                         "max_tokens": {"type": "integer", "description": "Max tokens for this step"},
                         "grammar": {"type": "string", "description": "GBNF grammar for this step (optional)"},
                     },
@@ -385,7 +423,7 @@ async def pipeline_tool(args: dict) -> str:
             kwargs["grammar_string"] = BUILTIN_GRAMMARS.get(step["grammar"], step["grammar"])
 
         result = await chat(prompt, system=cfg.get_system_preamble(), **kwargs)
-        results.append(f"--- Step {i+1} ---\n{result}")
+        results.append(f"--- Step {i + 1} ---\n{result}")
         current_input = result
 
     return "\n\n".join(results)

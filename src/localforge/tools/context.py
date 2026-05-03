@@ -18,7 +18,10 @@ from localforge.tools import tool_handler
         "type": "object",
         "properties": {
             "language": {"type": "string", "description": "Programming language (e.g. 'rust', 'python', 'typescript')"},
-            "project": {"type": "string", "description": "Project name for known preamble lookup (e.g. 'quant-platform')"},
+            "project": {
+                "type": "string",
+                "description": "Project name for known preamble lookup (e.g. 'quant-platform')",
+            },
             "rules": {"type": "string", "description": "Freeform project rules/conventions to enforce"},
         },
         "required": [],
@@ -98,8 +101,7 @@ async def set_mode(args: dict) -> str:
 )
 async def get_mode(args: dict) -> str:
     if not cfg._current_mode:
-        return "No mode set. Using default settings. Available modes: " + \
-               ", ".join(cfg._config.get("modes", {}).keys())
+        return "No mode set. Using default settings. Available modes: " + ", ".join(cfg._config.get("modes", {}).keys())
     char_info = ""
     if cfg._current_character:
         char_info = f"\nCharacter: {cfg._current_character.get('name', 'default')}"
@@ -258,6 +260,7 @@ def _detect_project(directory: str) -> dict:
     if pkg.exists():
         try:
             import json
+
             data = json.loads(pkg.read_text(errors="replace"))
             if data.get("name"):
                 result["project_name"] = data["name"]
@@ -285,6 +288,7 @@ def _detect_project(directory: str) -> dict:
         if ctx_path.exists():
             try:
                 import yaml
+
                 ctx_data = yaml.safe_load(ctx_path.read_text())
                 if isinstance(ctx_data, dict):
                     result["context_file"] = str(ctx_path)
@@ -329,6 +333,7 @@ def _detect_project(directory: str) -> dict:
 )
 async def auto_context(args: dict) -> str:
     import os
+
     directory = args.get("directory", os.getcwd())
     apply = args.get("apply", True)
 

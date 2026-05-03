@@ -37,7 +37,8 @@ def _sanitize_topic(raw: str) -> str:
 
 async def _run_git(*args: str, cwd: str | None = None) -> str:
     proc = await asyncio.create_subprocess_exec(
-        "git", *args,
+        "git",
+        *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
@@ -67,7 +68,10 @@ async def _run_git(*args: str, cwd: str | None = None) -> str:
             "overlap": {"type": "integer", "description": "Overlap lines between chunks (default: 10)"},
             "max_files": {"type": "integer", "description": "Max files to index (default: 500)"},
             "embed": {"type": "boolean", "description": "Compute dense + SPLADE sparse embeddings (default: false)."},
-            "colbert": {"type": "boolean", "description": "Also compute ColBERT per-token vectors (default: false). Requires embed=true."},
+            "colbert": {
+                "type": "boolean",
+                "description": "Also compute ColBERT per-token vectors (default: false). Requires embed=true.",
+            },
         },
         "required": ["name", "directory"],
     },
@@ -91,7 +95,8 @@ async def index_directory(args: dict) -> str:
 
     files = sorted(directory.glob(glob_pattern))
     files = [
-        f for f in files
+        f
+        for f in files
         if f.is_file()
         and "/." not in str(f)
         and f.stat().st_size < 200_000
@@ -160,8 +165,11 @@ async def index_directory(args: dict) -> str:
     save_index(name, meta, all_chunks, embeddings, sparse_embeddings, colbert_embeddings)
 
     _index_cache[name] = {
-        "meta": meta, "chunks": all_chunks, "bm25": bm25,
-        "embeddings": embeddings, "sparse_embeddings": sparse_embeddings,
+        "meta": meta,
+        "chunks": all_chunks,
+        "bm25": bm25,
+        "embeddings": embeddings,
+        "sparse_embeddings": sparse_embeddings,
         "colbert_embeddings": colbert_embeddings,
     }
 
@@ -232,8 +240,7 @@ async def search_index_tool(args: dict) -> str:
         except ValueError:
             rel = chunk["file"]
         parts.append(
-            f"--- {rel}:{chunk['start_line']}-{chunk['end_line']} (score: {score:.2f}) ---\n"
-            f"{chunk['content']}"
+            f"--- {rel}:{chunk['start_line']}-{chunk['end_line']} (score: {score:.2f}) ---\n{chunk['content']}"
         )
 
     return f"Top {len(results)} matches for '{query}' in index '{name}':\n\n" + "\n\n".join(parts)
@@ -249,8 +256,7 @@ async def _cross_project_rag(question: str, top_k: int = 3, do_rerank: bool = Fa
     if not query_tokens:
         return "Question produced no searchable tokens."
 
-    index_dirs = [d.name for d in INDEXES_DIR.iterdir() if d.is_dir()
-                  and not d.name.startswith("__")]
+    index_dirs = [d.name for d in INDEXES_DIR.iterdir() if d.is_dir() and not d.name.startswith("__")]
 
     for idx_name in index_dirs:
         entry = load_index(idx_name)
@@ -280,8 +286,7 @@ async def _cross_project_rag(question: str, top_k: int = 3, do_rerank: bool = Fa
     projects_found = sorted(set(r[0] for r in top_results))
 
     answer = await chat(
-        f"Question: {question}\n\n"
-        f"Context from projects ({', '.join(projects_found)}):\n{context[:6000]}",
+        f"Question: {question}\n\nContext from projects ({', '.join(projects_found)}):\n{context[:6000]}",
         system=cfg.get_system_preamble(),
     )
     return f"*Searched {len(index_dirs)} indexes: {', '.join(projects_found)}*\n\n{answer}"
@@ -297,7 +302,10 @@ async def _cross_project_rag(question: str, top_k: int = 3, do_rerank: bool = Fa
     schema={
         "type": "object",
         "properties": {
-            "index_name": {"type": "string", "description": "Name of the index. Use '*' or 'all' to search across all."},
+            "index_name": {
+                "type": "string",
+                "description": "Name of the index. Use '*' or 'all' to search across all.",
+            },
             "question": {"type": "string", "description": "Question to answer using retrieved context"},
             "top_k": {"type": "integer", "description": "Number of context chunks to retrieve (default: 3)"},
             "rerank": {"type": "boolean", "description": "Re-rank BM25 results using cross-encoder (default: false)"},
@@ -432,8 +440,7 @@ async def delete_index(args: dict) -> str:
 @tool_handler(
     name="ingest_document",
     description=(
-        "Add a single document to an existing index (or create a new one). "
-        "Accepts a file path or raw text content."
+        "Add a single document to an existing index (or create a new one). Accepts a file path or raw text content."
     ),
     schema={
         "type": "object",
@@ -486,13 +493,15 @@ async def ingest_document(args: dict) -> str:
             chunk_content = "\n".join(lines[start:end])
             non_empty = sum(1 for ln in lines[start:end] if ln.strip())
             if non_empty >= 3:
-                new_chunks.append({
-                    "file": label,
-                    "start_line": start + 1,
-                    "end_line": end,
-                    "content": chunk_content,
-                    "tokens": tokenize_bm25(chunk_content),
-                })
+                new_chunks.append(
+                    {
+                        "file": label,
+                        "start_line": start + 1,
+                        "end_line": end,
+                        "content": chunk_content,
+                        "tokens": tokenize_bm25(chunk_content),
+                    }
+                )
             start += chunk_lines - overlap
             if start >= len(lines):
                 break
@@ -574,9 +583,7 @@ async def incremental_index(args: dict) -> str:
         return f"Index '{name}' is up to date — no changed files detected."
 
     changed_files = {
-        f for f in changed_files
-        if Path(f).suffix.lower() in TEXT_EXTENSIONS
-        and Path(f).stat().st_size < 200_000
+        f for f in changed_files if Path(f).suffix.lower() in TEXT_EXTENSIONS and Path(f).stat().st_size < 200_000
     }
 
     if not changed_files:
@@ -650,11 +657,11 @@ async def diff_rag(args: dict) -> str:
 
     symbols = set()
     patterns = [
-        r'(?:fn|def|func|function|async fn)\s+(\w+)',
-        r'(?:struct|class|enum|type|interface|trait)\s+(\w+)',
-        r'(?:impl|extends|implements)\s+(\w+)',
-        r'(?:use|import|from)\s+[\w:]+::(\w+)',
-        r'(?:pub\s+)?(?:mod|module)\s+(\w+)',
+        r"(?:fn|def|func|function|async fn)\s+(\w+)",
+        r"(?:struct|class|enum|type|interface|trait)\s+(\w+)",
+        r"(?:impl|extends|implements)\s+(\w+)",
+        r"(?:use|import|from)\s+[\w:]+::(\w+)",
+        r"(?:pub\s+)?(?:mod|module)\s+(\w+)",
     ]
 
     for line in diff.splitlines():

@@ -19,13 +19,28 @@ log = logging.getLogger("knowledge-graph")
 DB_PATH = knowledge_db_path()
 
 DEFAULT_ENTITY_TYPES = {
-    "concept", "code_module", "decision", "learning",
-    "person", "tool", "project", "task", "event", "artifact",
+    "concept",
+    "code_module",
+    "decision",
+    "learning",
+    "person",
+    "tool",
+    "project",
+    "task",
+    "event",
+    "artifact",
 }
 DEFAULT_RELATION_TYPES = {
-    "DEPENDS_ON", "DECIDED_BY", "RELATED_TO", "SUPERSEDES",
-    "IMPLEMENTS", "CREATED_BY", "PART_OF", "REFERENCES",
-    "CONFLICTS_WITH", "EXTENDS",
+    "DEPENDS_ON",
+    "DECIDED_BY",
+    "RELATED_TO",
+    "SUPERSEDES",
+    "IMPLEMENTS",
+    "CREATED_BY",
+    "PART_OF",
+    "REFERENCES",
+    "CONFLICTS_WITH",
+    "EXTENDS",
 }
 
 # Backwards-compatible aliases
@@ -134,6 +149,7 @@ class KnowledgeGraph:
             self._conn.executescript(SCHEMA)
             self._conn.executescript(FTS_SCHEMA)
             from .migrations import run_migrations
+
             run_migrations(self._conn, "knowledge")
         return self._conn
 
@@ -149,6 +165,7 @@ class KnowledgeGraph:
         if self._embed_fn is None:
             try:
                 from fastembed import TextEmbedding
+
                 model = TextEmbedding("jinaai/jina-embeddings-v2-base-code")
                 self._embed_fn = lambda text: list(model.embed([text]))[0].tolist()
             except Exception as e:
@@ -165,8 +182,9 @@ class KnowledgeGraph:
 
     # --- Entities ---
 
-    def add_entity(self, name: str, type: str, content: str = "",
-                   metadata: Optional[dict] = None, embed: bool = True) -> int:
+    def add_entity(
+        self, name: str, type: str, content: str = "", metadata: Optional[dict] = None, embed: bool = True
+    ) -> int:
         """Add or update an entity. Returns entity ID."""
         if type not in ENTITY_TYPES:
             raise ValueError(f"Unknown entity type: {type}. Valid: {ENTITY_TYPES}")
@@ -176,10 +194,7 @@ class KnowledgeGraph:
         meta_json = json.dumps(metadata or {})
 
         # Check for existing
-        row = conn.execute(
-            "SELECT id FROM entities WHERE name = ? AND type = ?",
-            (name, type)
-        ).fetchone()
+        row = conn.execute("SELECT id FROM entities WHERE name = ? AND type = ?", (name, type)).fetchone()
 
         embedding = self._embed(f"{name} {content}") if embed else None
 
@@ -209,8 +224,13 @@ class KnowledgeGraph:
         if not row:
             return None
         return Entity(
-            id=row[0], name=row[1], type=row[2], content=row[3],
-            created_at=row[4], updated_at=row[5], metadata=json.loads(row[6] or "{}"),
+            id=row[0],
+            name=row[1],
+            type=row[2],
+            content=row[3],
+            created_at=row[4],
+            updated_at=row[5],
+            metadata=json.loads(row[6] or "{}"),
         )
 
     def find_entity(self, name: str, type: Optional[str] = None) -> Optional[Entity]:
@@ -228,8 +248,13 @@ class KnowledgeGraph:
         if not row:
             return None
         return Entity(
-            id=row[0], name=row[1], type=row[2], content=row[3],
-            created_at=row[4], updated_at=row[5], metadata=json.loads(row[6] or "{}"),
+            id=row[0],
+            name=row[1],
+            type=row[2],
+            content=row[3],
+            created_at=row[4],
+            updated_at=row[5],
+            metadata=json.loads(row[6] or "{}"),
         )
 
     def delete_entity(self, entity_id: int) -> bool:
@@ -240,8 +265,7 @@ class KnowledgeGraph:
 
     # --- Relations ---
 
-    def add_relation(self, from_id: int, to_id: int, relation_type: str,
-                     metadata: Optional[dict] = None) -> int:
+    def add_relation(self, from_id: int, to_id: int, relation_type: str, metadata: Optional[dict] = None) -> int:
         if relation_type not in RELATION_TYPES:
             raise ValueError(f"Unknown relation type: {relation_type}. Valid: {RELATION_TYPES}")
 
@@ -273,14 +297,16 @@ class KnowledgeGraph:
                 (entity_id,),
             ).fetchall()
             for row in rows:
-                results.append({
-                    "direction": "outgoing",
-                    "relation": row[0],
-                    "entity_id": row[1],
-                    "entity_name": row[2],
-                    "entity_type": row[3],
-                    "metadata": json.loads(row[4] or "{}"),
-                })
+                results.append(
+                    {
+                        "direction": "outgoing",
+                        "relation": row[0],
+                        "entity_id": row[1],
+                        "entity_name": row[2],
+                        "entity_type": row[3],
+                        "metadata": json.loads(row[4] or "{}"),
+                    }
+                )
 
         if direction in ("to", "both"):
             rows = conn.execute(
@@ -290,14 +316,16 @@ class KnowledgeGraph:
                 (entity_id,),
             ).fetchall()
             for row in rows:
-                results.append({
-                    "direction": "incoming",
-                    "relation": row[0],
-                    "entity_id": row[1],
-                    "entity_name": row[2],
-                    "entity_type": row[3],
-                    "metadata": json.loads(row[4] or "{}"),
-                })
+                results.append(
+                    {
+                        "direction": "incoming",
+                        "relation": row[0],
+                        "entity_id": row[1],
+                        "entity_name": row[2],
+                        "entity_type": row[3],
+                        "metadata": json.loads(row[4] or "{}"),
+                    }
+                )
 
         return results
 
@@ -328,8 +356,11 @@ class KnowledgeGraph:
 
         return [
             {
-                "id": row[0], "name": row[1], "type": row[2],
-                "content": row[3][:300], "updated_at": row[4],
+                "id": row[0],
+                "name": row[1],
+                "type": row[2],
+                "content": row[3][:300],
+                "updated_at": row[4],
                 "score": -row[5],  # FTS5 rank is negative
             }
             for row in rows
@@ -380,8 +411,11 @@ class KnowledgeGraph:
             top_indices = np.argsort(scores)[::-1][:max_results]
             return [
                 {
-                    "id": ids[i], "name": meta[i][0], "type": meta[i][1],
-                    "content": meta[i][2][:300], "updated_at": meta[i][3],
+                    "id": ids[i],
+                    "name": meta[i][0],
+                    "type": meta[i][1],
+                    "content": meta[i][2][:300],
+                    "updated_at": meta[i][3],
                     "score": float(scores[i]),
                 }
                 for i in top_indices
@@ -390,6 +424,7 @@ class KnowledgeGraph:
         except ImportError:
             # Fallback: pure Python (slower)
             import math
+
             scored = []
             for row in rows:
                 try:
@@ -398,11 +433,16 @@ class KnowledgeGraph:
                     norm_q = math.sqrt(sum(a * a for a in query_embedding))
                     norm_s = math.sqrt(sum(a * a for a in stored))
                     sim = dot / (norm_q * norm_s) if norm_q and norm_s else 0
-                    scored.append({
-                        "id": row[0], "name": row[1], "type": row[2],
-                        "content": row[3][:300], "updated_at": row[5],
-                        "score": sim,
-                    })
+                    scored.append(
+                        {
+                            "id": row[0],
+                            "name": row[1],
+                            "type": row[2],
+                            "content": row[3][:300],
+                            "updated_at": row[5],
+                            "score": sim,
+                        }
+                    )
                 except Exception:
                     continue
             scored.sort(key=lambda x: x["score"], reverse=True)
@@ -410,8 +450,7 @@ class KnowledgeGraph:
 
     # --- Graph traversal ---
 
-    def traverse(self, start_id: int, relation_type: Optional[str] = None,
-                 depth: int = 2) -> list[dict]:
+    def traverse(self, start_id: int, relation_type: Optional[str] = None, depth: int = 2) -> list[dict]:
         """BFS traversal from an entity."""
         conn = self._get_conn()
         visited = set()
@@ -426,10 +465,12 @@ class KnowledgeGraph:
 
             entity = self.get_entity(entity_id)
             if entity:
-                results.append({
-                    **entity.to_dict(),
-                    "depth": d,
-                })
+                results.append(
+                    {
+                        **entity.to_dict(),
+                        "depth": d,
+                    }
+                )
 
             # Get outgoing relations
             if relation_type:
@@ -462,8 +503,12 @@ class KnowledgeGraph:
 
         return [
             {
-                "id": row[0], "name": row[1], "type": row[2],
-                "content": row[3][:200], "created_at": row[4], "updated_at": row[5],
+                "id": row[0],
+                "name": row[1],
+                "type": row[2],
+                "content": row[3][:200],
+                "created_at": row[4],
+                "updated_at": row[5],
             }
             for row in rows
         ]
@@ -493,8 +538,7 @@ class KnowledgeGraph:
 
     # --- Graph visualization ---
 
-    def get_graph(self, center: Optional[str] = None, depth: int = 2,
-                  limit: int = 100) -> dict:
+    def get_graph(self, center: Optional[str] = None, depth: int = 2, limit: int = 100) -> dict:
         """Return nodes + edges for visualization.
 
         If center is given, returns the subgraph around that entity.
@@ -525,11 +569,7 @@ class KnowledgeGraph:
                 if e:
                     graph.append({**e.to_dict(), "depth": 0})
 
-        nodes = [
-            {"id": g["id"], "name": g["name"], "type": g["type"],
-             "depth": g.get("depth", 0)}
-            for g in graph
-        ]
+        nodes = [{"id": g["id"], "name": g["name"], "type": g["type"], "depth": g.get("depth", 0)} for g in graph]
 
         # Get all edges between these entities
         if entity_ids:
@@ -538,10 +578,7 @@ class KnowledgeGraph:
                 f"SELECT from_id, to_id, relation_type FROM relations WHERE from_id IN ({placeholders}) AND to_id IN ({placeholders})",
                 list(entity_ids) + list(entity_ids),
             ).fetchall()
-            edges = [
-                {"from": r[0], "to": r[1], "relation": r[2]}
-                for r in edge_rows
-            ]
+            edges = [{"from": r[0], "to": r[1], "relation": r[2]} for r in edge_rows]
         else:
             edges = []
 
@@ -601,8 +638,7 @@ class KnowledgeGraph:
         conn.executescript(FTS_SCHEMA)
         # Repopulate from entities table
         conn.execute(
-            "INSERT INTO entities_fts(rowid, name, content, type) "
-            "SELECT id, name, content, type FROM entities"
+            "INSERT INTO entities_fts(rowid, name, content, type) SELECT id, name, content, type FROM entities"
         )
         conn.commit()
         count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]

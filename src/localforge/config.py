@@ -47,28 +47,55 @@ _runtime_overrides: dict[str, Any] = {}
 _webui_preset_name: str | None = None
 
 # Keys recognised as generation params (webui settings.yaml / preset files)
-WEBUI_GEN_KEYS = frozenset({
-    "temperature", "top_p", "top_k", "min_p", "repetition_penalty",
-    "frequency_penalty", "presence_penalty", "do_sample",
-    "enable_thinking", "mode", "typical_p", "tfs", "top_a",
-    "mirostat_mode", "mirostat_tau", "mirostat_eta",
-    "repetition_penalty_range", "encoder_repetition_penalty",
-    "no_repeat_ngram_size", "penalty_alpha",
-    "dynatemp_low", "dynatemp_high", "dynatemp_exponent",
-    "smoothing_factor", "smoothing_curve",
-    "xtc_threshold", "xtc_probability",
-    "dry_multiplier", "dry_allowed_length", "dry_base",
-    "top_n_sigma", "dynamic_temperature", "temperature_last",
-    "guidance_scale",
-    "seed", "custom_token_bans", "ban_eos_token",
-    "reasoning_effort", "prompt_lookup_num_tokens",
-    "max_tokens_second",
-})
+WEBUI_GEN_KEYS = frozenset(
+    {
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "repetition_penalty",
+        "frequency_penalty",
+        "presence_penalty",
+        "do_sample",
+        "enable_thinking",
+        "mode",
+        "typical_p",
+        "tfs",
+        "top_a",
+        "mirostat_mode",
+        "mirostat_tau",
+        "mirostat_eta",
+        "repetition_penalty_range",
+        "encoder_repetition_penalty",
+        "no_repeat_ngram_size",
+        "penalty_alpha",
+        "dynatemp_low",
+        "dynatemp_high",
+        "dynatemp_exponent",
+        "smoothing_factor",
+        "smoothing_curve",
+        "xtc_threshold",
+        "xtc_probability",
+        "dry_multiplier",
+        "dry_allowed_length",
+        "dry_base",
+        "top_n_sigma",
+        "dynamic_temperature",
+        "temperature_last",
+        "guidance_scale",
+        "seed",
+        "custom_token_bans",
+        "ban_eos_token",
+        "reasoning_effort",
+        "prompt_lookup_num_tokens",
+        "max_tokens_second",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Hub mode and character state
 # ---------------------------------------------------------------------------
-_current_mode: dict = {}       # {"name": "development", ...config from modes section}
+_current_mode: dict = {}  # {"name": "development", ...config from modes section}
 _current_character: dict = {}  # {"name": "code-reviewer", ...config from characters section}
 
 # ---------------------------------------------------------------------------
@@ -98,11 +125,24 @@ _context: dict[str, str] = {}  # mutable session context
 # Config validation
 # ---------------------------------------------------------------------------
 
-_KNOWN_TOP_LEVEL = frozenset({
-    "backends", "webui_root", "model_source", "webui_settings",
-    "defaults", "models", "gateway", "users", "news", "telegram",
-    "gpu_pool", "compute_pool", "modes", "characters",
-})
+_KNOWN_TOP_LEVEL = frozenset(
+    {
+        "backends",
+        "webui_root",
+        "model_source",
+        "webui_settings",
+        "defaults",
+        "models",
+        "gateway",
+        "users",
+        "news",
+        "telegram",
+        "gpu_pool",
+        "compute_pool",
+        "modes",
+        "characters",
+    }
+)
 
 
 def _validate_config(cfg: dict[str, Any]) -> list[str]:
@@ -175,6 +215,7 @@ def load_config_cached() -> dict[str, Any]:
     """
     global _config_cache
     import time as _time
+
     now = _time.monotonic()
     if now - _config_cache[0] < _CONFIG_CACHE_TTL and _config_cache[1]:
         return _config_cache[1]
@@ -240,6 +281,7 @@ def _load_webui_settings(config: dict[str, Any]) -> dict[str, Any]:
 # Backend management
 # ---------------------------------------------------------------------------
 
+
 def _load_backends(config: dict[str, Any]) -> None:
     """Load backend configuration from config.yaml."""
     global _backends, _active_backend, TGWUI_BASE, TGWUI_INTERNAL
@@ -281,6 +323,7 @@ def set_active_backend(name: str, url: str) -> None:
 # Config reload
 # ---------------------------------------------------------------------------
 
+
 def reload_config() -> None:
     """Reload config and webui settings from disk.
 
@@ -307,10 +350,12 @@ def reload_config() -> None:
                 pass
 
     _load_backends(_config)
-    log.info("Config loaded. preset: %s, webui params: %s, config defaults: %s",
-             _webui_preset_name,
-             list(_webui_settings.keys()),
-             list(_config.get("defaults", {}).keys()))
+    log.info(
+        "Config loaded. preset: %s, webui params: %s, config defaults: %s",
+        _webui_preset_name,
+        list(_webui_settings.keys()),
+        list(_config.get("defaults", {}).keys()),
+    )
 
 
 async def reload_config_safe() -> None:
@@ -320,6 +365,7 @@ async def reload_config_safe() -> None:
     # Clear response cache since generation params may have changed
     try:
         from localforge.client import _cache
+
         _cache.clear()
         log.info("Response cache cleared after config reload")
     except ImportError:
@@ -335,6 +381,7 @@ async def set_runtime_overrides_safe(overrides: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 # Generation parameter resolution
 # ---------------------------------------------------------------------------
+
 
 def get_generation_params(model_name: str | None = None) -> dict[str, Any]:
     """Resolve generation params for the current model.
@@ -412,6 +459,7 @@ def trace_param_source(key: str, value: Any, matched_pattern: str | None) -> str
 # Context and preamble system
 # ---------------------------------------------------------------------------
 
+
 def get_system_preamble() -> str | None:
     """Build system preamble from current context, character, and mode."""
     parts = []
@@ -447,11 +495,12 @@ def get_system_preamble() -> str | None:
 # Utility helpers
 # ---------------------------------------------------------------------------
 
+
 def sanitize_topic(raw: str) -> str:
     """Sanitize a note topic to a safe filename component."""
     topic = raw.strip().replace("/", "-").replace("\\", "-").replace(" ", "-")
-    topic = re.sub(r'\.{2,}', '.', topic)
-    topic = re.sub(r'[^\w\-.]', '', topic)
+    topic = re.sub(r"\.{2,}", ".", topic)
+    topic = re.sub(r"[^\w\-.]", "", topic)
     if not topic:
         topic = "unnamed"
     return topic

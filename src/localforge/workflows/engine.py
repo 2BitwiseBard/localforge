@@ -25,19 +25,37 @@ from .schema import NodeDef, WorkflowDef
 log = logging.getLogger("workflow-engine")
 
 # Safe expression evaluator — walks AST instead of using eval()
-_SAFE_FUNCS = {"len": len, "int": int, "float": float, "str": str, "bool": bool,
-               "abs": abs, "min": min, "max": max, "sum": sum, "any": any, "all": all}
+_SAFE_FUNCS = {
+    "len": len,
+    "int": int,
+    "float": float,
+    "str": str,
+    "bool": bool,
+    "abs": abs,
+    "min": min,
+    "max": max,
+    "sum": sum,
+    "any": any,
+    "all": all,
+}
 
 _CMP_OPS = {
-    ast.Eq: operator.eq, ast.NotEq: operator.ne,
-    ast.Lt: operator.lt, ast.LtE: operator.le,
-    ast.Gt: operator.gt, ast.GtE: operator.ge,
-    ast.Is: operator.is_, ast.IsNot: operator.is_not,
-    ast.In: lambda a, b: a in b, ast.NotIn: lambda a, b: a not in b,
+    ast.Eq: operator.eq,
+    ast.NotEq: operator.ne,
+    ast.Lt: operator.lt,
+    ast.LtE: operator.le,
+    ast.Gt: operator.gt,
+    ast.GtE: operator.ge,
+    ast.Is: operator.is_,
+    ast.IsNot: operator.is_not,
+    ast.In: lambda a, b: a in b,
+    ast.NotIn: lambda a, b: a not in b,
 }
 _BIN_OPS = {
-    ast.Add: operator.add, ast.Sub: operator.sub,
-    ast.Mult: operator.mul, ast.FloorDiv: operator.floordiv,
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.FloorDiv: operator.floordiv,
     ast.Mod: operator.mod,
 }
 _UNARY_OPS = {ast.Not: operator.not_, ast.USub: operator.neg}
@@ -93,12 +111,14 @@ def _safe_eval(node: ast.AST, ns: dict) -> Any:
         return [_safe_eval(e, ns) for e in node.elts]
     raise ValueError(f"Unsupported expression: {type(node).__name__}")
 
+
 EXECUTIONS_DIR = Path(__file__).parent.parent / "workflow_executions"
 
 
 @dataclass
 class WorkflowContext:
     """Runtime state for a workflow execution."""
+
     workflow_id: str
     execution_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     variables: dict[str, Any] = field(default_factory=dict)
@@ -214,9 +234,7 @@ class WorkflowEngine:
         if len(node_ids) == 1:
             await self._execute_node(wf, node_ids[0], ctx, progress_cb)
         else:
-            await asyncio.gather(
-                *[self._execute_node(wf, nid, ctx, progress_cb) for nid in node_ids]
-            )
+            await asyncio.gather(*[self._execute_node(wf, nid, ctx, progress_cb) for nid in node_ids])
 
         # Determine next nodes to execute
         next_nodes = []
@@ -309,9 +327,7 @@ class WorkflowEngine:
 
         elif node.type == "parallel":
             child_ids = cfg.get("node_ids", [])
-            await asyncio.gather(
-                *[self._execute_node(wf, cid, ctx, progress_cb) for cid in child_ids]
-            )
+            await asyncio.gather(*[self._execute_node(wf, cid, ctx, progress_cb) for cid in child_ids])
             outputs = [ctx.node_outputs.get(cid, "") for cid in child_ids]
             return "\n---\n".join(outputs)
 
@@ -358,6 +374,7 @@ class WorkflowEngine:
 
     def _resolve_template(self, template: str, ctx: WorkflowContext) -> str:
         """Substitute {input}, {variables.x}, {node.id} placeholders."""
+
         def replacer(match):
             key = match.group(1)
             if key == "input":
@@ -372,14 +389,15 @@ class WorkflowEngine:
 
         return re.sub(r"\{([^{}]+)\}", replacer, template)
 
-    def _eval_condition(self, expression: str, ctx: WorkflowContext,
-                        current_node_id: str = "") -> bool:
+    def _eval_condition(self, expression: str, ctx: WorkflowContext, current_node_id: str = "") -> bool:
         """Safely evaluate a condition expression using AST walking."""
         namespace = {
             "output": ctx.node_outputs.get(current_node_id, ""),
             "variables": ctx.variables,
             "outputs": ctx.node_outputs,
-            "True": True, "False": False, "None": None,
+            "True": True,
+            "False": False,
+            "None": None,
         }
         try:
             tree = ast.parse(expression, mode="eval")
@@ -398,14 +416,16 @@ def list_executions(limit: int = 50) -> list[dict]:
     for f in files[:limit]:
         try:
             data = json.loads(f.read_text())
-            results.append({
-                "execution_id": data.get("execution_id"),
-                "workflow_id": data.get("workflow_id"),
-                "status": data.get("status"),
-                "started_at": data.get("started_at"),
-                "completed_at": data.get("completed_at"),
-                "node_count": len(data.get("node_statuses", {})),
-            })
+            results.append(
+                {
+                    "execution_id": data.get("execution_id"),
+                    "workflow_id": data.get("workflow_id"),
+                    "status": data.get("status"),
+                    "started_at": data.get("started_at"),
+                    "completed_at": data.get("completed_at"),
+                    "node_count": len(data.get("node_statuses", {})),
+                }
+            )
         except Exception:
             continue
     return results

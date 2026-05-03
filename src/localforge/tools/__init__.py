@@ -33,11 +33,14 @@ def tool_handler(
     schema: dict[str, Any],
 ):
     """Decorator to register a tool with its MCP definition and async handler."""
+
     def decorator(fn: Callable[..., Awaitable[str]]) -> Callable[..., Awaitable[str]]:
         if name in _tool_handlers:
             log.warning(
                 "Tool name collision: '%s' registered by %s, overwriting previous handler %s",
-                name, fn.__module__, _tool_handlers[name].__module__,
+                name,
+                fn.__module__,
+                _tool_handlers[name].__module__,
             )
         _tool_definitions.append(Tool(name=name, description=description, inputSchema=schema))
         _tool_handlers[name] = fn
@@ -45,5 +48,7 @@ def tool_handler(
         @wraps(fn)
         async def wrapper(*args: Any, **kwargs: Any) -> str:
             return await fn(*args, **kwargs)
+
         return wrapper
+
     return decorator

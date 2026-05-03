@@ -3,8 +3,6 @@
 import asyncio
 import base64
 import logging
-import os
-from pathlib import Path
 from typing import Any
 
 from localforge import config as cfg
@@ -21,7 +19,10 @@ log = logging.getLogger("localforge")
         "type": "object",
         "properties": {
             "code": {"type": "string", "description": "Source code to analyze"},
-            "query": {"type": "string", "description": "What to look for (e.g. 'error handling gaps', 'performance issues')"},
+            "query": {
+                "type": "string",
+                "description": "What to look for (e.g. 'error handling gaps', 'performance issues')",
+            },
             "language": {"type": "string", "description": "Language hint (optional, overrides context)"},
         },
         "required": ["code", "query"],
@@ -65,9 +66,7 @@ async def batch_review(args: dict) -> str:
             healthy_backends.append(name)
 
     if len(healthy_backends) <= 1 or len(snippets) <= 1:
-        numbered = "\n\n---\n\n".join(
-            f"Snippet {i+1}:\n```\n{s}\n```" for i, s in enumerate(snippets)
-        )
+        numbered = "\n\n---\n\n".join(f"Snippet {i + 1}:\n```\n{s}\n```" for i, s in enumerate(snippets))
         prompt = (
             f"For each snippet below, check for: {concern}\n"
             f"Label each response 'Snippet N:' and be concise.\n\n{numbered}"
@@ -85,9 +84,7 @@ async def batch_review(args: dict) -> str:
     gen_params = cfg.get_generation_params(cfg.MODEL)
 
     async def _review_chunk(backend_name: str, chunk: list[tuple[int, str]]) -> list[tuple[int, str]]:
-        numbered = "\n\n---\n\n".join(
-            f"Snippet {idx+1}:\n```\n{s}\n```" for idx, s in chunk
-        )
+        numbered = "\n\n---\n\n".join(f"Snippet {idx + 1}:\n```\n{s}\n```" for idx, s in chunk)
         prompt = (
             f"For each snippet below, check for: {concern}\n"
             f"Label each response 'Snippet N:' and be concise.\n\n{numbered}"
@@ -108,11 +105,7 @@ async def batch_review(args: dict) -> str:
             log.warning("Backend %s failed during batch_review: %s", backend_name, e)
             return [(chunk[0][0], f"(Backend {backend_name} failed: {e})")]
 
-    tasks = [
-        _review_chunk(healthy_backends[i], chunk)
-        for i, chunk in enumerate(chunks)
-        if chunk
-    ]
+    tasks = [_review_chunk(healthy_backends[i], chunk) for i, chunk in enumerate(chunks) if chunk]
     results = await asyncio.gather(*tasks)
     all_results = []
     for result_list in results:
@@ -208,11 +201,7 @@ async def file_qa(args: dict) -> str:
         except (ValueError, IndexError):
             return f"Error: invalid line_range '{args['line_range']}'. Use format: '10-50'"
 
-    prompt = (
-        f"File: {file_path.name}\n\n"
-        f"```\n{content}\n```\n\n"
-        f"Question: {args['question']}"
-    )
+    prompt = f"File: {file_path.name}\n\n```\n{content}\n```\n\nQuestion: {args['question']}"
     async with task_type_context("code"):
         return await chat(prompt, system=cfg.get_system_preamble())
 
@@ -246,13 +235,19 @@ async def analyze_image(args: dict) -> str:
         )
 
     from localforge.tools.utils import validate_file_path
+
     image_path, err = validate_file_path(args["image_path"], max_size=10_000_000)
     if err:
         return err
 
     suffix = image_path.suffix.lower()
-    mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-                ".webp": "image/webp", ".gif": "image/gif"}
+    mime_map = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }
     mime_type = mime_map.get(suffix)
     if not mime_type:
         return f"Error: unsupported format '{suffix}'. Use PNG, JPG, or WEBP."
@@ -269,13 +264,15 @@ async def analyze_image(args: dict) -> str:
     messages: list[dict[str, Any]] = []
     if effective_system:
         messages.append({"role": "system", "content": effective_system})
-    messages.append({
-        "role": "user",
-        "content": [
-            {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_data}"}},
-            {"type": "text", "text": question},
-        ],
-    })
+    messages.append(
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_data}"}},
+                {"type": "text", "text": question},
+            ],
+        }
+    )
 
     gen_params = cfg.get_generation_params(cfg.MODEL)
     body: dict[str, Any] = {"model": cfg.MODEL, "messages": messages, "stream": False, **gen_params}
@@ -302,32 +299,73 @@ async def classify_task(args: dict) -> str:
 
     categories = {
         "code": {
-            "keywords": ["code", "function", "implement", "debug", "refactor", "test",
-                         "compile", "build", "fix bug", "write a", "programming", "api",
-                         "endpoint", "class", "method", "syntax", "coder", "coding"],
+            "keywords": [
+                "code",
+                "function",
+                "implement",
+                "debug",
+                "refactor",
+                "test",
+                "compile",
+                "build",
+                "fix bug",
+                "write a",
+                "programming",
+                "api",
+                "endpoint",
+                "class",
+                "method",
+                "syntax",
+                "coder",
+                "coding",
+            ],
             "models": [
                 ("Qwen3-Coder-30B-A3B-Instruct-1M-UD-Q5_K_XL.gguf", "Best code model, 1M ctx, MoE"),
                 ("Devstral-Small-2-24B-Instruct-2512-UD-Q5_K_XL.gguf", "Strong code, 24B dense"),
             ],
         },
         "reasoning": {
-            "keywords": ["think", "reason", "plan", "architect", "design", "analyze",
-                         "complex", "strategy", "trade-off", "compare", "evaluate",
-                         "decision", "step by step", "chain of thought"],
+            "keywords": [
+                "think",
+                "reason",
+                "plan",
+                "architect",
+                "design",
+                "analyze",
+                "complex",
+                "strategy",
+                "trade-off",
+                "compare",
+                "evaluate",
+                "decision",
+                "step by step",
+                "chain of thought",
+            ],
             "models": [
                 ("Qwen3.5-27B-UD-Q5_K_XL.gguf", "Dense 27B, best multi-step reasoning"),
             ],
         },
         "vision": {
-            "keywords": ["image", "picture", "screenshot", "photo", "visual", "diagram",
-                         "chart", "ui", "design", "look at", "see", "ocr"],
+            "keywords": [
+                "image",
+                "picture",
+                "screenshot",
+                "photo",
+                "visual",
+                "diagram",
+                "chart",
+                "ui",
+                "design",
+                "look at",
+                "see",
+                "ocr",
+            ],
             "models": [
                 ("Qwen3-VL-30B-A3B-Instruct-UD-Q4_K_XL.gguf", "Vision + instruction, MoE"),
             ],
         },
         "quick": {
-            "keywords": ["quick", "simple", "short", "fast", "brief", "summary",
-                         "tldr", "one-liner", "small", "tiny"],
+            "keywords": ["quick", "simple", "short", "fast", "brief", "summary", "tldr", "one-liner", "small", "tiny"],
             "models": [
                 ("google_gemma-3n-E4B-it-Q8_0.gguf", "Fast, small footprint"),
                 ("Qwen3.5-35B-A3B-UD-Q5_K_XL.gguf", "Primary model, MoE (fast enough)"),
@@ -341,8 +379,7 @@ async def classify_task(args: dict) -> str:
         },
     }
 
-    scores = {cat: sum(1 for kw in info["keywords"] if kw in task)
-              for cat, info in categories.items()}
+    scores = {cat: sum(1 for kw in info["keywords"] if kw in task) for cat, info in categories.items()}
     best_cat = max(scores, key=scores.get) if max(scores.values()) > 0 else "general"
     recommendations = categories[best_cat]["models"]
 

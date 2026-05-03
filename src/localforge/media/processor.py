@@ -68,12 +68,18 @@ async def create_video_thumbnail(
     async with _ffmpeg_sem:
         try:
             proc = await asyncio.create_subprocess_exec(
-                "ffmpeg", "-y",
-                "-ss", str(time_offset),
-                "-i", str(video_path),
-                "-vframes", "1",
-                "-vf", f"scale={width}:-1",
-                "-q:v", "2",
+                "ffmpeg",
+                "-y",
+                "-ss",
+                str(time_offset),
+                "-i",
+                str(video_path),
+                "-vframes",
+                "1",
+                "-vf",
+                f"scale={width}:-1",
+                "-q:v",
+                "2",
                 str(output_path),
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
@@ -102,8 +108,10 @@ async def get_video_metadata(video_path: Path) -> Optional[dict]:
     try:
         proc = await asyncio.create_subprocess_exec(
             "ffprobe",
-            "-v", "quiet",
-            "-print_format", "json",
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
             "-show_format",
             "-show_streams",
             str(video_path),
@@ -131,12 +139,14 @@ async def get_video_metadata(video_path: Path) -> Optional[dict]:
         }
 
         if video_stream:
-            result.update({
-                "width": int(video_stream.get("width", 0)),
-                "height": int(video_stream.get("height", 0)),
-                "codec": video_stream.get("codec_name", ""),
-                "fps": _parse_fps(video_stream.get("r_frame_rate", "0/1")),
-            })
+            result.update(
+                {
+                    "width": int(video_stream.get("width", 0)),
+                    "height": int(video_stream.get("height", 0)),
+                    "codec": video_stream.get("codec_name", ""),
+                    "fps": _parse_fps(video_stream.get("r_frame_rate", "0/1")),
+                }
+            )
 
         return result
 

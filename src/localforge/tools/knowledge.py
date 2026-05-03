@@ -16,6 +16,7 @@ def _get_kg():
     global _kg_instance
     if _kg_instance is None:
         from localforge.knowledge.graph import KnowledgeGraph
+
         _kg_instance = KnowledgeGraph()
     return _kg_instance
 
@@ -50,6 +51,7 @@ def _get_kg():
 )
 async def knowledge_base(args: dict) -> str:
     from localforge.tools.rag import ingest_document
+
     action = args["action"]
 
     if action == "add":
@@ -62,16 +64,15 @@ async def knowledge_base(args: dict) -> str:
         timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
 
         tag_str = ", ".join(tags) if tags else "untagged"
-        labeled_content = (
-            f"[source: {source}] [tags: {tag_str}] [added: {timestamp}]\n"
-            f"{content}"
-        )
+        labeled_content = f"[source: {source}] [tags: {tag_str}] [added: {timestamp}]\n{content}"
 
-        result = await ingest_document({
-            "index_name": _KNOWLEDGE_INDEX_NAME,
-            "content": labeled_content,
-            "label": f"kb-{source}-{timestamp}",
-        })
+        result = await ingest_document(
+            {
+                "index_name": _KNOWLEDGE_INDEX_NAME,
+                "content": labeled_content,
+                "label": f"kb-{source}-{timestamp}",
+            }
+        )
         return f"Knowledge added ({len(content)} chars, source: {source}, tags: {tag_str}). {result}"
 
     elif action == "search":
@@ -160,12 +161,14 @@ async def doc_lookup(args: dict) -> str:
     result = await chat(prompt, system=cfg.get_system_preamble())
 
     if args.get("save_to_kb"):
-        await knowledge_base({
-            "action": "add",
-            "content": f"# {library}: {query}\n\n{result}",
-            "source": "docs",
-            "tags": [library, "documentation"],
-        })
+        await knowledge_base(
+            {
+                "action": "add",
+                "content": f"# {library}: {query}\n\n{result}",
+                "source": "docs",
+                "tags": [library, "documentation"],
+            }
+        )
         return f"{result}\n\n(Saved to knowledge base)"
 
     return result
@@ -174,6 +177,7 @@ async def doc_lookup(args: dict) -> str:
 # ---------------------------------------------------------------------------
 # Knowledge Graph tools
 # ---------------------------------------------------------------------------
+
 
 @tool_handler(
     name="kg_add",
@@ -363,6 +367,7 @@ async def kg_import(args: dict) -> str:
     kg = _get_kg()
     try:
         from localforge.paths import notes_dir
+
         count = kg.import_notes(notes_dir())
         return f"Imported {count} notes into knowledge graph."
     except Exception as e:

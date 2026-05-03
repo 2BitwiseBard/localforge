@@ -61,6 +61,7 @@ class TaskQueue:
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.executescript(SCHEMA)
             from ..migrations import run_migrations
+
             run_migrations(self._conn, "task_queue")
         return self._conn
 
@@ -69,10 +70,15 @@ class TaskQueue:
             self._conn.close()
             self._conn = None
 
-    def enqueue(self, payload: dict, queue: str = "default",
-                priority: int = 5, parent_task_id: Optional[str] = None,
-                batch_id: Optional[str] = None,
-                max_retries: int = 3) -> str:
+    def enqueue(
+        self,
+        payload: dict,
+        queue: str = "default",
+        priority: int = 5,
+        parent_task_id: Optional[str] = None,
+        batch_id: Optional[str] = None,
+        max_retries: int = 3,
+    ) -> str:
         """Add a task. Returns task_id. Priority: 1=highest, 10=lowest."""
         task_id = uuid.uuid4().hex[:16]
         conn = self._get_conn()
@@ -80,16 +86,22 @@ class TaskQueue:
             """INSERT INTO tasks (id, queue, priority, payload, status, created_at,
                                   parent_task_id, batch_id, max_retries)
                VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)""",
-            (task_id, queue, max(1, min(10, priority)),
-             json.dumps(payload), time.time(),
-             parent_task_id, batch_id, max_retries),
+            (
+                task_id,
+                queue,
+                max(1, min(10, priority)),
+                json.dumps(payload),
+                time.time(),
+                parent_task_id,
+                batch_id,
+                max_retries,
+            ),
         )
         conn.commit()
         log.debug(f"Enqueued task {task_id} on queue '{queue}' (priority={priority})")
         return task_id
 
-    def dequeue(self, queue: str = "default",
-                agent_id: Optional[str] = None) -> Optional[dict]:
+    def dequeue(self, queue: str = "default", agent_id: Optional[str] = None) -> Optional[dict]:
         """Claim the next pending task. Returns task dict or None."""
         conn = self._get_conn()
         now = time.time()
@@ -176,16 +188,26 @@ class TaskQueue:
         if not row:
             return None
         return {
-            "id": row[0], "queue": row[1], "priority": row[2],
-            "payload": json.loads(row[3]), "result": json.loads(row[4]) if row[4] else None,
-            "status": row[5], "created_at": row[6], "started_at": row[7],
-            "completed_at": row[8], "agent_id": row[9],
-            "parent_task_id": row[10], "batch_id": row[11],
-            "retry_count": row[12], "max_retries": row[13], "error": row[14],
+            "id": row[0],
+            "queue": row[1],
+            "priority": row[2],
+            "payload": json.loads(row[3]),
+            "result": json.loads(row[4]) if row[4] else None,
+            "status": row[5],
+            "created_at": row[6],
+            "started_at": row[7],
+            "completed_at": row[8],
+            "agent_id": row[9],
+            "parent_task_id": row[10],
+            "batch_id": row[11],
+            "retry_count": row[12],
+            "max_retries": row[13],
+            "error": row[14],
         }
 
-    def list_tasks(self, queue: Optional[str] = None, status: Optional[str] = None,
-                   batch_id: Optional[str] = None, limit: int = 50) -> list[dict]:
+    def list_tasks(
+        self, queue: Optional[str] = None, status: Optional[str] = None, batch_id: Optional[str] = None, limit: int = 50
+    ) -> list[dict]:
         conn = self._get_conn()
         conditions = []
         params = []
@@ -207,8 +229,16 @@ class TaskQueue:
         ).fetchall()
 
         return [
-            {"id": r[0], "queue": r[1], "priority": r[2], "status": r[3],
-             "created_at": r[4], "agent_id": r[5], "batch_id": r[6], "error": r[7]}
+            {
+                "id": r[0],
+                "queue": r[1],
+                "priority": r[2],
+                "status": r[3],
+                "created_at": r[4],
+                "agent_id": r[5],
+                "batch_id": r[6],
+                "error": r[7],
+            }
             for r in rows
         ]
 
@@ -239,9 +269,13 @@ class TaskQueue:
             (batch_id,),
         ).fetchall()
         return [
-            {"id": r[0], "payload": json.loads(r[1]),
-             "result": json.loads(r[2]) if r[2] else None,
-             "status": r[3], "error": r[4]}
+            {
+                "id": r[0],
+                "payload": json.loads(r[1]),
+                "result": json.loads(r[2]) if r[2] else None,
+                "status": r[3],
+                "error": r[4],
+            }
             for r in rows
         ]
 

@@ -23,7 +23,6 @@ import argparse
 import asyncio
 import logging
 import os
-import signal
 import sys
 import time
 import uuid
@@ -32,6 +31,7 @@ from localforge.workers.detect import HardwareInfo, detect
 
 try:
     import psutil  # type: ignore
+
     _HAS_PSUTIL = True
 except ImportError:  # pragma: no cover — worker dep group
     _HAS_PSUTIL = False
@@ -51,7 +51,7 @@ _max_concurrent: int = 2
 _task_timeout: int = 180  # seconds
 _shutting_down: bool = False
 _min_memory_mb: int = 500  # Reject tasks if available RAM below this
-_battery_floor: int = 15   # Reject tasks if battery below this % (and not charging)
+_battery_floor: int = 15  # Reject tasks if battery below this % (and not charging)
 
 # Task stats
 _stats = {
@@ -84,12 +84,12 @@ def _models_dir():
     drops files in the same place the service's --model arg pointed at.
     """
     from pathlib import Path
+
     explicit = os.environ.get("LOCALFORGE_MODELS_DIR", "").strip()
     if explicit:
         p = Path(explicit)
     else:
-        install = os.environ.get("LOCALFORGE_INSTALL_DIR", "").strip() \
-            or os.environ.get("INSTALL_DIR", "").strip()
+        install = os.environ.get("LOCALFORGE_INSTALL_DIR", "").strip() or os.environ.get("INSTALL_DIR", "").strip()
         p = Path(install) / "models" if install else Path.home() / ".localforge" / "models"
     p.mkdir(parents=True, exist_ok=True)
     return p
@@ -98,8 +98,7 @@ def _models_dir():
 class LlamaServerManager:
     """Manage a local llama-server subprocess for self-hosted inference."""
 
-    def __init__(self, model_path: str, port: int = 5050,
-                 gpu_layers: int = -1, ctx_size: int = 0, parallel: int = 1):
+    def __init__(self, model_path: str, port: int = 5050, gpu_layers: int = -1, ctx_size: int = 0, parallel: int = 1):
         self.model_path = model_path
         self.port = port
         self.gpu_layers = gpu_layers
@@ -114,6 +113,7 @@ class LlamaServerManager:
     @property
     def model_name(self) -> str:
         from pathlib import Path
+
         return Path(self.model_path).name
 
     @property
@@ -144,6 +144,7 @@ class LlamaServerManager:
     async def start(self) -> bool:
         """Launch llama-server and wait for it to be healthy."""
         import shutil
+
         # LOCALFORGE_LLAMA_BIN lets the bootstrapper point at a vendored binary
         # without mutating the service PATH (NSSM's AppEnvironmentExtra
         # replaces PATH rather than prepending, which would break System32).
@@ -161,12 +162,18 @@ class LlamaServerManager:
 
         cmd = [
             llama_bin,
-            "--model", self.model_path,
-            "--port", str(self.port),
-            "--host", "127.0.0.1",
-            "--ctx-size", str(self.ctx_size),
-            "--n-gpu-layers", str(self.gpu_layers),
-            "--parallel", str(self.parallel),
+            "--model",
+            self.model_path,
+            "--port",
+            str(self.port),
+            "--host",
+            "127.0.0.1",
+            "--ctx-size",
+            str(self.ctx_size),
+            "--n-gpu-layers",
+            str(self.gpu_layers),
+            "--parallel",
+            str(self.parallel),
         ]
         log.info("Starting llama-server: %s", " ".join(cmd))
 
@@ -183,8 +190,7 @@ class LlamaServerManager:
                 log.error("llama-server exited immediately: %s", stderr.decode()[:500])
                 return False
             if await self.health_check():
-                log.info("llama-server ready on :%d (model: %s, ctx: %d)",
-                         self.port, self.model_name, self.ctx_size)
+                log.info("llama-server ready on :%d (model: %s, ctx: %d)", self.port, self.model_name, self.ctx_size)
                 self._restart_task = asyncio.create_task(self._crash_watcher())
                 return True
             await asyncio.sleep(0.5)
@@ -196,6 +202,7 @@ class LlamaServerManager:
     async def health_check(self) -> bool:
         try:
             import httpx
+
             async with httpx.AsyncClient(timeout=3) as client:
                 resp = await client.get(f"{self._url}/health")
                 return resp.status_code == 200
@@ -217,8 +224,7 @@ class LlamaServerManager:
                 if self._crash_count > 3:
                     log.error("llama-server crashed %d times in 5min, giving up", self._crash_count)
                     return
-                log.warning("llama-server crashed, restarting in %ds (attempt %d/3)",
-                            backoff, self._crash_count)
+                log.warning("llama-server crashed, restarting in %ds (attempt %d/3)", backoff, self._crash_count)
                 await asyncio.sleep(backoff)
                 backoff = min(60, backoff * 2)
                 await self.start()
@@ -246,6 +252,7 @@ def get_hardware() -> HardwareInfo:
 # ---------------------------------------------------------------------------
 # Task execution
 # ---------------------------------------------------------------------------
+
 
 async def execute_task(payload: dict) -> dict:
     """Execute a routed task based on its type."""
@@ -275,12 +282,16 @@ async def _task_chat(payload: dict) -> dict:
     if _llama_manager and await _llama_manager.health_check():
         try:
             import httpx
+
             async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post(f"{_llama_manager.url}/v1/chat/completions", json={
-                    "messages": messages,
-                    "max_tokens": max_tokens,
-                    "temperature": payload.get("temperature", 0.7),
-                })
+                resp = await client.post(
+                    f"{_llama_manager.url}/v1/chat/completions",
+                    json={
+                        "messages": messages,
+                        "max_tokens": max_tokens,
+                        "temperature": payload.get("temperature", 0.7),
+                    },
+                )
                 data = resp.json()
                 return {
                     "response": data["choices"][0]["message"]["content"],
@@ -293,12 +304,16 @@ async def _task_chat(payload: dict) -> dict:
     # Priority 2: external text-gen-webui backend
     try:
         import httpx
+
         async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(f"{_backend_url}/chat/completions", json={
-                "messages": messages,
-                "max_tokens": max_tokens,
-                "temperature": payload.get("temperature", 0.7),
-            })
+            resp = await client.post(
+                f"{_backend_url}/chat/completions",
+                json={
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": payload.get("temperature", 0.7),
+                },
+            )
             data = resp.json()
             return {
                 "response": data["choices"][0]["message"]["content"],
@@ -310,15 +325,20 @@ async def _task_chat(payload: dict) -> dict:
 
     # Priority 3: llama-cli binary fallback
     import shutil
+
     llama = shutil.which("llama-cli") or shutil.which("llama.cpp")
     if llama:
         proc = await asyncio.create_subprocess_exec(
-            llama, "-p", prompt, "-n", str(max_tokens),
+            llama,
+            "-p",
+            prompt,
+            "-n",
+            str(max_tokens),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_task_timeout)
-        return {"response": stdout.decode()[:max_tokens * 4], "backend": "llama-cli"}
+        return {"response": stdout.decode()[: max_tokens * 4], "backend": "llama-cli"}
 
     return {"error": "No inference backend available"}
 
@@ -330,6 +350,7 @@ async def _task_embeddings(payload: dict) -> dict:
         return {"error": "No texts provided"}
     try:
         from fastembed import TextEmbedding
+
         model = TextEmbedding("jinaai/jina-embeddings-v2-base-code")
         embeddings = list(model.embed(texts))
         return {"embeddings": [e.tolist() for e in embeddings]}
@@ -343,14 +364,17 @@ async def _task_tts(payload: dict) -> dict:
     if not text:
         return {"error": "No text provided"}
     import shutil
+
     if shutil.which("piper"):
         proc = await asyncio.create_subprocess_exec(
-            "piper", "--output-raw",
+            "piper",
+            "--output-raw",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(text.encode()), timeout=60)
         import base64
+
         return {"audio_b64": base64.b64encode(stdout).decode(), "format": "raw"}
     return {"error": "No TTS backend available (install piper)"}
 
@@ -359,6 +383,7 @@ async def _task_stt(payload: dict) -> dict:
     """Speech-to-text via faster-whisper."""
     try:
         from faster_whisper import WhisperModel
+
         audio_path = payload.get("audio_path", "")
         if not audio_path:
             return {"error": "No audio_path provided"}
@@ -389,11 +414,10 @@ async def _task_rerank(payload: dict) -> dict:
         return {"error": "query and chunks required"}
     try:
         from fastembed.rerank.cross_encoder import TextCrossEncoder
+
         reranker = TextCrossEncoder("Xenova/ms-marco-MiniLM-L-6-v2")
         scores = list(reranker.rerank(query, chunks))
-        ranked = sorted(
-            zip(chunks, scores), key=lambda x: x[1], reverse=True
-        )
+        ranked = sorted(zip(chunks, scores), key=lambda x: x[1], reverse=True)
         return {"ranked": [{"text": t, "score": float(s)} for t, s in ranked]}
     except ImportError:
         return {"error": "fastembed not installed"}
@@ -403,13 +427,12 @@ async def _task_rerank(payload: dict) -> dict:
 # Task queue worker loop
 # ---------------------------------------------------------------------------
 
+
 async def _task_worker(worker_id: str):
     """Process tasks from the queue."""
     while not _shutting_down:
         try:
-            task_id, payload, result_future = await asyncio.wait_for(
-                _task_queue.get(), timeout=1.0
-            )
+            task_id, payload, result_future = await asyncio.wait_for(_task_queue.get(), timeout=1.0)
         except asyncio.TimeoutError:
             continue
 
@@ -440,7 +463,13 @@ async def _task_worker(worker_id: str):
             duration = round(time.time() - start_ts, 2)
             _stats["tasks_failed"] += 1
             _stats["total_duration_s"] += duration
-            record = {"id": task_id, "type": payload.get("type"), "duration": duration, "status": "error", "error": str(e)}
+            record = {
+                "id": task_id,
+                "type": payload.get("type"),
+                "duration": duration,
+                "status": "error",
+                "error": str(e),
+            }
             log.error("[%s] Task %s failed: %s", worker_id, task_id, e)
             result_future.set_result({"id": task_id, "error": str(e)})
         finally:
@@ -455,15 +484,18 @@ async def _task_worker(worker_id: str):
 # Heartbeat — push-based registration with the hub
 # ---------------------------------------------------------------------------
 
+
 async def heartbeat_loop(interval: int = 30):
     """Periodically announce this worker to the hub."""
     import socket
+
     hostname = socket.gethostname()
 
     while not _shutting_down:
         if _hub_url:
             try:
                 import httpx
+
                 hw = get_hardware()
                 # Determine model name: prefer llama-server, fall back to external backend
                 model_name = ""
@@ -472,9 +504,7 @@ async def heartbeat_loop(interval: int = 30):
                 elif _backend_url:
                     try:
                         async with httpx.AsyncClient(timeout=5) as probe:
-                            resp = await probe.get(
-                                f"{_backend_url.rstrip('/v1')}/v1/internal/model/info"
-                            )
+                            resp = await probe.get(f"{_backend_url.rstrip('/v1')}/v1/internal/model/info")
                             if resp.status_code == 200:
                                 model_name = resp.json().get("model_name", "")
                     except Exception:
@@ -512,6 +542,7 @@ _worker_port: int = 8200
 # ---------------------------------------------------------------------------
 # System metrics
 # ---------------------------------------------------------------------------
+
 
 def system_metrics() -> dict:
     """Gather current system resource usage."""
@@ -570,10 +601,16 @@ def system_metrics() -> dict:
     # GPU metrics via nvidia-smi
     try:
         import subprocess
+
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5,
+            [
+                "nvidia-smi",
+                "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             parts = result.stdout.strip().split(", ")
@@ -591,15 +628,21 @@ def system_metrics() -> dict:
     if "ram" not in metrics and sys.platform == "darwin":
         try:
             import subprocess
+
             result = subprocess.run(
                 ["sysctl", "-n", "hw.memsize"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0:
                 total_mb = int(result.stdout.strip()) // (1024 * 1024)
                 # vm_stat for available
                 vm_result = subprocess.run(
-                    ["vm_stat"], capture_output=True, text=True, timeout=5,
+                    ["vm_stat"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
                 free_pages = 0
                 if vm_result.returncode == 0:
@@ -641,6 +684,7 @@ def system_metrics() -> dict:
 # HTTP server (Starlette)
 # ---------------------------------------------------------------------------
 
+
 async def _test_hub_connection(max_attempts: int = 3) -> bool:
     """Verify the hub is reachable before entering the heartbeat loop.
 
@@ -648,11 +692,13 @@ async def _test_hub_connection(max_attempts: int = 3) -> bool:
     with 200, False otherwise. Retries up to max_attempts times with 2s delay.
     """
     import socket
+
     hostname = socket.gethostname()
 
     for attempt in range(1, max_attempts + 1):
         try:
             import httpx
+
             hw = get_hardware()
             payload = {
                 "hostname": hostname,
@@ -679,20 +725,21 @@ async def _test_hub_connection(max_attempts: int = 3) -> bool:
                     log.info("Hub connection verified: %s (attempt %d)", _hub_url, attempt)
                     return True
                 elif resp.status_code == 401:
-                    log.error(
-                        "Hub auth failed (401) — check --key or LOCALFORGE_API_KEY. "
-                        "Hub: %s", _hub_url
-                    )
+                    log.error("Hub auth failed (401) — check --key or LOCALFORGE_API_KEY. Hub: %s", _hub_url)
                     return False  # Don't retry auth failures
                 else:
                     log.warning(
                         "Hub returned %d on connection test (attempt %d/%d)",
-                        resp.status_code, attempt, max_attempts,
+                        resp.status_code,
+                        attempt,
+                        max_attempts,
                     )
         except Exception as e:
             log.warning(
                 "Hub connection test failed (attempt %d/%d): %s",
-                attempt, max_attempts, e,
+                attempt,
+                max_attempts,
+                e,
             )
         if attempt < max_attempts:
             await asyncio.sleep(2)
@@ -708,32 +755,36 @@ def create_app():
 
     async def health(request):
         hw = get_hardware()
-        return JSONResponse({
-            "status": "ok" if not _shutting_down else "draining",
-            "tier": hw.tier(),
-            "model_name": _llama_manager.model_name if _llama_manager else "",
-            "active_tasks": len(_active_tasks),
-            "queued_tasks": _task_queue.qsize() if _task_queue else 0,
-            "max_concurrent": _max_concurrent,
-            "uptime_s": int(time.time() - _start_time),
-            "capabilities": hw.to_dict(),
-            "stats": _stats,
-        })
+        return JSONResponse(
+            {
+                "status": "ok" if not _shutting_down else "draining",
+                "tier": hw.tier(),
+                "model_name": _llama_manager.model_name if _llama_manager else "",
+                "active_tasks": len(_active_tasks),
+                "queued_tasks": _task_queue.qsize() if _task_queue else 0,
+                "max_concurrent": _max_concurrent,
+                "uptime_s": int(time.time() - _start_time),
+                "capabilities": hw.to_dict(),
+                "stats": _stats,
+            }
+        )
 
     async def status(request):
         hw = get_hardware()
-        return JSONResponse({
-            "hardware": hw.to_dict(),
-            "tier": hw.tier(),
-            "active_tasks": {tid: {"type": "running"} for tid in _active_tasks},
-            "queued_tasks": _task_queue.qsize() if _task_queue else 0,
-            "task_history_count": len(_task_history),
-            "recent_tasks": _task_history[-10:],
-            "uptime_s": int(time.time() - _start_time),
-            "stats": _stats,
-            "hub": _hub_url or "(standalone)",
-            "backend_url": _backend_url,
-        })
+        return JSONResponse(
+            {
+                "hardware": hw.to_dict(),
+                "tier": hw.tier(),
+                "active_tasks": {tid: {"type": "running"} for tid in _active_tasks},
+                "queued_tasks": _task_queue.qsize() if _task_queue else 0,
+                "task_history_count": len(_task_history),
+                "recent_tasks": _task_history[-10:],
+                "uptime_s": int(time.time() - _start_time),
+                "stats": _stats,
+                "hub": _hub_url or "(standalone)",
+                "backend_url": _backend_url,
+            }
+        )
 
     def _check_worker_auth(request):
         """Verify Bearer token on mutating endpoints."""
@@ -741,6 +792,7 @@ def create_app():
             return True  # No key configured, allow (standalone mode)
         auth = request.headers.get("authorization", "")
         import hmac
+
         return hmac.compare_digest(auth, f"Bearer {_api_key}")
 
     async def handle_task(request):
@@ -821,7 +873,6 @@ def create_app():
         The hub's admin-only proxy (`GET /api/mesh/workers/{id}/models`) is
         what users actually hit; direct access is for debugging.
         """
-        from pathlib import Path
         models_dir = _models_dir()
         files = []
         try:
@@ -830,25 +881,29 @@ def create_app():
                     st = path.stat()
                 except OSError:
                     continue
-                files.append({
-                    "filename": path.name,
-                    "path": str(path),
-                    "size_bytes": st.st_size,
-                    "size_gb": round(st.st_size / (1024**3), 2),
-                    "modified": int(st.st_mtime),
-                })
+                files.append(
+                    {
+                        "filename": path.name,
+                        "path": str(path),
+                        "size_bytes": st.st_size,
+                        "size_gb": round(st.st_size / (1024**3), 2),
+                        "modified": int(st.st_mtime),
+                    }
+                )
         except OSError as exc:
             return JSONResponse({"error": f"Cannot read models dir: {exc}"}, status_code=500)
-        return JSONResponse({
-            "models_dir": str(models_dir),
-            "files": files,
-            "active": {
-                "model_name": _llama_manager.model_name if _llama_manager else "",
-                "model_path": _llama_manager.model_path if _llama_manager else "",
-                "port": _llama_manager.port if _llama_manager else 0,
-                "healthy": (await _llama_manager.health_check()) if _llama_manager else False,
-            },
-        })
+        return JSONResponse(
+            {
+                "models_dir": str(models_dir),
+                "files": files,
+                "active": {
+                    "model_name": _llama_manager.model_name if _llama_manager else "",
+                    "model_path": _llama_manager.model_path if _llama_manager else "",
+                    "port": _llama_manager.port if _llama_manager else 0,
+                    "healthy": (await _llama_manager.health_check()) if _llama_manager else False,
+                },
+            }
+        )
 
     async def download_model(request):
         """Stream a catalog-sanctioned GGUF to the local models dir.
@@ -874,9 +929,14 @@ def create_app():
         try:
             from localforge.models_catalog import TRUSTED_HOSTS
         except ImportError:
-            TRUSTED_HOSTS = {"huggingface.co", "cdn-lfs.huggingface.co",
-                             "cdn-lfs-us-1.huggingface.co", "cdn-lfs-eu-1.huggingface.co"}
+            TRUSTED_HOSTS = {
+                "huggingface.co",
+                "cdn-lfs.huggingface.co",
+                "cdn-lfs-us-1.huggingface.co",
+                "cdn-lfs-eu-1.huggingface.co",
+            }
         from urllib.parse import urlparse
+
         parsed = urlparse(url)
         if parsed.scheme != "https" or parsed.hostname not in TRUSTED_HOSTS:
             return JSONResponse(
@@ -886,6 +946,7 @@ def create_app():
 
         # Sanitize filename — basename only, must end in .gguf.
         from pathlib import Path
+
         safe_name = Path(filename).name
         if not safe_name.endswith(".gguf") or "/" in safe_name or "\\" in safe_name:
             return JSONResponse({"error": "filename must be a plain *.gguf name"}, status_code=400)
@@ -894,20 +955,23 @@ def create_app():
         target = models_dir / safe_name
         partial = models_dir / (safe_name + ".partial")
         if target.exists():
-            return JSONResponse({
-                "status": "already_present",
-                "path": str(target),
-                "size_bytes": target.stat().st_size,
-            })
+            return JSONResponse(
+                {
+                    "status": "already_present",
+                    "path": str(target),
+                    "size_bytes": target.stat().st_size,
+                }
+            )
 
         # Stream to .partial then atomic rename so a mid-transfer abort
         # doesn't leave a truncated "valid" file the worker would try to load.
         try:
             import httpx
+
             bytes_written = 0
-            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=3600.0,
-                                                               write=60.0, pool=10.0),
-                                         follow_redirects=True) as client:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=10.0, read=3600.0, write=60.0, pool=10.0), follow_redirects=True
+            ) as client:
                 async with client.stream("GET", url) as resp:
                     if resp.status_code != 200:
                         return JSONResponse(
@@ -929,13 +993,15 @@ def create_app():
             log.exception("download_model failed: %s", exc)
             return JSONResponse({"error": f"Download failed: {exc}"}, status_code=500)
 
-        return JSONResponse({
-            "status": "ok",
-            "path": str(target),
-            "filename": safe_name,
-            "size_bytes": bytes_written,
-            "upstream_size": total,
-        })
+        return JSONResponse(
+            {
+                "status": "ok",
+                "path": str(target),
+                "filename": safe_name,
+                "size_bytes": bytes_written,
+                "upstream_size": total,
+            }
+        )
 
     async def activate_model(request):
         """Hot-swap the running llama-server to serve a different GGUF.
@@ -954,6 +1020,7 @@ def create_app():
             return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
         from pathlib import Path
+
         target_path = body.get("path") or ""
         target_filename = body.get("filename") or ""
         if target_filename and not target_path:
@@ -988,8 +1055,10 @@ def create_app():
                 # end up in a headless state after a failed swap.
                 if old_path and old_path != target_path:
                     rollback = LlamaServerManager(
-                        model_path=old_path, port=old_port,
-                        gpu_layers=-1, ctx_size=0,
+                        model_path=old_path,
+                        port=old_port,
+                        gpu_layers=-1,
+                        ctx_size=0,
                         parallel=min(_max_concurrent, 2),
                     )
                     if await rollback.start():
@@ -1005,12 +1074,14 @@ def create_app():
                 )
             _llama_manager = new_mgr
 
-        return JSONResponse({
-            "status": "ok",
-            "model_name": new_mgr.model_name,
-            "model_path": new_mgr.model_path,
-            "port": new_mgr.port,
-        })
+        return JSONResponse(
+            {
+                "status": "ok",
+                "model_name": new_mgr.model_name,
+                "model_path": new_mgr.model_path,
+                "port": new_mgr.port,
+            }
+        )
 
     async def on_startup():
         global _task_queue, _llama_swap_lock, _llama_manager
@@ -1020,8 +1091,7 @@ def create_app():
         if _llama_manager is not None:
             started = await _llama_manager.start()
             if started:
-                log.info("llama-server ready: %s on :%d",
-                         _llama_manager.model_name, _llama_manager.port)
+                log.info("llama-server ready: %s on :%d", _llama_manager.model_name, _llama_manager.port)
             else:
                 log.error("llama-server FAILED to start — falling back to external backend")
                 _llama_manager = None
@@ -1038,10 +1108,7 @@ def create_app():
                 asyncio.create_task(heartbeat_loop())
                 log.info("Heartbeat started → %s", _hub_url)
             else:
-                log.warning(
-                    "Hub unreachable at %s — starting heartbeat anyway "
-                    "(will retry on each interval)", _hub_url
-                )
+                log.warning("Hub unreachable at %s — starting heartbeat anyway (will retry on each interval)", _hub_url)
                 asyncio.create_task(heartbeat_loop())
 
     app = Starlette(
@@ -1064,6 +1131,7 @@ def create_app():
 # Graceful shutdown
 # ---------------------------------------------------------------------------
 
+
 async def _graceful_shutdown():
     """Wait for in-flight tasks to finish, stop llama-server, then exit."""
     global _shutting_down
@@ -1084,44 +1152,50 @@ async def _graceful_shutdown():
 
 
 def main():
-    global _start_time, _hub_url, _api_key, _worker_port, _max_concurrent, _task_timeout, _backend_url, _min_memory_mb, _battery_floor
+    global \
+        _start_time, \
+        _hub_url, \
+        _api_key, \
+        _worker_port, \
+        _max_concurrent, \
+        _task_timeout, \
+        _backend_url, \
+        _min_memory_mb, \
+        _battery_floor
     _start_time = time.time()
 
     parser = argparse.ArgumentParser(description="LocalForge device worker")
     parser.add_argument("--port", type=int, default=8200)
     parser.add_argument("--host", type=str, default="0.0.0.0")
-    parser.add_argument("--hub", type=str, default="",
-                        help="Hub gateway URL (e.g., ai-hub:8100)")
-    parser.add_argument("--key", type=str, default="",
-                        help="API key for hub authentication")
-    parser.add_argument("--heartbeat", type=int, default=30,
-                        help="Heartbeat interval in seconds (default: 30)")
-    parser.add_argument("--max-concurrent", type=int, default=2,
-                        help="Max concurrent tasks (default: 2)")
-    parser.add_argument("--task-timeout", type=int, default=180,
-                        help="Task timeout in seconds (default: 180)")
+    parser.add_argument("--hub", type=str, default="", help="Hub gateway URL (e.g., ai-hub:8100)")
+    parser.add_argument("--key", type=str, default="", help="API key for hub authentication")
+    parser.add_argument("--heartbeat", type=int, default=30, help="Heartbeat interval in seconds (default: 30)")
+    parser.add_argument("--max-concurrent", type=int, default=2, help="Max concurrent tasks (default: 2)")
+    parser.add_argument("--task-timeout", type=int, default=180, help="Task timeout in seconds (default: 180)")
     # Self-hosted llama-server
-    parser.add_argument("--model", type=str, default="",
-                        help="Path to GGUF model for self-hosted llama-server")
-    parser.add_argument("--llama-port", type=int, default=5050,
-                        help="Port for llama-server (default: 5050)")
-    parser.add_argument("--no-llama", action="store_true",
-                        help="Disable auto-detection of local models")
-    parser.add_argument("--gpu-layers", type=int, default=-1,
-                        help="GPU layers for llama-server (-1=auto, 0=CPU only)")
-    parser.add_argument("--ctx-size", type=int, default=0,
-                        help="Context size for llama-server (0=auto)")
-    parser.add_argument("--tls-cert", type=str, default="",
-                        help="Path to TLS certificate (enables HTTPS)")
-    parser.add_argument("--tls-key", type=str, default="",
-                        help="Path to TLS private key")
-    parser.add_argument("--min-memory", type=int, default=500,
-                        help="Minimum available RAM in MB to accept tasks (default: 500)")
-    parser.add_argument("--battery-floor", type=int, default=15,
-                        help="Minimum battery %% to accept tasks when not charging (default: 15)")
-    parser.add_argument("--platform", type=str, default="auto",
-                        choices=["auto", "linux", "darwin", "win32", "android"],
-                        help="Override auto-detected platform (default: auto)")
+    parser.add_argument("--model", type=str, default="", help="Path to GGUF model for self-hosted llama-server")
+    parser.add_argument("--llama-port", type=int, default=5050, help="Port for llama-server (default: 5050)")
+    parser.add_argument("--no-llama", action="store_true", help="Disable auto-detection of local models")
+    parser.add_argument("--gpu-layers", type=int, default=-1, help="GPU layers for llama-server (-1=auto, 0=CPU only)")
+    parser.add_argument("--ctx-size", type=int, default=0, help="Context size for llama-server (0=auto)")
+    parser.add_argument("--tls-cert", type=str, default="", help="Path to TLS certificate (enables HTTPS)")
+    parser.add_argument("--tls-key", type=str, default="", help="Path to TLS private key")
+    parser.add_argument(
+        "--min-memory", type=int, default=500, help="Minimum available RAM in MB to accept tasks (default: 500)"
+    )
+    parser.add_argument(
+        "--battery-floor",
+        type=int,
+        default=15,
+        help="Minimum battery %% to accept tasks when not charging (default: 15)",
+    )
+    parser.add_argument(
+        "--platform",
+        type=str,
+        default="auto",
+        choices=["auto", "linux", "darwin", "win32", "android"],
+        help="Override auto-detected platform (default: auto)",
+    )
     args = parser.parse_args()
 
     # Platform override — written to HardwareInfo after detect() runs.
@@ -1148,8 +1222,7 @@ def main():
     print(f"  GPU: {hw.gpu_name or 'none'} ({hw.gpu_type})")
     print(f"  VRAM: {hw.vram_mb} MB | RAM: {hw.ram_mb} MB | CPU: {hw.cpu_cores} cores")
     print(f"  Tier: {hw.tier()}")
-    caps = [k for k in ("inference", "embeddings", "tts", "stt", "vision", "reranking")
-            if getattr(hw, k, False)]
+    caps = [k for k in ("inference", "embeddings", "tts", "stt", "vision", "reranking") if getattr(hw, k, False)]
     print(f"  Capabilities: {', '.join(caps)}")
     print(f"  Max concurrent: {_max_concurrent} | Timeout: {_task_timeout}s")
     print(f"  Backend: {_backend_url}")
@@ -1159,6 +1232,7 @@ def main():
     model_path = args.model
     if not model_path and not args.no_llama:
         from pathlib import Path
+
         search_dirs = [_models_dir()]
         for extra in [Path.cwd() / "models"]:
             if extra not in search_dirs:
@@ -1197,6 +1271,7 @@ def main():
         print("  Hub: standalone (no heartbeat)")
 
     import uvicorn
+
     app = create_app()
     uvicorn_kwargs = dict(host=args.host, port=args.port, log_level="info")
     if args.tls_cert and args.tls_key:

@@ -40,28 +40,56 @@ class TriggerType(str, Enum):
 # Tool whitelists by trust level (cumulative)
 TRUST_WHITELISTS: dict[TrustLevel, set[str]] = {
     TrustLevel.MONITOR: {
-        "health_check", "check_model", "get_generation_params",
-        "search_index", "semantic_search", "hybrid_search",
-        "file_qa", "list_notes", "recall_note",
+        "health_check",
+        "check_model",
+        "get_generation_params",
+        "search_index",
+        "semantic_search",
+        "hybrid_search",
+        "file_qa",
+        "list_notes",
+        "recall_note",
         "save_note",  # Low-risk write — needed for alerts and notifications
-        "list_indexes", "list_sessions", "session_stats",
-        "classify_task", "slot_info", "cache_stats",
-        "compute_status", "compute_route",
+        "list_indexes",
+        "list_sessions",
+        "session_stats",
+        "classify_task",
+        "slot_info",
+        "cache_stats",
+        "compute_status",
+        "compute_route",
     },
     TrustLevel.SAFE: {
         # Includes all MONITOR tools plus:
-        "index_directory", "incremental_index", "ingest_document",
-        "save_note", "delete_note",
-        "review_diff", "diff_explain", "analyze_code", "batch_review",
-        "local_chat", "multi_turn_chat",
-        "rag_query", "diff_rag",
-        "summarize_file", "explain_error",
-        "knowledge_base", "doc_lookup",
-        "embed_text", "rerank_chunks",
+        "index_directory",
+        "incremental_index",
+        "ingest_document",
+        "save_note",
+        "delete_note",
+        "review_diff",
+        "diff_explain",
+        "analyze_code",
+        "batch_review",
+        "local_chat",
+        "multi_turn_chat",
+        "rag_query",
+        "diff_rag",
+        "summarize_file",
+        "explain_error",
+        "knowledge_base",
+        "doc_lookup",
+        "embed_text",
+        "rerank_chunks",
         "git_context",
-        "web_search", "web_fetch", "deep_research",
-        "kg_add", "kg_relate", "kg_query",
-        "compute_status", "compute_route", "mesh_dispatch",
+        "web_search",
+        "web_fetch",
+        "deep_research",
+        "kg_add",
+        "kg_relate",
+        "kg_query",
+        "compute_status",
+        "compute_route",
+        "mesh_dispatch",
     },
     TrustLevel.FULL: set(),  # All tools allowed
 }
@@ -82,6 +110,7 @@ def allowed_tools(trust: TrustLevel) -> set[str]:
 @dataclass
 class AgentState:
     """Persistent state for an agent."""
+
     agent_id: str
     status: str = "idle"  # idle, running, stopped, error, paused
     last_run: float = 0
@@ -129,12 +158,12 @@ class BaseAgent:
             return {"error": msg}
 
         # Approval gate for destructive actions at FULL trust
-        if (self.trust_level == TrustLevel.FULL
-                and self._approval_queue
-                and self._approval_queue.needs_approval(name)):
+        if self.trust_level == TrustLevel.FULL and self._approval_queue and self._approval_queue.needs_approval(name):
             self.state.log(f"Requesting approval for: {name}")
             req_id = self._approval_queue.request_approval(
-                self.agent_id, name, arguments,
+                self.agent_id,
+                name,
+                arguments,
                 reason=f"Agent {self.agent_id} wants to call {name}",
             )
             await self.notify(
@@ -158,28 +187,39 @@ class BaseAgent:
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             # Initialize
-            await client.post(url, json={
-                "jsonrpc": "2.0", "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-03-26",
-                    "capabilities": {},
-                    "clientInfo": {"name": f"agent-{self.agent_id}", "version": "1.0"},
+            await client.post(
+                url,
+                json={
+                    "jsonrpc": "2.0",
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-03-26",
+                        "capabilities": {},
+                        "clientInfo": {"name": f"agent-{self.agent_id}", "version": "1.0"},
+                    },
+                    "id": 1,
                 },
-                "id": 1,
-            }, headers=headers)
+                headers=headers,
+            )
 
             # Call tool
-            resp = await client.post(url, json={
-                "jsonrpc": "2.0", "method": "tools/call",
-                "params": {"name": name, "arguments": arguments},
-                "id": 2,
-            }, headers=headers)
+            resp = await client.post(
+                url,
+                json={
+                    "jsonrpc": "2.0",
+                    "method": "tools/call",
+                    "params": {"name": name, "arguments": arguments},
+                    "id": 2,
+                },
+                headers=headers,
+            )
 
         # Parse SSE
         for line in resp.text.splitlines():
             if line.startswith("data: "):
                 try:
                     import json
+
                     data = json.loads(line[6:])
                     if "result" in data:
                         return data["result"]
@@ -208,13 +248,13 @@ class BaseAgent:
 
     # --- Messaging ---
 
-    async def send_message(self, topic: str, payload: dict,
-                           recipients: Optional[list[str]] = None):
+    async def send_message(self, topic: str, payload: dict, recipients: Optional[list[str]] = None):
         """Send a message via the bus."""
         if not self._bus:
             self.state.log("Warning: no message bus configured")
             return
         from .message_bus import Message
+
         msg = Message(
             sender=self.agent_id,
             topic=topic,
@@ -242,8 +282,7 @@ class BaseAgent:
 
     # --- Sub-agent spawning ---
 
-    async def spawn_child(self, agent_type: str, config: dict,
-                          trust: Optional[TrustLevel] = None) -> Optional[str]:
+    async def spawn_child(self, agent_type: str, config: dict, trust: Optional[TrustLevel] = None) -> Optional[str]:
         """Request the supervisor to spawn a child agent. Returns child agent_id."""
         if not self._supervisor:
             self.state.log("Warning: no supervisor reference for spawning")
@@ -267,8 +306,7 @@ class BaseAgent:
 
     # --- Task queue ---
 
-    def enqueue_task(self, payload: dict, queue: str = "default",
-                     priority: int = 5) -> Optional[str]:
+    def enqueue_task(self, payload: dict, queue: str = "default", priority: int = 5) -> Optional[str]:
         """Enqueue a task to the shared task queue."""
         if not self._task_queue:
             self.state.log("Warning: no task queue configured")
@@ -283,8 +321,7 @@ class BaseAgent:
 
     # --- Mesh dispatch ---
 
-    async def call_mesh(self, task_type: str, payload: dict,
-                        target: str = "") -> dict:
+    async def call_mesh(self, task_type: str, payload: dict, target: str = "") -> dict:
         """Dispatch a task to a mesh worker.
 
         Args:
@@ -295,11 +332,14 @@ class BaseAgent:
         Returns:
             Result dict from the worker, or {"error": "..."} on failure.
         """
-        return await self.call_tool("mesh_dispatch", {
-            "task_type": task_type,
-            "payload": payload,
-            "target": target,
-        })
+        return await self.call_tool(
+            "mesh_dispatch",
+            {
+                "task_type": task_type,
+                "payload": payload,
+                "target": target,
+            },
+        )
 
     # --- Notifications ---
 
@@ -312,21 +352,27 @@ class BaseAgent:
           2. Persistent note (alerts-{date})
         """
         self.state.log(f"NOTIFY [{level}]: {title}")
-        await self.send_message("agent.notification", {
-            "title": title,
-            "body": body,
-            "level": level,
-            "agent_id": self.agent_id,
-            "agent_type": self.name,
-            "timestamp": time.time(),
-        })
+        await self.send_message(
+            "agent.notification",
+            {
+                "title": title,
+                "body": body,
+                "level": level,
+                "agent_id": self.agent_id,
+                "agent_type": self.name,
+                "timestamp": time.time(),
+            },
+        )
         # Also save as a note for persistence
         date_str = time.strftime("%Y-%m-%d")
         try:
-            await self.call_tool("save_note", {
-                "topic": f"alerts-{date_str}",
-                "content": f"[{level.upper()}] {title}\n{body}\n— {self.agent_id} at {time.strftime('%H:%M:%S')}",
-            })
+            await self.call_tool(
+                "save_note",
+                {
+                    "topic": f"alerts-{date_str}",
+                    "content": f"[{level.upper()}] {title}\n{body}\n— {self.agent_id} at {time.strftime('%H:%M:%S')}",
+                },
+            )
         except Exception:
             pass  # Don't fail the agent if note-saving fails
 
@@ -362,8 +408,7 @@ class BaseAgent:
 
     def metrics(self) -> dict:
         """Return agent performance metrics."""
-        avg_duration = (self.state.total_duration / self.state.run_count
-                        if self.state.run_count else 0)
+        avg_duration = self.state.total_duration / self.state.run_count if self.state.run_count else 0
         return {
             "agent_id": self.agent_id,
             "type": self.name,

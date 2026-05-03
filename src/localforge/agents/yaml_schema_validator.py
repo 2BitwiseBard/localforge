@@ -40,8 +40,7 @@ class YamlSchemaValidator(BaseAgent):
     name = "yaml-schema-validator"
     trust_level = TrustLevel.MONITOR
     description = (
-        "Validates YAML workflow templates against schema models; "
-        "alerts on drift when schema.py or templates change"
+        "Validates YAML workflow templates against schema models; alerts on drift when schema.py or templates change"
     )
 
     async def on_trigger(self, trigger_type: str, payload: dict | None = None):
@@ -56,9 +55,7 @@ class YamlSchemaValidator(BaseAgent):
         watch_dirs = self.config.get("watch_dirs", [])
         if not watch_dirs:
             # Default to the built-in templates directory relative to this file
-            watch_dirs = [
-                str(Path(__file__).parent.parent / "workflows" / "templates")
-            ]
+            watch_dirs = [str(Path(__file__).parent.parent / "workflows" / "templates")]
 
         yaml_files = self._discover_workflow_yamls(watch_dirs)
         if not yaml_files:
@@ -90,7 +87,7 @@ class YamlSchemaValidator(BaseAgent):
         if failed:
             lines = [
                 f"# YAML Schema Validation Report — {run_ts}",
-                f"",
+                "",
                 f"**{len(failed)}/{total} template(s) FAILED**",
             ]
             for path, errors in failed:
@@ -102,10 +99,13 @@ class YamlSchemaValidator(BaseAgent):
                 for p in passed:
                     lines.append(f"  ✓ {Path(p).name}")
 
-            await self.call_tool("save_note", {
-                "topic": f"yaml-validation-{date_str}",
-                "content": "\n".join(lines),
-            })
+            await self.call_tool(
+                "save_note",
+                {
+                    "topic": f"yaml-validation-{date_str}",
+                    "content": "\n".join(lines),
+                },
+            )
             await self.notify(
                 f"YAML schema validation: {len(failed)} failure(s)",
                 (
@@ -114,22 +114,28 @@ class YamlSchemaValidator(BaseAgent):
                 ),
                 level="warning",
             )
-            await self.send_message("yaml_validator.failures_detected", {
-                "failed": [p for p, _ in failed],
-                "total": total,
-                "agent": self.agent_id,
-            })
+            await self.send_message(
+                "yaml_validator.failures_detected",
+                {
+                    "failed": [p for p, _ in failed],
+                    "total": total,
+                    "agent": self.agent_id,
+                },
+            )
         else:
             summary_lines = [
                 f"# YAML Schema Validation Report — {run_ts}",
-                f"",
+                "",
                 f"All {total} template(s) passed.",
             ] + [f"  ✓ {Path(p).name}" for p in passed]
 
-            await self.call_tool("save_note", {
-                "topic": f"yaml-validation-{date_str}",
-                "content": "\n".join(summary_lines),
-            })
+            await self.call_tool(
+                "save_note",
+                {
+                    "topic": f"yaml-validation-{date_str}",
+                    "content": "\n".join(summary_lines),
+                },
+            )
             self.state.log(f"All {total} template(s) passed validation.")
 
     # ------------------------------------------------------------------

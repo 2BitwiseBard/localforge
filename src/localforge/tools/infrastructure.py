@@ -31,6 +31,7 @@ log = logging.getLogger("localforge")
 )
 async def health_check(args: dict) -> str:
     import httpx
+
     try:
         health_resp = await _client.get(f"{cfg.TGWUI_INTERNAL}/health", timeout=5)
         health_resp.raise_for_status()
@@ -173,28 +174,69 @@ async def decode_tokens(args: dict) -> str:
         "properties": {
             "model_name": {"type": "string", "description": "Model filename to load. Omit to list available models."},
             # Core loading params
-            "ctx_size": {"type": "integer", "description": "Context window size in tokens (0 = auto from model metadata). Default: from config or 32768."},
+            "ctx_size": {
+                "type": "integer",
+                "description": "Context window size in tokens (0 = auto from model metadata). Default: from config or 32768.",
+            },
             "gpu_layers": {"type": "integer", "description": "Layers to offload to GPU (-1 = all). Default: -1."},
             "threads": {"type": "integer", "description": "CPU threads for generation (0 = auto-detect). Default: 0."},
-            "threads_batch": {"type": "integer", "description": "CPU threads for batch/prompt processing (0 = same as threads). Default: 0."},
-            "batch_size": {"type": "integer", "description": "Batch size for prompt processing. Higher = faster prefill, more VRAM. Default: 512."},
-            "ubatch_size": {"type": "integer", "description": "Micro-batch size (must be <= batch_size). Default: 512."},
+            "threads_batch": {
+                "type": "integer",
+                "description": "CPU threads for batch/prompt processing (0 = same as threads). Default: 0.",
+            },
+            "batch_size": {
+                "type": "integer",
+                "description": "Batch size for prompt processing. Higher = faster prefill, more VRAM. Default: 512.",
+            },
+            "ubatch_size": {
+                "type": "integer",
+                "description": "Micro-batch size (must be <= batch_size). Default: 512.",
+            },
             # Memory / cache
-            "cache_type": {"type": "string", "enum": ["fp16", "q8_0", "q4_0"], "description": "KV cache quantization. q8_0 halves VRAM for cache, q4_0 quarters it. Default: fp16."},
-            "flash_attn": {"type": "boolean", "description": "Enable flash attention (faster, less VRAM for long contexts). Default: depends on webui settings."},
+            "cache_type": {
+                "type": "string",
+                "enum": ["fp16", "q8_0", "q4_0"],
+                "description": "KV cache quantization. q8_0 halves VRAM for cache, q4_0 quarters it. Default: fp16.",
+            },
+            "flash_attn": {
+                "type": "boolean",
+                "description": "Enable flash attention (faster, less VRAM for long contexts). Default: depends on webui settings.",
+            },
             # Rope / context scaling
-            "rope_freq_base": {"type": "number", "description": "RoPE frequency base for context extension (e.g. 1000000 for YaRN). 0 = use model default."},
+            "rope_freq_base": {
+                "type": "number",
+                "description": "RoPE frequency base for context extension (e.g. 1000000 for YaRN). 0 = use model default.",
+            },
             # Multi-GPU
-            "tensor_split": {"type": "string", "description": "Comma-separated VRAM split ratios for multi-GPU (e.g. '0.7,0.3'). Empty = single GPU."},
+            "tensor_split": {
+                "type": "string",
+                "description": "Comma-separated VRAM split ratios for multi-GPU (e.g. '0.7,0.3'). Empty = single GPU.",
+            },
             # Parallel slots
-            "parallel": {"type": "integer", "description": "Number of parallel generation slots. More slots = more concurrent requests but each gets less context. Default: 1."},
+            "parallel": {
+                "type": "integer",
+                "description": "Number of parallel generation slots. More slots = more concurrent requests but each gets less context. Default: 1.",
+            },
             # Speculative decoding — draft model
-            "model_draft": {"type": "string", "description": "Draft model filename for speculative decoding (e.g. 'Qwen3.5-2B-UD-Q8_K_XL.gguf'). Speeds up generation 1.5-2x."},
+            "model_draft": {
+                "type": "string",
+                "description": "Draft model filename for speculative decoding (e.g. 'Qwen3.5-2B-UD-Q8_K_XL.gguf'). Speeds up generation 1.5-2x.",
+            },
             "draft_max": {"type": "integer", "description": "Max tokens to speculate per step (default: 16)."},
-            "gpu_layers_draft": {"type": "integer", "description": "GPU layers for draft model (-1 = all). Default: -1."},
-            "ctx_size_draft": {"type": "integer", "description": "Context size for draft model. Default: 0 (same as main)."},
+            "gpu_layers_draft": {
+                "type": "integer",
+                "description": "GPU layers for draft model (-1 = all). Default: -1.",
+            },
+            "ctx_size_draft": {
+                "type": "integer",
+                "description": "Context size for draft model. Default: 0 (same as main).",
+            },
             # Speculative decoding — n-gram (no draft model needed)
-            "spec_type": {"type": "string", "enum": ["none", "lookup"], "description": "Speculation type: 'none' (disabled) or 'lookup' (n-gram, no draft model needed). Default: none."},
+            "spec_type": {
+                "type": "string",
+                "enum": ["none", "lookup"],
+                "description": "Speculation type: 'none' (disabled) or 'lookup' (n-gram, no draft model needed). Default: none.",
+            },
             "spec_ngram_size_n": {"type": "integer", "description": "N-gram size for lookup speculation. Default: 4."},
             "spec_ngram_size_m": {"type": "integer", "description": "M-gram context window. Default: 3."},
             "spec_ngram_min_hits": {"type": "integer", "description": "Min n-gram hits to speculate. Default: 2."},
@@ -391,9 +433,11 @@ async def session_stats(args: dict) -> str:
     lines.append(f"Approx tokens out: {stats.get('total_tokens_out_approx', 0):,}")
 
     cache_s = _cache.stats()
-    lines.append(f"\nCache: {cache_s['entries']}/{cache_s['max_entries']} entries "
-                 f"({cache_s['total_bytes'] / 1024:.0f}KB/{cache_s['max_bytes'] / 1024:.0f}KB), "
-                 f"hit rate {cache_s['hit_rate']}")
+    lines.append(
+        f"\nCache: {cache_s['entries']}/{cache_s['max_entries']} entries "
+        f"({cache_s['total_bytes'] / 1024:.0f}KB/{cache_s['max_bytes'] / 1024:.0f}KB), "
+        f"hit rate {cache_s['hit_rate']}"
+    )
 
     if tool_calls:
         lines.append(f"\nTool calls ({sum(tool_calls.values())} total):")
@@ -409,7 +453,10 @@ async def session_stats(args: dict) -> str:
     schema={
         "type": "object",
         "properties": {
-            "prompt_length": {"type": "string", "description": "Prompt length: 'short', 'medium', 'long' (default: 'short')"},
+            "prompt_length": {
+                "type": "string",
+                "description": "Prompt length: 'short', 'medium', 'long' (default: 'short')",
+            },
         },
         "required": [],
     },
@@ -541,9 +588,7 @@ async def slot_info(args: dict) -> str:
     llama_slots = []
     for llama_port in [5005, 5006, 5007]:
         try:
-            slot_resp = await _client.get(
-                f"http://127.0.0.1:{llama_port}/slots", timeout=3
-            )
+            slot_resp = await _client.get(f"http://127.0.0.1:{llama_port}/slots", timeout=3)
             if slot_resp.status_code == 200:
                 llama_slots = slot_resp.json()
                 break
@@ -565,9 +610,14 @@ async def slot_info(args: dict) -> str:
     gpu_info = {}
     try:
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.used,memory.total,temperature.gpu,utilization.gpu",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.used,memory.total,temperature.gpu,utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             parts = [p.strip() for p in result.stdout.strip().split(",")]
@@ -587,6 +637,7 @@ async def slot_info(args: dict) -> str:
     proc_info = {}
     try:
         import re
+
         result = subprocess.run(["ps", "aux"], capture_output=True, text=True, timeout=5)
         for line in result.stdout.splitlines():
             if "llama-server" in line and "--model" in line:
@@ -618,15 +669,20 @@ async def slot_info(args: dict) -> str:
 
     if proc_info:
         lines += ["", "── Server Config ──"]
-        for key, label in [("gpu_layers", "GPU layers"), ("ctx_size", "Context size"),
-                           ("parallel", "Parallel"), ("batch_size", "Batch size"),
-                           ("flash_attn", "Flash attention")]:
+        for key, label in [
+            ("gpu_layers", "GPU layers"),
+            ("ctx_size", "Context size"),
+            ("parallel", "Parallel"),
+            ("batch_size", "Batch size"),
+            ("flash_attn", "Flash attention"),
+        ]:
             if key in proc_info:
                 lines.append(f"{label}: {proc_info[key]}")
 
     if gpu_info:
         lines += [
-            "", "── GPU ──",
+            "",
+            "── GPU ──",
             f"Device: {gpu_info['name']}",
             f"VRAM: {gpu_info['vram_used']} / {gpu_info['vram_total']} ({gpu_info['vram_pct']})",
             f"Temperature: {gpu_info['temp']}",
@@ -704,6 +760,7 @@ async def sync_models(args: dict) -> str:
             volume_label = cfg._config.get("model_volume")
             if volume_label:
                 import glob as glob_mod
+
                 candidates.extend(Path(p) for p in sorted(glob_mod.glob(f"/media/*/{volume_label}*")))
             for cpath in candidates:
                 if cpath.is_dir() and list(cpath.glob("*.gguf")):
@@ -711,10 +768,7 @@ async def sync_models(args: dict) -> str:
                     break
 
         if source_dir is None or not source_dir.is_dir():
-            return (
-                "No model source directory found.\n"
-                "Set model_source in config.yaml or pass source='/path/to/models'."
-            )
+            return "No model source directory found.\nSet model_source in config.yaml or pass source='/path/to/models'."
 
     # Scan and sync
     added = []

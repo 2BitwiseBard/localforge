@@ -15,27 +15,42 @@ Field types understood by the frontend (`workflow_editor.js`):
 
 NODE_SPECS: dict[str, dict] = {
     "prompt": {
-        "icon": "\U0001F4AC",
+        "icon": "\U0001f4ac",
         "color": "#58a6ff",
         "label": "Prompt",
         "description": "Send a templated prompt to the local model.",
         "fields": [
-            {"name": "template", "type": "textarea", "label": "Prompt template",
-             "help": "Use {{var}} to substitute workflow variables.", "required": True},
+            {
+                "name": "template",
+                "type": "textarea",
+                "label": "Prompt template",
+                "help": "Use {{var}} to substitute workflow variables.",
+                "required": True,
+            },
             {"name": "system", "type": "textarea", "label": "System prompt"},
             {"name": "max_tokens", "type": "number", "label": "Max tokens", "default": 1024},
         ],
     },
     "tool": {
-        "icon": "\U0001F527",
+        "icon": "\U0001f527",
         "color": "#3fb950",
         "label": "Tool",
         "description": "Invoke a LocalForge MCP tool.",
         "fields": [
-            {"name": "tool_name", "type": "select", "label": "MCP tool",
-             "options_from": "/api/tools", "searchable": True, "required": True},
-            {"name": "arguments", "type": "kvmap", "label": "Arguments",
-             "help": "Values support {{variable}} substitution."},
+            {
+                "name": "tool_name",
+                "type": "select",
+                "label": "MCP tool",
+                "options_from": "/api/tools",
+                "searchable": True,
+                "required": True,
+            },
+            {
+                "name": "arguments",
+                "type": "kvmap",
+                "label": "Arguments",
+                "help": "Values support {{variable}} substitution.",
+            },
         ],
     },
     "set_variable": {
@@ -45,8 +60,13 @@ NODE_SPECS: dict[str, dict] = {
         "description": "Store a computed value into a workflow variable.",
         "fields": [
             {"name": "name", "type": "text", "label": "Variable name", "required": True},
-            {"name": "value_template", "type": "textarea", "label": "Value template",
-             "help": "Supports {{var}} substitution.", "required": True},
+            {
+                "name": "value_template",
+                "type": "textarea",
+                "label": "Value template",
+                "help": "Supports {{var}} substitution.",
+                "required": True,
+            },
         ],
     },
     "condition": {
@@ -55,14 +75,19 @@ NODE_SPECS: dict[str, dict] = {
         "label": "Condition",
         "description": "Branch on a Python expression (AST-evaluated safely).",
         "fields": [
-            {"name": "expression", "type": "code", "label": "Expression",
-             "help": "e.g. len(result) > 100", "required": True},
+            {
+                "name": "expression",
+                "type": "code",
+                "label": "Expression",
+                "help": "e.g. len(result) > 100",
+                "required": True,
+            },
             {"name": "true_node", "type": "text", "label": "If true, goto node"},
             {"name": "false_node", "type": "text", "label": "If false, goto node"},
         ],
     },
     "loop": {
-        "icon": "\u21BB",
+        "icon": "\u21bb",
         "color": "#f0883e",
         "label": "Loop",
         "description": "Repeat child nodes until a condition is met.",
@@ -87,6 +112,6 @@ NODE_SPECS: dict[str, dict] = {
 def categories() -> list[dict]:
     """Group node types into palette categories for the frontend."""
     return [
-        {"name": "Core",    "types": ["prompt", "tool", "set_variable"]},
+        {"name": "Core", "types": ["prompt", "tool", "set_variable"]},
         {"name": "Control", "types": ["condition", "loop", "parallel"]},
     ]

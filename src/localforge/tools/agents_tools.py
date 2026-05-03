@@ -19,6 +19,7 @@ async def agent_list(args: dict) -> str:
 
         # Look for agents.yaml relative to config or data dir
         from localforge.paths import config_path
+
         agents_yaml = config_path().parent / "agents.yaml"
         if not agents_yaml.exists():
             return "No agents.yaml found."

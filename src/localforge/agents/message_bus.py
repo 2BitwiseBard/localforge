@@ -41,6 +41,7 @@ CREATE INDEX IF NOT EXISTS idx_msg_created  ON messages(created_at);
 @dataclass
 class Message:
     """A message on the bus."""
+
     sender: str
     topic: str
     payload: dict
@@ -180,8 +181,10 @@ class MessageBus:
                 delivered += 1
             except asyncio.QueueFull:
                 self._dropped_count += 1
-                log.warning(f"Queue full for {sub_id}, dropping message {msg.id} "
-                            f"(topic={msg.topic}, total_dropped={self._dropped_count})")
+                log.warning(
+                    f"Queue full for {sub_id}, dropping message {msg.id} "
+                    f"(topic={msg.topic}, total_dropped={self._dropped_count})"
+                )
 
         # Fire topic handlers
         for prefix, handlers in self._topic_handlers.items():
@@ -221,8 +224,7 @@ class MessageBus:
     # History (reads from SQLite, not in-memory)
     # -----------------------------------------------------------------------
 
-    def get_history(self, topic_prefix: str = "", sender: str = "",
-                    limit: int = 50) -> list[dict]:
+    def get_history(self, topic_prefix: str = "", sender: str = "", limit: int = 50) -> list[dict]:
         """Get recent messages from the persistent store, optionally filtered."""
         try:
             conn = self._get_conn()

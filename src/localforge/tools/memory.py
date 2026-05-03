@@ -17,7 +17,11 @@ _scratchpad: dict[str, str] = {}
     schema={
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["write", "read", "list", "clear"], "description": "Action to perform"},
+            "action": {
+                "type": "string",
+                "enum": ["write", "read", "list", "clear"],
+                "description": "Action to perform",
+            },
             "key": {"type": "string", "description": "Key name (for write/read)"},
             "value": {"type": "string", "description": "Value to store (for write)"},
         },
@@ -67,7 +71,10 @@ async def scratchpad(args: dict) -> str:
         "properties": {
             "topic": {"type": "string", "description": "Note topic (used as filename, e.g. 'architecture-decisions')"},
             "content": {"type": "string", "description": "Markdown content to save"},
-            "append": {"type": "boolean", "description": "Append to existing note instead of overwriting (default: false)"},
+            "append": {
+                "type": "boolean",
+                "description": "Append to existing note instead of overwriting (default: false)",
+            },
         },
         "required": ["topic", "content"],
     },

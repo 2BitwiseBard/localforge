@@ -30,8 +30,13 @@ DB_PATH = approval_db_path()
 
 # Tools that require approval at FULL trust level
 APPROVAL_REQUIRED = {
-    "swap_model", "unload_model", "delete_index", "delete_note",
-    "delete_session", "set_generation_params", "reload_config",
+    "swap_model",
+    "unload_model",
+    "delete_index",
+    "delete_note",
+    "delete_session",
+    "set_generation_params",
+    "reload_config",
 }
 
 SCHEMA = """
@@ -69,8 +74,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_created ON approval_audit(created_at);
 
 # Default TTLs per priority
 _DEFAULT_TTLS = {
-    "urgent": 120,   # 2 minutes
-    "normal": 300,   # 5 minutes
+    "urgent": 120,  # 2 minutes
+    "normal": 300,  # 5 minutes
 }
 
 
@@ -154,30 +159,30 @@ class ApprovalQueue:
                     (req_id,),
                 )
                 conn.commit()
-                log.warning(
-                    f"Approval {req_id} ({agent_id} → {tool_name}) "
-                    f"expiring in {remaining}s"
-                )
+                log.warning(f"Approval {req_id} ({agent_id} → {tool_name}) expiring in {remaining}s")
                 if self._notify_callback:
                     try:
-                        result = self._notify_callback({
-                            "title": f"Approval expiring: {tool_name}",
-                            "body": f"Agent '{agent_id}' requested {tool_name}. "
-                                    f"{remaining}s remaining before auto-deny.",
-                            "level": "warning",
-                            "request_id": req_id,
-                            "agent_id": agent_id,
-                            "tool_name": tool_name,
-                            "priority": priority,
-                            "timestamp": now,
-                        })
+                        result = self._notify_callback(
+                            {
+                                "title": f"Approval expiring: {tool_name}",
+                                "body": f"Agent '{agent_id}' requested {tool_name}. "
+                                f"{remaining}s remaining before auto-deny.",
+                                "level": "warning",
+                                "request_id": req_id,
+                                "agent_id": agent_id,
+                                "tool_name": tool_name,
+                                "priority": priority,
+                                "timestamp": now,
+                            }
+                        )
                         if asyncio.iscoroutine(result):
                             asyncio.create_task(result)
                     except Exception as exc:
                         log.error(f"TTL notification callback error: {exc}")
 
-    def _audit(self, request_id: str, agent_id: str, tool_name: str,
-               action: str, decided_by: str = "", detail: str = ""):
+    def _audit(
+        self, request_id: str, agent_id: str, tool_name: str, action: str, decided_by: str = "", detail: str = ""
+    ):
         """Write an audit log entry."""
         try:
             conn = self._get_conn()
@@ -191,10 +196,15 @@ class ApprovalQueue:
         except Exception as exc:
             log.error(f"Audit log error: {exc}")
 
-    def request_approval(self, agent_id: str, tool_name: str,
-                         arguments: dict, reason: str = "",
-                         priority: str = "normal",
-                         ttl: Optional[int] = None) -> str:
+    def request_approval(
+        self,
+        agent_id: str,
+        tool_name: str,
+        arguments: dict,
+        reason: str = "",
+        priority: str = "normal",
+        ttl: Optional[int] = None,
+    ) -> str:
         """Submit an action for approval. Returns request ID.
 
         Args:
@@ -212,16 +222,13 @@ class ApprovalQueue:
             """INSERT INTO approvals (id, agent_id, tool_name, arguments, reason,
                                       priority, status, created_at, ttl_seconds)
                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
-            (req_id, agent_id, tool_name, json.dumps(arguments),
-             reason, priority, time.time(), ttl),
+            (req_id, agent_id, tool_name, json.dumps(arguments), reason, priority, time.time(), ttl),
         )
         conn.commit()
 
-        self._audit(req_id, agent_id, tool_name, "requested",
-                     detail=f"priority={priority}, ttl={ttl}s")
+        self._audit(req_id, agent_id, tool_name, "requested", detail=f"priority={priority}, ttl={ttl}s")
 
-        log.info(f"Approval requested: {req_id} ({agent_id} → {tool_name}, "
-                 f"priority={priority}, ttl={ttl}s)")
+        log.info(f"Approval requested: {req_id} ({agent_id} → {tool_name}, priority={priority}, ttl={ttl}s)")
         return req_id
 
     async def wait_for_approval(self, req_id: str, timeout: float = 300) -> bool:
@@ -308,13 +315,19 @@ class ApprovalQueue:
                 # Auto-expire
                 self.deny(r[0], decided_by="expired")
                 continue
-            results.append({
-                "id": r[0], "agent_id": r[1], "tool_name": r[2],
-                "arguments": json.loads(r[3]), "reason": r[4],
-                "created_at": r[5], "ttl_seconds": ttl,
-                "remaining_seconds": max(0, int(ttl - age)),
-                "priority": r[7],
-            })
+            results.append(
+                {
+                    "id": r[0],
+                    "agent_id": r[1],
+                    "tool_name": r[2],
+                    "arguments": json.loads(r[3]),
+                    "reason": r[4],
+                    "created_at": r[5],
+                    "ttl_seconds": ttl,
+                    "remaining_seconds": max(0, int(ttl - age)),
+                    "priority": r[7],
+                }
+            )
         return results
 
     def list_recent(self, limit: int = 20) -> list[dict]:
@@ -328,14 +341,20 @@ class ApprovalQueue:
             (limit,),
         ).fetchall()
         return [
-            {"id": r[0], "agent_id": r[1], "tool_name": r[2], "status": r[3],
-             "created_at": r[4], "decided_at": r[5], "decided_by": r[6],
-             "priority": r[7]}
+            {
+                "id": r[0],
+                "agent_id": r[1],
+                "tool_name": r[2],
+                "status": r[3],
+                "created_at": r[4],
+                "decided_at": r[5],
+                "decided_by": r[6],
+                "priority": r[7],
+            }
             for r in rows
         ]
 
-    def get_audit_log(self, request_id: Optional[str] = None,
-                      limit: int = 100) -> list[dict]:
+    def get_audit_log(self, request_id: Optional[str] = None, limit: int = 100) -> list[dict]:
         """Query the audit trail."""
         conn = self._get_conn()
         if request_id:
@@ -355,9 +374,15 @@ class ApprovalQueue:
                 (limit,),
             ).fetchall()
         return [
-            {"request_id": r[0], "agent_id": r[1], "tool_name": r[2],
-             "action": r[3], "decided_by": r[4], "detail": r[5],
-             "created_at": r[6]}
+            {
+                "request_id": r[0],
+                "agent_id": r[1],
+                "tool_name": r[2],
+                "action": r[3],
+                "decided_by": r[4],
+                "detail": r[5],
+                "created_at": r[6],
+            }
             for r in rows
         ]
 

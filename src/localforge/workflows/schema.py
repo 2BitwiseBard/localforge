@@ -18,6 +18,7 @@ _PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
 @dataclass
 class NodeDef:
     """A single node in a workflow DAG."""
+
     id: str
     type: str  # prompt, tool, parallel, condition, loop, set_variable
     config: dict = field(default_factory=dict)
@@ -39,6 +40,7 @@ class NodeDef:
 @dataclass
 class EdgeDef:
     """A directed edge between workflow nodes."""
+
     from_id: str
     to_id: str
     condition: Optional[str] = None  # Python expression, evaluated if present
@@ -61,6 +63,7 @@ class EdgeDef:
 @dataclass
 class WorkflowDef:
     """A complete workflow definition (DAG of nodes + edges)."""
+
     id: str
     name: str
     description: str = ""
@@ -98,6 +101,7 @@ class WorkflowDef:
     @classmethod
     def from_yaml(cls, path: Path) -> "WorkflowDef":
         import yaml
+
         with open(path) as f:
             data = yaml.safe_load(f)
         return cls.from_dict(data)
@@ -149,9 +153,7 @@ class WorkflowDef:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _validate_node_config(
-        self, node: NodeDef, node_ids: set[str], var_names: set[str]
-    ) -> list[str]:
+    def _validate_node_config(self, node: NodeDef, node_ids: set[str], var_names: set[str]) -> list[str]:
         errors: list[str] = []
         cfg = node.config
         nid = node.id
@@ -184,17 +186,13 @@ class WorkflowDef:
             else:
                 for cid in child_ids:
                     if cid not in node_ids:
-                        errors.append(
-                            f"Node '{nid}' (parallel): references unknown node '{cid}'"
-                        )
+                        errors.append(f"Node '{nid}' (parallel): references unknown node '{cid}'")
 
         elif node.type == "condition":
             for target_key in ("true_node", "false_node"):
                 target = cfg.get(target_key)
                 if target and target not in node_ids:
-                    errors.append(
-                        f"Node '{nid}' (condition): '{target_key}' references unknown node '{target}'"
-                    )
+                    errors.append(f"Node '{nid}' (condition): '{target_key}' references unknown node '{target}'")
 
         elif node.type == "loop":
             child_ids = cfg.get("node_ids", [])
@@ -203,22 +201,16 @@ class WorkflowDef:
             else:
                 for cid in child_ids:
                     if cid not in node_ids:
-                        errors.append(
-                            f"Node '{nid}' (loop): references unknown node '{cid}'"
-                        )
+                        errors.append(f"Node '{nid}' (loop): references unknown node '{cid}'")
 
         elif node.type == "set_variable":
             if not cfg.get("name", ""):
                 errors.append(f"Node '{nid}' (set_variable): missing 'name' in config")
             value_template = cfg.get("value_template", "")
             if not value_template:
-                errors.append(
-                    f"Node '{nid}' (set_variable): missing 'value_template' in config"
-                )
+                errors.append(f"Node '{nid}' (set_variable): missing 'value_template' in config")
             else:
-                errors.extend(
-                    self._check_template_refs(nid, value_template, node_ids, var_names)
-                )
+                errors.extend(self._check_template_refs(nid, value_template, node_ids, var_names))
 
         return errors
 
@@ -237,13 +229,9 @@ class WorkflowDef:
             if ref.startswith("node."):
                 ref_node = ref[5:]
                 if ref_node not in node_ids:
-                    errors.append(
-                        f"Node '{node_id}': template references unknown node '{ref_node}'"
-                    )
+                    errors.append(f"Node '{node_id}': template references unknown node '{ref_node}'")
             elif ref.startswith("variables."):
                 ref_var = ref[10:]
                 if ref_var not in var_names:
-                    errors.append(
-                        f"Node '{node_id}': template references undeclared variable '{ref_var}'"
-                    )
+                    errors.append(f"Node '{node_id}': template references undeclared variable '{ref_var}'")
         return errors

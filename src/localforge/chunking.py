@@ -20,6 +20,7 @@ log = logging.getLogger("localforge")
 # BM25 search engine (no external dependency)
 # ---------------------------------------------------------------------------
 
+
 class BM25:
     """Okapi BM25 ranking. Built from tokenized documents (lists of strings)."""
 
@@ -62,54 +63,145 @@ class BM25:
 
 def tokenize_bm25(text: str) -> list[str]:
     """Simple word tokenizer for BM25: lowercase, split on non-alphanumeric, drop short tokens."""
-    return [t for t in re.sub(r'[^a-z0-9_]', ' ', text.lower()).split() if len(t) > 1]
+    return [t for t in re.sub(r"[^a-z0-9_]", " ", text.lower()).split() if len(t) > 1]
 
 
 # ---------------------------------------------------------------------------
 # File extension sets
 # ---------------------------------------------------------------------------
 
-TEXT_EXTENSIONS = frozenset({
-    ".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".go", ".java", ".c", ".cpp",
-    ".h", ".hpp", ".rb", ".php", ".swift", ".kt", ".scala", ".sh", ".bash",
-    ".zsh", ".fish", ".toml", ".yaml", ".yml", ".json", ".xml", ".html",
-    ".css", ".scss", ".md", ".txt", ".rst", ".tex", ".sql", ".r",
-    ".lua", ".vim", ".el", ".clj", ".hs", ".ml", ".ex", ".exs", ".erl",
-    ".nix", ".tf", ".cfg", ".ini", ".conf", ".lock", ".svg",
-})
+TEXT_EXTENSIONS = frozenset(
+    {
+        ".py",
+        ".rs",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".go",
+        ".java",
+        ".c",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".rb",
+        ".php",
+        ".swift",
+        ".kt",
+        ".scala",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".fish",
+        ".toml",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".xml",
+        ".html",
+        ".css",
+        ".scss",
+        ".md",
+        ".txt",
+        ".rst",
+        ".tex",
+        ".sql",
+        ".r",
+        ".lua",
+        ".vim",
+        ".el",
+        ".clj",
+        ".hs",
+        ".ml",
+        ".ex",
+        ".exs",
+        ".erl",
+        ".nix",
+        ".tf",
+        ".cfg",
+        ".ini",
+        ".conf",
+        ".lock",
+        ".svg",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Tree-sitter code-aware chunking
 # ---------------------------------------------------------------------------
 
 TREESITTER_LANG_MAP: dict[str, str] = {
-    ".rs": "rust", ".py": "python", ".ts": "typescript", ".tsx": "tsx",
-    ".js": "javascript", ".jsx": "javascript", ".go": "go", ".java": "java",
-    ".c": "c", ".cpp": "cpp", ".h": "c", ".hpp": "cpp",
-    ".rb": "ruby", ".php": "php", ".swift": "swift",
-    ".scala": "scala", ".sh": "bash", ".bash": "bash",
-    ".lua": "lua", ".hs": "haskell", ".ex": "elixir", ".exs": "elixir",
-    ".toml": "toml", ".yaml": "yaml", ".yml": "yaml", ".json": "json",
-    ".html": "html", ".css": "css",
+    ".rs": "rust",
+    ".py": "python",
+    ".ts": "typescript",
+    ".tsx": "tsx",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".go": "go",
+    ".java": "java",
+    ".c": "c",
+    ".cpp": "cpp",
+    ".h": "c",
+    ".hpp": "cpp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".swift": "swift",
+    ".scala": "scala",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".lua": "lua",
+    ".hs": "haskell",
+    ".ex": "elixir",
+    ".exs": "elixir",
+    ".toml": "toml",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".json": "json",
+    ".html": "html",
+    ".css": "css",
 }
 
 TOPLEVEL_NODES: dict[str, set[str]] = {
-    "rust": {"function_item", "struct_item", "enum_item", "impl_item",
-             "trait_item", "mod_item", "type_item", "const_item", "static_item",
-             "use_declaration", "macro_definition"},
+    "rust": {
+        "function_item",
+        "struct_item",
+        "enum_item",
+        "impl_item",
+        "trait_item",
+        "mod_item",
+        "type_item",
+        "const_item",
+        "static_item",
+        "use_declaration",
+        "macro_definition",
+    },
     "python": {"function_definition", "class_definition", "decorated_definition"},
-    "typescript": {"function_declaration", "class_declaration", "interface_declaration",
-                   "type_alias_declaration", "export_statement", "lexical_declaration"},
-    "javascript": {"function_declaration", "class_declaration", "export_statement",
-                   "lexical_declaration", "variable_declaration"},
-    "go": {"function_declaration", "method_declaration", "type_declaration",
-           "var_declaration", "const_declaration"},
-    "java": {"class_declaration", "interface_declaration", "enum_declaration",
-             "method_declaration"},
-    "c": {"function_definition", "struct_specifier", "enum_specifier",
-          "type_definition", "declaration"},
-    "cpp": {"function_definition", "class_specifier", "struct_specifier",
-            "enum_specifier", "namespace_definition", "template_declaration"},
+    "typescript": {
+        "function_declaration",
+        "class_declaration",
+        "interface_declaration",
+        "type_alias_declaration",
+        "export_statement",
+        "lexical_declaration",
+    },
+    "javascript": {
+        "function_declaration",
+        "class_declaration",
+        "export_statement",
+        "lexical_declaration",
+        "variable_declaration",
+    },
+    "go": {"function_declaration", "method_declaration", "type_declaration", "var_declaration", "const_declaration"},
+    "java": {"class_declaration", "interface_declaration", "enum_declaration", "method_declaration"},
+    "c": {"function_definition", "struct_specifier", "enum_specifier", "type_definition", "declaration"},
+    "cpp": {
+        "function_definition",
+        "class_specifier",
+        "struct_specifier",
+        "enum_specifier",
+        "namespace_definition",
+        "template_declaration",
+    },
 }
 
 
@@ -131,13 +223,15 @@ def chunk_file_line(path: Path, chunk_lines: int = 50, overlap: int = 10) -> lis
         chunk_content = "\n".join(lines[start:end])
         non_empty = sum(1 for ln in lines[start:end] if ln.strip())
         if non_empty >= 3:
-            chunks.append({
-                "file": str(path),
-                "start_line": start + 1,
-                "end_line": end,
-                "content": chunk_content,
-                "tokens": tokenize_bm25(chunk_content),
-            })
+            chunks.append(
+                {
+                    "file": str(path),
+                    "start_line": start + 1,
+                    "end_line": end,
+                    "content": chunk_content,
+                    "tokens": tokenize_bm25(chunk_content),
+                }
+            )
         start += chunk_lines - overlap
         if start >= len(lines):
             break
@@ -165,6 +259,7 @@ def chunk_file_treesitter(path: Path, max_chunk_lines: int = 80) -> list[dict[st
 
     try:
         import tree_sitter_languages as tsl
+
         parser = tsl.get_parser(lang_name)
     except Exception:
         return chunk_file_line(path)
@@ -198,44 +293,51 @@ def chunk_file_treesitter(path: Path, max_chunk_lines: int = 80) -> list[dict[st
         if chunk_lines_count + node_lines <= max_chunk_lines:
             current_end = end
         else:
-            chunk_content = "\n".join(lines[current_start:current_end + 1])
-            non_empty = sum(1 for ln in lines[current_start:current_end + 1] if ln.strip())
+            chunk_content = "\n".join(lines[current_start : current_end + 1])
+            non_empty = sum(1 for ln in lines[current_start : current_end + 1] if ln.strip())
             if non_empty >= 2:
-                chunks.append({
-                    "file": str(path),
-                    "start_line": current_start + 1,
-                    "end_line": current_end + 1,
-                    "content": chunk_content,
-                    "tokens": tokenize_bm25(chunk_content),
-                })
+                chunks.append(
+                    {
+                        "file": str(path),
+                        "start_line": current_start + 1,
+                        "end_line": current_end + 1,
+                        "content": chunk_content,
+                        "tokens": tokenize_bm25(chunk_content),
+                    }
+                )
             current_start = start
             current_end = end
 
     # Flush last chunk
-    chunk_content = "\n".join(lines[current_start:current_end + 1])
-    non_empty = sum(1 for ln in lines[current_start:current_end + 1] if ln.strip())
+    chunk_content = "\n".join(lines[current_start : current_end + 1])
+    non_empty = sum(1 for ln in lines[current_start : current_end + 1] if ln.strip())
     if non_empty >= 2:
-        chunks.append({
-            "file": str(path),
-            "start_line": current_start + 1,
-            "end_line": current_end + 1,
-            "content": chunk_content,
-            "tokens": tokenize_bm25(chunk_content),
-        })
+        chunks.append(
+            {
+                "file": str(path),
+                "start_line": current_start + 1,
+                "end_line": current_end + 1,
+                "content": chunk_content,
+                "tokens": tokenize_bm25(chunk_content),
+            }
+        )
 
     # Content before first node (imports, module docstrings, etc.)
     if chunks and nodes:
         if nodes[0][0] > 2:
-            preamble = "\n".join(lines[:nodes[0][0]])
-            non_empty = sum(1 for ln in lines[:nodes[0][0]] if ln.strip())
+            preamble = "\n".join(lines[: nodes[0][0]])
+            non_empty = sum(1 for ln in lines[: nodes[0][0]] if ln.strip())
             if non_empty >= 3:
-                chunks.insert(0, {
-                    "file": str(path),
-                    "start_line": 1,
-                    "end_line": nodes[0][0],
-                    "content": preamble,
-                    "tokens": tokenize_bm25(preamble),
-                })
+                chunks.insert(
+                    0,
+                    {
+                        "file": str(path),
+                        "start_line": 1,
+                        "end_line": nodes[0][0],
+                        "content": preamble,
+                        "tokens": tokenize_bm25(preamble),
+                    },
+                )
 
     return chunks if chunks else chunk_file_line(path)
 
@@ -321,8 +423,11 @@ def load_index(name: str) -> dict[str, Any] | None:
         except Exception:
             log.warning("Failed to load ColBERT vectors for index '%s'", name)
     entry = {
-        "meta": meta, "chunks": chunks, "bm25": bm25,
-        "embeddings": embeddings, "sparse_embeddings": sparse_embeddings,
+        "meta": meta,
+        "chunks": chunks,
+        "bm25": bm25,
+        "embeddings": embeddings,
+        "sparse_embeddings": sparse_embeddings,
         "colbert_embeddings": colbert_embeddings,
     }
     _index_cache[name] = entry
@@ -334,7 +439,7 @@ def load_index(name: str) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 BUILTIN_GRAMMARS: dict[str, str] = {
-    "json": r'''root   ::= object
+    "json": r"""root   ::= object
 value  ::= object | array | string | number | ("true" | "false" | "null") ws
 
 object ::=
@@ -358,14 +463,14 @@ string ::=
 number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? (("e" | "E") ("+" | "-")? [0-9]+)? ws
 
 ws ::= ([ \t\n] ws)?
-''',
-    "json_array": r'''root ::= "[" ws (value ("," ws value)*)? "]" ws
+""",
+    "json_array": r"""root ::= "[" ws (value ("," ws value)*)? "]" ws
 value  ::= object | array | string | number | ("true" | "false" | "null") ws
 object ::= "{" ws (string ":" ws value ("," ws string ":" ws value)*)? "}" ws
 array  ::= "[" ws (value ("," ws value)*)? "]" ws
 string ::= "\"" ([^\\"\x7F\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]))* "\"" ws
 number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? (("e" | "E") ("+" | "-")? [0-9]+)? ws
 ws ::= ([ \t\n] ws)?
-''',
-    "boolean": r'''root ::= ("true" | "false")''',
+""",
+    "boolean": r"""root ::= ("true" | "false")""",
 }

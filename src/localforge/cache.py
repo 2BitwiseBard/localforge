@@ -16,8 +16,10 @@ log = logging.getLogger("localforge.cache")
 def _load_cache_config() -> dict:
     """Read cache settings from config.yaml (if available)."""
     try:
-        from localforge.paths import config_path
         import yaml
+
+        from localforge.paths import config_path
+
         with open(config_path()) as f:
             cfg = yaml.safe_load(f) or {}
         return cfg.get("cache", {})
@@ -50,6 +52,7 @@ class ResponseCache:
     def make_key(prompt: str, system: str | None, model: str | None, **kwargs: Any) -> str:
         """Generate a cache key from prompt + system + model + gen_params."""
         import json as _json
+
         key_data = f"{model}:{system}:{prompt}:{_json.dumps(kwargs, sort_keys=True, default=str)}"
         return hashlib.sha256(key_data.encode()).hexdigest()[:16]
 

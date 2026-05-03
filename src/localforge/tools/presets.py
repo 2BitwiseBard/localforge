@@ -46,7 +46,10 @@ def _get_webui_root() -> Path | None:
         "properties": {
             "prompt": {"type": "string", "description": "Prompt to get next-token logits for"},
             "top_n": {"type": "integer", "description": "Number of top tokens to return (default: 50, max: 100)"},
-            "use_samplers": {"type": "boolean", "description": "Apply sampling filters (temp, top_p, etc.) before returning (default: false)"},
+            "use_samplers": {
+                "type": "boolean",
+                "description": "Apply sampling filters (temp, top_p, etc.) before returning (default: false)",
+            },
         },
         "required": ["prompt"],
     },
@@ -73,7 +76,7 @@ async def get_logits(args: dict) -> str:
             token, prob = entry[0], entry[1]
         else:
             token, prob = str(entry), 0
-        lines.append(f"  {i+1:3d}. {repr(token):>20s}  {float(prob)*100:6.2f}%")
+        lines.append(f"  {i + 1:3d}. {repr(token):>20s}  {float(prob) * 100:6.2f}%")
     return "\n".join(lines)
 
 
@@ -89,7 +92,10 @@ async def get_logits(args: dict) -> str:
         "type": "object",
         "properties": {
             "user_message": {"type": "string", "description": "User message to render"},
-            "system_message": {"type": "string", "description": "System message (optional, uses context preamble if not set)"},
+            "system_message": {
+                "type": "string",
+                "description": "System message (optional, uses context preamble if not set)",
+            },
         },
         "required": ["user_message"],
     },
@@ -128,10 +134,7 @@ async def preview_prompt(args: dict) -> str:
     except Exception:
         token_count = "?"
 
-    return (
-        f"Rendered prompt ({token_count} tokens, {len(rendered)} chars):\n"
-        f"{'='*60}\n{rendered}\n{'='*60}"
-    )
+    return f"Rendered prompt ({token_count} tokens, {len(rendered)} chars):\n{'=' * 60}\n{rendered}\n{'=' * 60}"
 
 
 @tool_handler(
@@ -186,14 +189,29 @@ async def set_sampling(args: dict) -> str:
         return "Available advanced sampling params:\n  " + "\n  ".join(params_list)
 
     allowed = {
-        "seed", "mirostat_mode", "mirostat_tau", "mirostat_eta",
-        "dry_multiplier", "dry_allowed_length", "dry_base",
-        "xtc_threshold", "xtc_probability",
-        "dynatemp_low", "dynatemp_high", "dynatemp_exponent",
-        "dynamic_temperature", "temperature_last",
-        "smoothing_factor", "smoothing_curve", "top_n_sigma",
-        "custom_token_bans", "ban_eos_token", "reasoning_effort",
-        "prompt_lookup_num_tokens", "max_tokens_second", "guidance_scale",
+        "seed",
+        "mirostat_mode",
+        "mirostat_tau",
+        "mirostat_eta",
+        "dry_multiplier",
+        "dry_allowed_length",
+        "dry_base",
+        "xtc_threshold",
+        "xtc_probability",
+        "dynatemp_low",
+        "dynatemp_high",
+        "dynatemp_exponent",
+        "dynamic_temperature",
+        "temperature_last",
+        "smoothing_factor",
+        "smoothing_curve",
+        "top_n_sigma",
+        "custom_token_bans",
+        "ban_eos_token",
+        "reasoning_effort",
+        "prompt_lookup_num_tokens",
+        "max_tokens_second",
+        "guidance_scale",
     }
     changed = []
     for k, v in args.items():
@@ -366,4 +384,6 @@ async def load_grammar(args: dict) -> str:
         return "Error: provide either file_path or grammar_text"
 
     BUILTIN_GRAMMARS[name] = grammar_text
-    return f"Grammar '{name}' loaded ({len(grammar_text)} chars). Available: {', '.join(sorted(BUILTIN_GRAMMARS.keys()))}"
+    return (
+        f"Grammar '{name}' loaded ({len(grammar_text)} chars). Available: {', '.join(sorted(BUILTIN_GRAMMARS.keys()))}"
+    )

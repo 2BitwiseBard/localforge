@@ -9,18 +9,22 @@ import base64
 import io
 import json
 import os
+import re as _re
 import time
 import uuid
 from pathlib import Path
+
+import httpx
+import yaml
 from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
-import httpx
-import yaml
-
 try:
-    from localforge.paths import config_path as _config_path, data_dir as _data_dir, notes_dir as _notes_dir
+    from localforge.paths import config_path as _config_path
+    from localforge.paths import data_dir as _data_dir
+    from localforge.paths import notes_dir as _notes_dir
+
     CONFIG_PATH = _config_path()
     NOTES_DIR = _notes_dir()
     DATA_ROOT = _data_dir()
@@ -82,8 +86,6 @@ def _get_user(request: Request) -> dict:
     return getattr(request.state, "user", {"id": "admin", "name": "Admin", "role": "admin"})
 
 
-import re as _re
-
 _SAFE_USER_ID = _re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
@@ -106,6 +108,7 @@ def _user_dir(base: str, user_id: str) -> Path:
 # Notifications helper
 # ---------------------------------------------------------------------------
 
+
 async def notify_user(user_id: str, title: str, body: str, tag: str = "ai-hub"):
     """Send notification to a user via SSE and Web Push (if subscribed)."""
     queues = _sse_clients.get(user_id, [])
@@ -116,9 +119,7 @@ async def notify_user(user_id: str, title: str, body: str, tag: str = "ai-hub"):
         except asyncio.QueueFull:
             pass
     # Fire-and-forget web push; don't let failures block the SSE path.
-    asyncio.get_event_loop().create_task(
-        _send_webpush(user_id, title, body, tag)
-    )
+    asyncio.get_event_loop().create_task(_send_webpush(user_id, title, body, tag))
 
 
 async def notify_all(title: str, body: str, tag: str = "ai-hub"):
@@ -162,6 +163,7 @@ def _load_vapid_keys() -> tuple[str, str]:
     if not pub or not priv_b64:
         return "", ""
     import base64 as _b64
+
     try:
         # private key stored as base64-encoded PEM
         priv_pem = _b64.urlsafe_b64decode(priv_b64 + "==").decode()
@@ -188,12 +190,11 @@ async def _send_webpush(user_id: str, title: str, body: str, tag: str) -> None:
     if not pub_key or not priv_pem:
         return
     try:
-        from pywebpush import webpush, WebPushException
+        from pywebpush import webpush
     except ImportError:
         return
 
     payload = json.dumps({"title": title, "body": body, "tag": tag})
-    to_remove: list[dict] = []
 
     def _send_one(sub: dict) -> bool:
         try:
@@ -259,6 +260,7 @@ async def api_push_subscribe(request: Request) -> JSONResponse:
 # User info
 # ---------------------------------------------------------------------------
 
+
 async def api_me(request: Request) -> JSONResponse:
     """Return current user profile."""
     user = _get_user(request)
@@ -268,6 +270,7 @@ async def api_me(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 # Status
 # ---------------------------------------------------------------------------
+
 
 async def api_status(request: Request) -> JSONResponse:
     backend_url = _backend_url()
@@ -288,9 +291,7 @@ async def api_status(request: Request) -> JSONResponse:
             # text-gen-webui runs llama-server on api_port + 5
             for llama_port in [5005, 5006, 5007]:
                 try:
-                    slot_resp = await client.get(
-                        f"http://127.0.0.1:{llama_port}/slots", timeout=3
-                    )
+                    slot_resp = await client.get(f"http://127.0.0.1:{llama_port}/slots", timeout=3)
                     if slot_resp.status_code == 200:
                         slots_data = slot_resp.json()
                         slot_count = len(slots_data)
@@ -315,8 +316,10 @@ async def api_status(request: Request) -> JSONResponse:
             else:
                 try:
                     import re
+
                     proc = await asyncio.create_subprocess_exec(
-                        "ps", "aux",
+                        "ps",
+                        "aux",
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                     )
@@ -372,9 +375,7 @@ async def api_chat(request: Request) -> StreamingResponse:
     # Prepend system prompt if provided
     system_prompt = body.get("system_prompt", "")
     if system_prompt:
-        messages = [{"role": "system", "content": system_prompt}] + [
-            m for m in messages if m.get("role") != "system"
-        ]
+        messages = [{"role": "system", "content": system_prompt}] + [m for m in messages if m.get("role") != "system"]
 
     backend_url = _backend_url()
     cfg = _load_config()
@@ -382,8 +383,17 @@ async def api_chat(request: Request) -> StreamingResponse:
     params = {**defaults, **_gen_param_overrides}
 
     # Per-request overrides
-    for k in ("temperature", "top_p", "top_k", "max_tokens", "min_p",
-              "repetition_penalty", "presence_penalty", "frequency_penalty", "seed"):
+    for k in (
+        "temperature",
+        "top_p",
+        "top_k",
+        "max_tokens",
+        "min_p",
+        "repetition_penalty",
+        "presence_penalty",
+        "frequency_penalty",
+        "seed",
+    ):
         if k in body:
             params[k] = body[k]
 
@@ -394,8 +404,16 @@ async def api_chat(request: Request) -> StreamingResponse:
                 "max_tokens": params.get("max_tokens", 4096),
                 "stream": True,
             }
-            for k in ("temperature", "top_p", "top_k", "min_p",
-                       "repetition_penalty", "presence_penalty", "frequency_penalty", "seed"):
+            for k in (
+                "temperature",
+                "top_p",
+                "top_k",
+                "min_p",
+                "repetition_penalty",
+                "presence_penalty",
+                "frequency_penalty",
+                "seed",
+            ):
                 if k in params and params[k] is not None:
                     request_body[k] = params[k]
 
@@ -410,7 +428,7 @@ async def api_chat(request: Request) -> StreamingResponse:
                         if line.startswith("data: "):
                             data = line[6:]
                             if data == "[DONE]":
-                                yield f"data: [DONE]\n\n"
+                                yield "data: [DONE]\n\n"
                                 break
                             try:
                                 chunk = json.loads(data)
@@ -430,6 +448,7 @@ async def api_chat(request: Request) -> StreamingResponse:
 # Chat History
 # ---------------------------------------------------------------------------
 
+
 async def api_chat_list(request: Request) -> JSONResponse:
     """List saved chat conversations for the user (paginated)."""
     user = _get_user(request)
@@ -440,16 +459,18 @@ async def api_chat_list(request: Request) -> JSONResponse:
     all_files = sorted(chat_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     total = len(all_files)
     chats = []
-    for f in all_files[offset:offset + limit]:
+    for f in all_files[offset : offset + limit]:
         try:
             data = json.loads(f.read_text())
-            chats.append({
-                "id": f.stem,
-                "title": data.get("title", "Untitled"),
-                "message_count": len(data.get("messages", [])),
-                "created": data.get("created", 0),
-                "updated": data.get("updated", 0),
-            })
+            chats.append(
+                {
+                    "id": f.stem,
+                    "title": data.get("title", "Untitled"),
+                    "message_count": len(data.get("messages", [])),
+                    "created": data.get("created", 0),
+                    "updated": data.get("updated", 0),
+                }
+            )
         except Exception:
             continue
     return JSONResponse({"chats": chats, "total": total, "page": page, "has_more": offset + limit < total})
@@ -510,6 +531,7 @@ async def api_chat_delete(request: Request) -> JSONResponse:
 # Model management
 # ---------------------------------------------------------------------------
 
+
 async def api_models(request: Request) -> JSONResponse:
     backend_url = _backend_url()
     result = {"current": None, "models": []}
@@ -554,11 +576,25 @@ async def api_swap(request: Request) -> JSONResponse:
     # Build loading args — resolve each param through the config chain
     load_args: dict = {}
     LOAD_PARAM_KEYS = [
-        "ctx_size", "gpu_layers", "threads", "threads_batch",
-        "batch_size", "ubatch_size", "cache_type", "flash_attn",
-        "rope_freq_base", "tensor_split", "parallel",
-        "model_draft", "draft_max", "gpu_layers_draft", "ctx_size_draft",
-        "spec_type", "spec_ngram_size_n", "spec_ngram_size_m", "spec_ngram_min_hits",
+        "ctx_size",
+        "gpu_layers",
+        "threads",
+        "threads_batch",
+        "batch_size",
+        "ubatch_size",
+        "cache_type",
+        "flash_attn",
+        "rope_freq_base",
+        "tensor_split",
+        "parallel",
+        "model_draft",
+        "draft_max",
+        "gpu_layers_draft",
+        "ctx_size_draft",
+        "spec_type",
+        "spec_ngram_size_n",
+        "spec_ngram_size_m",
+        "spec_ngram_min_hits",
         "mmproj",
     ]
     for key in LOAD_PARAM_KEYS:
@@ -578,7 +614,6 @@ async def api_swap(request: Request) -> JSONResponse:
     }
 
     applied = {k: v for k, v in load_args.items() if v is not None}
-    config_source = model_config.get("ctx_size") and f" (from config: {list(model_config.keys())})" or ""
 
     try:
         async with httpx.AsyncClient(timeout=180) as client:
@@ -597,6 +632,7 @@ async def api_swap(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 # Search / RAG
 # ---------------------------------------------------------------------------
+
 
 async def api_indexes(request: Request) -> JSONResponse:
     index_dir = DATA_ROOT / "indexes"
@@ -619,9 +655,7 @@ async def api_search(request: Request) -> JSONResponse:
 
     tool_name = "rag_query" if mode == "rag" else "hybrid_search"
     args = (
-        {"index_name": index_name, "question": query}
-        if mode == "rag"
-        else {"index_name": index_name, "query": query}
+        {"index_name": index_name, "question": query} if mode == "rag" else {"index_name": index_name, "query": query}
     )
     try:
         result = await _call_tool(tool_name, args)
@@ -635,6 +669,7 @@ async def api_search(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 # System metrics
 # ---------------------------------------------------------------------------
+
 
 async def api_metrics(request: Request) -> JSONResponse:
     global _gpu_metrics_cache
@@ -667,6 +702,7 @@ async def api_metrics(request: Request) -> JSONResponse:
 
     try:
         import psutil
+
         vm = psutil.virtual_memory()
         metrics["ram"] = {
             "total_gb": round(vm.total / 1024**3, 1),
@@ -689,8 +725,11 @@ async def api_models_scan(request: Request) -> JSONResponse:
     cfg_dir = cfg.get("backends", {}).get("local", {}).get("models_dir", "")
     if cfg_dir:
         scan_dirs.append(Path(cfg_dir))
-    for d in [Path("/mnt/models"), Path.home() / "models",
-               Path.home() / "Development/text-generation-webui/user_data/models"]:
+    for d in [
+        Path("/mnt/models"),
+        Path.home() / "models",
+        Path.home() / "Development/text-generation-webui/user_data/models",
+    ]:
         if d not in scan_dirs:
             scan_dirs.append(d)
 
@@ -703,12 +742,14 @@ async def api_models_scan(request: Request) -> JSONResponse:
             if f.name in seen:
                 continue
             seen.add(f.name)
-            found.append({
-                "name": f.name,
-                "path": str(f),
-                "size_gb": round(f.stat().st_size / 1024**3, 1),
-                "dir": str(d),
-            })
+            found.append(
+                {
+                    "name": f.name,
+                    "path": str(f),
+                    "size_gb": round(f.stat().st_size / 1024**3, 1),
+                    "dir": str(d),
+                }
+            )
 
     webui_models: list[str] = []
     try:
@@ -727,6 +768,7 @@ async def api_models_scan(request: Request) -> JSONResponse:
 # Photo Gallery
 # ---------------------------------------------------------------------------
 
+
 async def api_photos_list(request: Request) -> JSONResponse:
     """List photos for the user."""
     user = _get_user(request)
@@ -742,15 +784,17 @@ async def api_photos_list(request: Request) -> JSONResponse:
                     meta = json.loads(meta_file.read_text())
                 except Exception:
                     pass
-            photos.append({
-                "filename": f.name,
-                "size": f.stat().st_size,
-                "uploaded": f.stat().st_mtime,
-                "description": meta.get("description", ""),
-                "tags": meta.get("tags", []),
-                "thumbnail": f"/api/photos/{f.name}?thumb=1",
-                "url": f"/api/photos/{f.name}",
-            })
+            photos.append(
+                {
+                    "filename": f.name,
+                    "size": f.stat().st_size,
+                    "uploaded": f.stat().st_mtime,
+                    "description": meta.get("description", ""),
+                    "tags": meta.get("tags", []),
+                    "thumbnail": f"/api/photos/{f.name}?thumb=1",
+                    "url": f"/api/photos/{f.name}",
+                }
+            )
 
     return JSONResponse({"photos": photos})
 
@@ -771,6 +815,7 @@ async def api_photos_get(request: Request) -> StreamingResponse:
         # Generate thumbnail
         try:
             from PIL import Image
+
             img = Image.open(photo_path)
             img.thumbnail((200, 200))
             buf = io.BytesIO()
@@ -784,8 +829,11 @@ async def api_photos_get(request: Request) -> StreamingResponse:
 
     # Serve full image
     content_type = {
-        ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-        ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
     }.get(photo_path.suffix.lower(), "application/octet-stream")
 
     return StreamingResponse(open(photo_path, "rb"), media_type=content_type)
@@ -830,13 +878,18 @@ async def api_photos_upload(request: Request) -> JSONResponse:
                         tag_resp = await httpx.AsyncClient(timeout=60).post(
                             f"{backend_url}/chat/completions",
                             json={
-                                "messages": [{
-                                    "role": "user",
-                                    "content": [
-                                        {"type": "image_url", "image_url": {"url": f"data:{ct};base64,{b64}"}},
-                                        {"type": "text", "text": "Describe this image in 2-3 sentences. Then list 5-8 tags as comma-separated keywords."},
-                                    ],
-                                }],
+                                "messages": [
+                                    {
+                                        "role": "user",
+                                        "content": [
+                                            {"type": "image_url", "image_url": {"url": f"data:{ct};base64,{b64}"}},
+                                            {
+                                                "type": "text",
+                                                "text": "Describe this image in 2-3 sentences. Then list 5-8 tags as comma-separated keywords.",
+                                            },
+                                        ],
+                                    }
+                                ],
                                 "max_tokens": 256,
                                 "stream": False,
                             },
@@ -856,7 +909,9 @@ async def api_photos_upload(request: Request) -> JSONResponse:
     meta_path = photo_path.with_suffix(".json")
     meta_path.write_text(json.dumps(meta, indent=2))
 
-    return JSONResponse({"filename": filename, "description": meta.get("description", ""), "tags": meta.get("tags", [])})
+    return JSONResponse(
+        {"filename": filename, "description": meta.get("description", ""), "tags": meta.get("tags", [])}
+    )
 
 
 async def api_photos_analyze(request: Request) -> JSONResponse:
@@ -877,18 +932,26 @@ async def api_photos_analyze(request: Request) -> JSONResponse:
             if resp.status_code == 200:
                 info = resp.json()
                 model_name = (info.get("model_name") or "").lower()
-                is_vision = any(kw in model_name for kw in ["vl", "vision", "gemma", "qwen", "image", "vlm", "multimodal"])
+                is_vision = any(
+                    kw in model_name for kw in ["vl", "vision", "gemma", "qwen", "image", "vlm", "multimodal"]
+                )
     except Exception:
         pass
 
     if not is_vision:
-        return JSONResponse({"error": "No vision-capable model loaded. Load Gemma4-26B or Qwen3.6-35B with mmproj first."}, status_code=400)
+        return JSONResponse(
+            {"error": "No vision-capable model loaded. Load Gemma4-26B or Qwen3.6-35B with mmproj first."},
+            status_code=400,
+        )
 
     content = photo_path.read_bytes()
     b64 = base64.b64encode(content).decode("utf-8")
     content_type = {
-        ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-        ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
     }.get(photo_path.suffix.lower(), "image/jpeg")
 
     description, tags = "", []
@@ -897,11 +960,20 @@ async def api_photos_analyze(request: Request) -> JSONResponse:
             resp = await client.post(
                 f"{backend_url}/chat/completions",
                 json={
-                    "messages": [{"role": "user", "content": [
-                        {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{b64}"}},
-                        {"type": "text", "text": "Describe this image in 2-3 sentences. Then on a new line write 'Tags:' followed by 5-8 comma-separated keywords."},
-                    ]}],
-                    "max_tokens": 400, "stream": False,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{b64}"}},
+                                {
+                                    "type": "text",
+                                    "text": "Describe this image in 2-3 sentences. Then on a new line write 'Tags:' followed by 5-8 comma-separated keywords.",
+                                },
+                            ],
+                        }
+                    ],
+                    "max_tokens": 400,
+                    "stream": False,
                 },
             )
             if resp.status_code == 200:
@@ -964,18 +1036,19 @@ async def api_photos_search(request: Request) -> JSONResponse:
             desc = meta.get("description", "").lower()
             tags = " ".join(meta.get("tags", [])).lower()
             if query in desc or query in tags:
-                img_file = f.with_suffix("")  # Remove .json
                 # Find the actual image extension
                 for ext in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
                     img_path = f.parent / (f.stem + ext)
                     if img_path.exists():
-                        results.append({
-                            "filename": img_path.name,
-                            "description": meta.get("description", ""),
-                            "tags": meta.get("tags", []),
-                            "url": f"/api/photos/{img_path.name}",
-                            "thumbnail": f"/api/photos/{img_path.name}?thumb=1",
-                        })
+                        results.append(
+                            {
+                                "filename": img_path.name,
+                                "description": meta.get("description", ""),
+                                "tags": meta.get("tags", []),
+                                "url": f"/api/photos/{img_path.name}",
+                                "thumbnail": f"/api/photos/{img_path.name}?thumb=1",
+                            }
+                        )
                         break
         except Exception:
             continue
@@ -987,14 +1060,17 @@ async def api_photos_search(request: Request) -> JSONResponse:
 # Image upload (vision) — Chat tab
 # ---------------------------------------------------------------------------
 
+
 async def api_upload_image(request: Request) -> StreamingResponse:
     form = await request.form()
     image_file = form.get("image")
     question = form.get("question", "Describe this image in detail.")
 
     if not image_file:
+
         async def err():
             yield f"data: {json.dumps({'error': 'No image uploaded'})}\n\n"
+
         return StreamingResponse(err(), media_type="text/event-stream")
 
     image_bytes = await image_file.read()
@@ -1002,8 +1078,22 @@ async def api_upload_image(request: Request) -> StreamingResponse:
     content_type = image_file.content_type or "image/png"
     backend_url = _backend_url()
 
-    _VISION_KW = ["vl", "vision", "image", "vlm", "multimodal", "qwen3.6", "qwen-vl",
-                  "gemma4", "gemma-4", "pixtral", "llava", "cogvlm", "internvl", "minicpm"]
+    _VISION_KW = [
+        "vl",
+        "vision",
+        "image",
+        "vlm",
+        "multimodal",
+        "qwen3.6",
+        "qwen-vl",
+        "gemma4",
+        "gemma-4",
+        "pixtral",
+        "llava",
+        "cogvlm",
+        "internvl",
+        "minicpm",
+    ]
     is_vision = False
     try:
         async with httpx.AsyncClient(timeout=5) as client:
@@ -1015,8 +1105,10 @@ async def api_upload_image(request: Request) -> StreamingResponse:
         pass
 
     if not is_vision:
+
         async def vision_err():
             yield f"data: {json.dumps({'error': 'No vision-capable model loaded. Load Gemma4-26B or Qwen3.6-35B (with mmproj) first.'})}\n\n"
+
         return StreamingResponse(vision_err(), media_type="text/event-stream")
 
     async def stream():
@@ -1026,13 +1118,15 @@ async def api_upload_image(request: Request) -> StreamingResponse:
                     "POST",
                     f"{backend_url}/chat/completions",
                     json={
-                        "messages": [{
-                            "role": "user",
-                            "content": [
-                                {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{b64}"}},
-                                {"type": "text", "text": question},
-                            ],
-                        }],
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "image_url", "image_url": {"url": f"data:{content_type};base64,{b64}"}},
+                                    {"type": "text", "text": question},
+                                ],
+                            }
+                        ],
                         "max_tokens": 2048,
                         "stream": True,
                     },
@@ -1041,7 +1135,7 @@ async def api_upload_image(request: Request) -> StreamingResponse:
                         if line.startswith("data: "):
                             data = line[6:]
                             if data == "[DONE]":
-                                yield f"data: [DONE]\n\n"
+                                yield "data: [DONE]\n\n"
                                 break
                             try:
                                 chunk = json.loads(data)
@@ -1063,10 +1157,12 @@ async def api_upload_image(request: Request) -> StreamingResponse:
 
 _kg = None
 
+
 def _get_kg():
     global _kg
     if _kg is None:
         from localforge.knowledge.graph import KnowledgeGraph
+
         _kg = KnowledgeGraph()
     return _kg
 
@@ -1162,6 +1258,7 @@ async def api_kg_timeline(request: Request) -> JSONResponse:
 # Agents
 # ---------------------------------------------------------------------------
 
+
 async def api_agents(request: Request) -> JSONResponse:
     if _supervisor:
         return JSONResponse({"agents": _supervisor.list_agents()})
@@ -1171,12 +1268,17 @@ async def api_agents(request: Request) -> JSONResponse:
             cfg = yaml.safe_load(f) or {}
         agents = []
         for agent_id, acfg in cfg.get("agents", {}).items():
-            agents.append({
-                "id": agent_id, "type": acfg.get("type", agent_id),
-                "trust": acfg.get("trust", "monitor"), "schedule": acfg.get("schedule", ""),
-                "enabled": acfg.get("enabled", True), "status": "unknown",
-                "triggers": [t.get("type") for t in acfg.get("triggers", [])],
-            })
+            agents.append(
+                {
+                    "id": agent_id,
+                    "type": acfg.get("type", agent_id),
+                    "trust": acfg.get("trust", "monitor"),
+                    "schedule": acfg.get("schedule", ""),
+                    "enabled": acfg.get("enabled", True),
+                    "status": "unknown",
+                    "triggers": [t.get("type") for t in acfg.get("triggers", [])],
+                }
+            )
         return JSONResponse({"agents": agents})
     return JSONResponse({"agents": []})
 
@@ -1269,10 +1371,10 @@ async def api_agent_config(request: Request) -> JSONResponse:
         if "enabled" in body:
             if body["enabled"] and agent_id not in _supervisor._agents:
                 await _supervisor.spawn_agent(agent_id, acfg)
-                reload_msg = f" | spawned live"
+                reload_msg = " | spawned live"
             elif not body["enabled"] and agent_id in _supervisor._agents:
                 await _supervisor.stop_agent(agent_id)
-                reload_msg = f" | stopped live"
+                reload_msg = " | stopped live"
         _supervisor._configs[agent_id] = acfg
 
     await notify_all("Agent Updated", f"{agent_id}: {', '.join(changed)}{reload_msg}", "agent")
@@ -1312,28 +1414,33 @@ async def api_agent_logs(request: Request) -> JSONResponse:
             except Exception:
                 pass
 
-    return JSONResponse({
-        "agent_id": agent_id,
-        "logs": logs[-50:],  # last 50 entries
-        "last_run": last_run,
-        "run_count": run_count,
-    })
+    return JSONResponse(
+        {
+            "agent_id": agent_id,
+            "logs": logs[-50:],  # last 50 entries
+            "last_run": last_run,
+            "run_count": run_count,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Notes
 # ---------------------------------------------------------------------------
 
+
 async def api_notes(request: Request) -> JSONResponse:
     notes = []
     if NOTES_DIR.exists():
         for f in sorted(NOTES_DIR.iterdir()):
             if f.is_file() and f.suffix in (".txt", ".md", ""):
-                notes.append({
-                    "topic": f.stem,
-                    "size": f.stat().st_size,
-                    "modified": f.stat().st_mtime,
-                })
+                notes.append(
+                    {
+                        "topic": f.stem,
+                        "size": f.stat().st_size,
+                        "modified": f.stat().st_mtime,
+                    }
+                )
     return JSONResponse({"notes": notes})
 
 
@@ -1397,6 +1504,7 @@ async def api_note_delete(request: Request) -> JSONResponse:
 # Voice: STT transcribe proxy
 # ---------------------------------------------------------------------------
 
+
 async def api_transcribe(request: Request) -> JSONResponse:
     form = await request.form()
     audio_file = form.get("file")
@@ -1410,8 +1518,9 @@ async def api_transcribe(request: Request) -> JSONResponse:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 f"{backend_url}/audio/transcriptions",
-                files={"file": (audio_file.filename or "audio.webm", audio_bytes,
-                                audio_file.content_type or "audio/webm")},
+                files={
+                    "file": (audio_file.filename or "audio.webm", audio_bytes, audio_file.content_type or "audio/webm")
+                },
                 data={"model": "whisper"},
             )
             if resp.status_code == 200:
@@ -1424,6 +1533,7 @@ async def api_transcribe(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 # SSE Notifications
 # ---------------------------------------------------------------------------
+
 
 async def api_events(request: Request) -> StreamingResponse:
     """Server-Sent Events stream for real-time notifications."""
@@ -1444,7 +1554,7 @@ async def api_events(request: Request) -> StreamingResponse:
                     event = await asyncio.wait_for(queue.get(), timeout=30)
                     yield f"data: {event}\n\n"
                 except asyncio.TimeoutError:
-                    yield f": keepalive\n\n"  # prevent connection timeout
+                    yield ": keepalive\n\n"  # prevent connection timeout
         except asyncio.CancelledError:
             pass
         finally:
@@ -1456,6 +1566,7 @@ async def api_events(request: Request) -> StreamingResponse:
 # ---------------------------------------------------------------------------
 # Generation Parameters
 # ---------------------------------------------------------------------------
+
 
 async def api_generation_params(request: Request) -> JSONResponse:
     """Get or update generation parameters applied to chat requests."""
@@ -1481,8 +1592,17 @@ async def api_generation_params(request: Request) -> JSONResponse:
         _gen_param_overrides.clear()
         return JSONResponse({"reset": True, "current": _load_config().get("defaults", {})})
 
-    allowed = {"temperature", "top_p", "top_k", "max_tokens", "repetition_penalty",
-               "min_p", "presence_penalty", "frequency_penalty", "seed"}
+    allowed = {
+        "temperature",
+        "top_p",
+        "top_k",
+        "max_tokens",
+        "repetition_penalty",
+        "min_p",
+        "presence_penalty",
+        "frequency_penalty",
+        "seed",
+    }
     changed = {}
     for k, v in body.items():
         if k in allowed:
@@ -1503,6 +1623,7 @@ async def api_generation_params(request: Request) -> JSONResponse:
 # Presets
 # ---------------------------------------------------------------------------
 
+
 async def api_presets(request: Request) -> JSONResponse:
     """List available generation presets with key parameters."""
     webui_dir = Path.home() / "Development" / "text-generation-webui"
@@ -1510,7 +1631,7 @@ async def api_presets(request: Request) -> JSONResponse:
     for d in [webui_dir / "presets", webui_dir / "user_data" / "presets"]:
         if d.exists():
             for f in sorted(d.iterdir()):
-                if f.suffix in ('.yaml', '.yml'):
+                if f.suffix in (".yaml", ".yml"):
                     entry = {"name": f.stem}
                     try:
                         with open(f) as fh:
@@ -1545,8 +1666,15 @@ async def api_preset_load(request: Request) -> JSONResponse:
     try:
         with open(preset_file) as fh:
             data = yaml.safe_load(fh) or {}
-        allowed = {"temperature", "top_p", "top_k", "min_p", "repetition_penalty",
-                    "presence_penalty", "frequency_penalty"}
+        allowed = {
+            "temperature",
+            "top_p",
+            "top_k",
+            "min_p",
+            "repetition_penalty",
+            "presence_penalty",
+            "frequency_penalty",
+        }
         applied = {}
         for k in allowed:
             if k in data:
@@ -1562,6 +1690,7 @@ async def api_preset_load(request: Request) -> JSONResponse:
 # Model Controls
 # ---------------------------------------------------------------------------
 
+
 async def api_model_unload(request: Request) -> JSONResponse:
     """Unload the current model to free VRAM."""
     backend_url = _backend_url()
@@ -1569,6 +1698,7 @@ async def api_model_unload(request: Request) -> JSONResponse:
         async with httpx.AsyncClient(timeout=30) as client:
             await client.post(f"{backend_url}/internal/model/unload")
         from localforge import config as _cfg
+
         _cfg.MODEL = None
         await notify_all("Model Unloaded", "VRAM freed", "model-swap")
         return JSONResponse({"status": "unloaded"})
@@ -1592,6 +1722,7 @@ async def api_benchmark(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 # LoRA Management
 # ---------------------------------------------------------------------------
+
 
 async def api_loras(request: Request) -> JSONResponse:
     """List available and loaded LoRA adapters."""
@@ -1646,6 +1777,7 @@ async def api_lora_unload(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 # Index Management
 # ---------------------------------------------------------------------------
+
 
 async def api_index_create(request: Request) -> JSONResponse:
     """Create a new RAG index."""
@@ -1752,16 +1884,18 @@ async def api_videos_list(request: Request) -> JSONResponse:
                 except Exception:
                     pass
             thumb_name = f.stem + ".jpg"
-            videos.append({
-                "filename": f.name,
-                "url": f"/api/videos/{user['id']}/{f.name}",
-                "thumbnail": f"/api/videos/{user['id']}/thumbs/{thumb_name}",
-                "description": meta.get("description", ""),
-                "tags": meta.get("tags", []),
-                "duration": meta.get("duration_str", ""),
-                "resolution": f"{meta.get('width', '')}x{meta.get('height', '')}" if meta.get("width") else "",
-                "uploaded_at": meta.get("uploaded_at", 0),
-            })
+            videos.append(
+                {
+                    "filename": f.name,
+                    "url": f"/api/videos/{user['id']}/{f.name}",
+                    "thumbnail": f"/api/videos/{user['id']}/thumbs/{thumb_name}",
+                    "description": meta.get("description", ""),
+                    "tags": meta.get("tags", []),
+                    "duration": meta.get("duration_str", ""),
+                    "resolution": f"{meta.get('width', '')}x{meta.get('height', '')}" if meta.get("width") else "",
+                    "uploaded_at": meta.get("uploaded_at", 0),
+                }
+            )
     return JSONResponse({"videos": videos})
 
 
@@ -1786,7 +1920,8 @@ async def api_videos_upload(request: Request) -> JSONResponse:
     # Get metadata via ffprobe
     meta = {"uploaded_at": time.time(), "uploaded_by": user["id"]}
     try:
-        from media.processor import get_video_metadata, create_video_thumbnail, format_duration
+        from media.processor import create_video_thumbnail, format_duration, get_video_metadata
+
         video_meta = await get_video_metadata(video_path)
         if video_meta:
             meta.update(video_meta)
@@ -1819,6 +1954,7 @@ async def api_videos_get(request: Request) -> StreamingResponse:
         return JSONResponse({"error": "Not found"}, status_code=404)
 
     from media.processor import content_type_for
+
     ct = content_type_for(filename)
     file_size = video_path.stat().st_size
 
@@ -1863,10 +1999,14 @@ async def api_videos_get(request: Request) -> StreamingResponse:
             while chunk := f.read(65536):
                 yield chunk
 
-    return StreamingResponse(file_gen(), media_type=ct, headers={
-        "Accept-Ranges": "bytes",
-        "Content-Length": str(file_size),
-    })
+    return StreamingResponse(
+        file_gen(),
+        media_type=ct,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+        },
+    )
 
 
 async def api_video_thumb(request: Request) -> StreamingResponse:
@@ -1962,15 +2102,17 @@ async def api_research_start(request: Request) -> JSONResponse:
     # Run deep_research in background
     async def _run():
         try:
-            result = await _call_tool("deep_research", {
-                "question": question,
-                "max_sources": 5,
-                "save_to_kg": True,
-            })
+            result = await _call_tool(
+                "deep_research",
+                {
+                    "question": question,
+                    "max_sources": 5,
+                    "save_to_kg": True,
+                },
+            )
             if isinstance(result, list):
                 text = " ".join(
-                    item.get("text", "") for item in result
-                    if isinstance(item, dict) and item.get("type") == "text"
+                    item.get("text", "") for item in result if isinstance(item, dict) and item.get("type") == "text"
                 )
             else:
                 text = str(result)
@@ -2039,12 +2181,14 @@ async def api_workflows_list(request: Request) -> JSONResponse:
     for f in sorted(wf_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         try:
             data = json.loads(f.read_text())
-            workflows.append({
-                "id": data.get("id", f.stem),
-                "name": data.get("name", f.stem),
-                "description": data.get("description", ""),
-                "node_count": len(data.get("nodes", [])),
-            })
+            workflows.append(
+                {
+                    "id": data.get("id", f.stem),
+                    "name": data.get("name", f.stem),
+                    "description": data.get("description", ""),
+                    "node_count": len(data.get("nodes", [])),
+                }
+            )
         except Exception:
             continue
 
@@ -2054,13 +2198,16 @@ async def api_workflows_list(request: Request) -> JSONResponse:
         for f in templates_dir.glob("*.yaml"):
             try:
                 import yaml as _yaml
+
                 data = _yaml.safe_load(f.read_text())
-                workflows.append({
-                    "id": data.get("id", f.stem),
-                    "name": data.get("name", f.stem) + " (template)",
-                    "description": data.get("description", ""),
-                    "node_count": len(data.get("nodes", [])),
-                })
+                workflows.append(
+                    {
+                        "id": data.get("id", f.stem),
+                        "name": data.get("name", f.stem) + " (template)",
+                        "description": data.get("description", ""),
+                        "node_count": len(data.get("nodes", [])),
+                    }
+                )
             except Exception:
                 continue
 
@@ -2091,9 +2238,9 @@ async def api_workflow_run(request: Request) -> JSONResponse:
     wf_data = body.get("workflow", {})
     initial_input = body.get("initial_input", "")
 
-    from localforge.workflows.schema import WorkflowDef
-    from localforge.workflows.engine import WorkflowEngine
     from localforge.client import chat as _chat_fn
+    from localforge.workflows.engine import WorkflowEngine
+    from localforge.workflows.schema import WorkflowDef
 
     try:
         wf = WorkflowDef.from_dict(wf_data)
@@ -2103,10 +2250,12 @@ async def api_workflow_run(request: Request) -> JSONResponse:
 
         engine = WorkflowEngine(chat_fn=chat_fn)
         ctx = await asyncio.wait_for(engine.execute(wf, initial_input), timeout=300)
-        return JSONResponse({
-            "execution_id": ctx.execution_id,
-            "status": ctx.status,
-        })
+        return JSONResponse(
+            {
+                "execution_id": ctx.execution_id,
+                "status": ctx.status,
+            }
+        )
     except asyncio.TimeoutError:
         return JSONResponse({"error": "Workflow timed out"}, status_code=504)
     except (ValueError, KeyError, httpx.HTTPError, OSError) as e:
@@ -2149,17 +2298,20 @@ async def api_workflow_delete(request: Request) -> JSONResponse:
 async def api_workflow_node_specs(request: Request) -> JSONResponse:
     """Returns the per-node-type form schemas the visual editor renders."""
     from localforge.workflows.node_specs import NODE_SPECS, categories
+
     return JSONResponse({"specs": NODE_SPECS, "categories": categories()})
 
 
 async def api_workflow_executions(request: Request) -> JSONResponse:
     from localforge.workflows.engine import list_executions
+
     return JSONResponse({"executions": list_executions()})
 
 
 async def api_workflow_execution_get(request: Request) -> JSONResponse:
     exec_id = request.path_params.get("execution_id", "")
     from localforge.workflows.engine import WorkflowContext
+
     ctx = WorkflowContext.load(exec_id)
     if not ctx:
         return JSONResponse({"error": "Execution not found"}, status_code=404)
@@ -2173,6 +2325,7 @@ async def api_kg_graph(request: Request) -> JSONResponse:
     center = request.query_params.get("center", "")
     depth = int(request.query_params.get("depth", "2"))
     from localforge.knowledge.graph import KnowledgeGraph
+
     try:
         kg = KnowledgeGraph()
         data = kg.get_graph(center=center or None, depth=depth)
@@ -2193,6 +2346,7 @@ def _get_approval_queue():
     global _approval_queue
     if _approval_queue is None:
         from localforge.agents.approval import ApprovalQueue
+
         _approval_queue = ApprovalQueue()
     return _approval_queue
 
@@ -2200,10 +2354,12 @@ def _get_approval_queue():
 async def api_approvals_list(request: Request) -> JSONResponse:
     """List pending approval requests."""
     aq = _get_approval_queue()
-    return JSONResponse({
-        "pending": aq.list_pending(),
-        "recent": aq.list_recent(limit=10),
-    })
+    return JSONResponse(
+        {
+            "pending": aq.list_pending(),
+            "recent": aq.list_recent(limit=10),
+        }
+    )
 
 
 async def api_approvals_decide(request: Request) -> JSONResponse:
@@ -2236,24 +2392,29 @@ async def api_approvals_decide(request: Request) -> JSONResponse:
 # Hub Mode & Character
 # ---------------------------------------------------------------------------
 
+
 async def api_modes(request: Request) -> JSONResponse:
     """List available modes and the current one."""
     config = _load_config()
     modes = config.get("modes", {})
-    return JSONResponse({
-        "modes": {k: {**v} for k, v in modes.items()},
-        "current": _current_mode.get("name", ""),
-    })
+    return JSONResponse(
+        {
+            "modes": {k: {**v} for k, v in modes.items()},
+            "current": _current_mode.get("name", ""),
+        }
+    )
 
 
 async def api_characters(request: Request) -> JSONResponse:
     """List available characters and the current one."""
     config = _load_config()
     characters = config.get("characters", {})
-    return JSONResponse({
-        "characters": {k: {"name": v.get("name", k)} for k, v in characters.items()},
-        "current": _current_character.get("name", ""),
-    })
+    return JSONResponse(
+        {
+            "characters": {k: {"name": v.get("name", k)} for k, v in characters.items()},
+            "current": _current_character.get("name", ""),
+        }
+    )
 
 
 async def api_set_mode(request: Request) -> JSONResponse:
@@ -2282,13 +2443,15 @@ async def api_set_mode(request: Request) -> JSONResponse:
     if mode_cfg.get("max_tokens"):
         _gen_param_overrides["max_tokens"] = mode_cfg["max_tokens"]
 
-    return JSONResponse({
-        "status": "ok",
-        "mode": mode_name,
-        "temperature": mode_cfg.get("temperature"),
-        "max_tokens": mode_cfg.get("max_tokens"),
-        "prefer_model": mode_cfg.get("prefer_model", []),
-    })
+    return JSONResponse(
+        {
+            "status": "ok",
+            "mode": mode_name,
+            "temperature": mode_cfg.get("temperature"),
+            "max_tokens": mode_cfg.get("max_tokens"),
+            "prefer_model": mode_cfg.get("prefer_model", []),
+        }
+    )
 
 
 async def api_set_character(request: Request) -> JSONResponse:
@@ -2312,11 +2475,13 @@ async def api_set_character(request: Request) -> JSONResponse:
     if char_cfg.get("temperature_override") is not None:
         _gen_param_overrides["temperature"] = char_cfg["temperature_override"]
 
-    return JSONResponse({
-        "status": "ok",
-        "character": char_name,
-        "name": char_cfg.get("name", char_name),
-    })
+    return JSONResponse(
+        {
+            "status": "ok",
+            "character": char_name,
+            "name": char_cfg.get("name", char_name),
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2327,9 +2492,11 @@ async def api_set_character(request: Request) -> JSONResponse:
 # The gpu_pool reference is set by gateway.py during lifespan startup.
 _gpu_pool_ref = None  # Set by gateway.py
 
+
 async def api_mesh_heartbeat(request: Request) -> JSONResponse:
     """Receive heartbeat from a worker node and update the mesh registry."""
     from localforge.auth import require_scope
+
     denied = require_scope(request, "mesh")
     if denied is not None:
         return denied
@@ -2349,6 +2516,7 @@ async def api_mesh_heartbeat(request: Request) -> JSONResponse:
     if user.get("role") == "worker":
         try:
             from localforge.enrollment import worker_registry
+
             worker_registry().touch(user["id"])
         except Exception:
             pass
@@ -2372,18 +2540,21 @@ async def api_mesh_status(request: Request) -> JSONResponse:
     # Merge in workers that have registered but haven't checked in yet.
     try:
         from localforge.enrollment import worker_registry
+
         seen_ids = {w.get("worker_id") or w.get("hostname") for w in workers}
         for rec in worker_registry().list_workers():
             if rec["worker_id"] in seen_ids or rec["hostname"] in seen_ids:
                 continue
-            workers.append({
-                "worker_id": rec["worker_id"],
-                "hostname": rec["hostname"],
-                "platform": rec.get("platform"),
-                "registered_at": rec.get("registered_at"),
-                "last_seen": rec.get("last_seen"),
-                "status": "registered (awaiting first heartbeat)",
-            })
+            workers.append(
+                {
+                    "worker_id": rec["worker_id"],
+                    "hostname": rec["hostname"],
+                    "platform": rec.get("platform"),
+                    "registered_at": rec.get("registered_at"),
+                    "last_seen": rec.get("last_seen"),
+                    "status": "registered (awaiting first heartbeat)",
+                }
+            )
     except Exception:
         pass
 
@@ -2394,10 +2565,10 @@ async def api_mesh_status(request: Request) -> JSONResponse:
 
 _PLATFORM_SCRIPTS: dict[str, tuple[str, str]] = {
     # platform -> (script_path_relative_to_repo_root, content_type)
-    "linux":   ("scripts/setup-worker.sh",         "text/x-shellscript"),
-    "darwin":  ("scripts/setup-worker-darwin.sh",  "text/x-shellscript"),
-    "win32":   ("scripts/setup-worker.ps1",        "text/plain"),
-    "android": ("scripts/setup-worker-termux.sh",  "text/x-shellscript"),
+    "linux": ("scripts/setup-worker.sh", "text/x-shellscript"),
+    "darwin": ("scripts/setup-worker-darwin.sh", "text/x-shellscript"),
+    "win32": ("scripts/setup-worker.ps1", "text/plain"),
+    "android": ("scripts/setup-worker-termux.sh", "text/x-shellscript"),
 }
 
 
@@ -2416,39 +2587,37 @@ def _install_oneliners(token: str, hub_url: str, model_id: str = "") -> dict[str
     model_flag_sh = f" --model-id {model_id}" if model_id else ""
     model_flag_ps = f" -ModelId '{model_id}'" if model_id else ""
     return {
-        "linux":
-            f"curl -fsSL '{base}?platform=linux&token={token}' | "
-            f"bash -s -- --hub {hub_url} --token {token}{model_flag_sh}",
-        "darwin":
-            f"curl -fsSL '{base}?platform=darwin&token={token}' | "
-            f"bash -s -- --hub {hub_url} --token {token}{model_flag_sh}",
+        "linux": f"curl -fsSL '{base}?platform=linux&token={token}' | "
+        f"bash -s -- --hub {hub_url} --token {token}{model_flag_sh}",
+        "darwin": f"curl -fsSL '{base}?platform=darwin&token={token}' | "
+        f"bash -s -- --hub {hub_url} --token {token}{model_flag_sh}",
         "win32":
-            # Run in PowerShell (not cmd.exe).
-            # Script is saved to $env:PUBLIC (C:\Users\Public) so the elevated
-            # session can always read it regardless of which admin account UAC
-            # opens. The script self-elevates if needed, so no -Verb RunAs here.
-            # Hub+Token are baked server-side so they survive the UAC boundary.
-            f"$s=\"$env:PUBLIC\\localforge-setup.ps1\"; "
-            f"$log=\"$env:ProgramData\\LocalForge\\setup.log\"; "
-            f"iwr -useb '{base}?platform=win32&token={token}' -OutFile $s; "
-            f"if(Test-Path $log){{Remove-Item -Force $log}}; "
-            f"& powershell -ExecutionPolicy Bypass -NoProfile -File $s{model_flag_ps}; "
-            f"if(Test-Path $log){{"
-            f"Write-Host '--- installer log ---' -ForegroundColor Cyan; "
-            f"Get-Content $log | Write-Host"
-            f"}} else {{"
-            f"Write-Host 'No log yet -- setup may still be running in the elevated window.' -ForegroundColor Yellow; "
-            f"Write-Host ('Log will appear at: $env:ProgramData\\LocalForge\\setup.log') -ForegroundColor Yellow"
-            f"}}",
-        "android":
-            f"curl -fsSL '{base}?platform=android&token={token}' | "
-            f"bash -s -- --hub {hub_url} --token {token}{model_flag_sh}",
+        # Run in PowerShell (not cmd.exe).
+        # Script is saved to $env:PUBLIC (C:\Users\Public) so the elevated
+        # session can always read it regardless of which admin account UAC
+        # opens. The script self-elevates if needed, so no -Verb RunAs here.
+        # Hub+Token are baked server-side so they survive the UAC boundary.
+        f'$s="$env:PUBLIC\\localforge-setup.ps1"; '
+        f'$log="$env:ProgramData\\LocalForge\\setup.log"; '
+        f"iwr -useb '{base}?platform=win32&token={token}' -OutFile $s; "
+        f"if(Test-Path $log){{Remove-Item -Force $log}}; "
+        f"& powershell -ExecutionPolicy Bypass -NoProfile -File $s{model_flag_ps}; "
+        f"if(Test-Path $log){{"
+        f"Write-Host '--- installer log ---' -ForegroundColor Cyan; "
+        f"Get-Content $log | Write-Host"
+        f"}} else {{"
+        f"Write-Host 'No log yet -- setup may still be running in the elevated window.' -ForegroundColor Yellow; "
+        f"Write-Host ('Log will appear at: $env:ProgramData\\LocalForge\\setup.log') -ForegroundColor Yellow"
+        f"}}",
+        "android": f"curl -fsSL '{base}?platform=android&token={token}' | "
+        f"bash -s -- --hub {hub_url} --token {token}{model_flag_sh}",
     }
 
 
 async def api_mesh_enrollment_token(request: Request) -> JSONResponse:
     """Admin: mint a short-lived enrollment token + return install commands."""
     from localforge.auth import require_role
+
     denied = require_role(request, "admin")
     if denied is not None:
         return denied
@@ -2466,16 +2635,19 @@ async def api_mesh_enrollment_token(request: Request) -> JSONResponse:
 
     try:
         from localforge.enrollment import enrollment_store
+
         token_info = enrollment_store().mint(issued_by=user.get("id", "admin"), note=note)
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
 
-    return JSONResponse({
-        **token_info,
-        "hub_url": hub_url,
-        "model_id": model_id or None,
-        "install_commands": _install_oneliners(token_info["token"], hub_url, model_id),
-    })
+    return JSONResponse(
+        {
+            **token_info,
+            "hub_url": hub_url,
+            "model_id": model_id or None,
+            "install_commands": _install_oneliners(token_info["token"], hub_url, model_id),
+        }
+    )
 
 
 def _default_hub_url(request: Request) -> str:
@@ -2496,8 +2668,9 @@ async def api_mesh_install_script(request: Request) -> JSONResponse | StreamingR
 
     Listed in auth.PUBLIC_PATHS so curl one-liners work without a bearer header.
     """
-    from localforge.enrollment import enrollment_store
     from starlette.responses import Response
+
+    from localforge.enrollment import enrollment_store
 
     platform = (request.query_params.get("platform") or "").lower()
     token = request.query_params.get("token", "")
@@ -2513,8 +2686,7 @@ async def api_mesh_install_script(request: Request) -> JSONResponse | StreamingR
     script_path = _repo_root() / rel
     if not script_path.is_file():
         return JSONResponse(
-            {"error": f"Bootstrapper not yet shipped for platform={platform}",
-             "expected_path": str(script_path)},
+            {"error": f"Bootstrapper not yet shipped for platform={platform}", "expected_path": str(script_path)},
             status_code=404,
         )
     try:
@@ -2567,6 +2739,7 @@ async def api_mesh_register(request: Request) -> JSONResponse:
         return JSONResponse({"error": "hardware must be an object"}, status_code=400)
 
     from localforge.enrollment import enrollment_store, worker_registry
+
     record = enrollment_store().consume(enrollment_token)
     if record is None:
         return JSONResponse({"error": "Invalid or expired enrollment token"}, status_code=401)
@@ -2581,29 +2754,34 @@ async def api_mesh_register(request: Request) -> JSONResponse:
     except ImportError:
         return JSONResponse({"error": "bcrypt not installed — cannot register workers"}, status_code=500)
 
-    return JSONResponse({
-        "status": "registered",
-        "worker_id": worker_id,
-        "api_key": plaintext_key,
-        "role": "worker",
-        "scopes": ["mesh"],
-        "note": "Store this key securely — it is not recoverable.",
-    })
+    return JSONResponse(
+        {
+            "status": "registered",
+            "worker_id": worker_id,
+            "api_key": plaintext_key,
+            "role": "worker",
+            "scopes": ["mesh"],
+            "note": "Store this key securely — it is not recoverable.",
+        }
+    )
 
 
 async def api_mesh_workers_list(request: Request) -> JSONResponse:
     """Admin: list registered workers (no plaintext keys)."""
     from localforge.auth import require_role
+
     denied = require_role(request, "admin")
     if denied is not None:
         return denied
     from localforge.enrollment import worker_registry
+
     return JSONResponse({"workers": worker_registry().list_workers()})
 
 
 async def api_mesh_workers_revoke(request: Request) -> JSONResponse:
     """Admin: revoke a worker's API key by worker_id."""
     from localforge.auth import require_role
+
     denied = require_role(request, "admin")
     if denied is not None:
         return denied
@@ -2612,6 +2790,7 @@ async def api_mesh_workers_revoke(request: Request) -> JSONResponse:
     if not worker_id:
         return JSONResponse({"error": "worker_id required"}, status_code=400)
     from localforge.enrollment import worker_registry
+
     ok = worker_registry().revoke(worker_id)
     return JSONResponse({"status": "ok" if ok else "not_found"}, status_code=200 if ok else 404)
 
@@ -2619,11 +2798,13 @@ async def api_mesh_workers_revoke(request: Request) -> JSONResponse:
 async def api_mesh_worker_detail(request: Request) -> JSONResponse:
     """Admin: full detail for a single worker (no plaintext key)."""
     from localforge.auth import require_role
+
     denied = require_role(request, "admin")
     if denied is not None:
         return denied
     worker_id = request.path_params.get("worker_id", "")
     from localforge.enrollment import worker_registry
+
     record = worker_registry().get_worker(worker_id)
     if record is None:
         return JSONResponse({"error": "not_found"}, status_code=404)
@@ -2633,6 +2814,7 @@ async def api_mesh_worker_detail(request: Request) -> JSONResponse:
 async def api_mesh_worker_config(request: Request) -> JSONResponse:
     """Admin: update per-worker config (nickname, allowed_tasks, etc.)."""
     from localforge.auth import require_role
+
     denied = require_role(request, "admin")
     if denied is not None:
         return denied
@@ -2644,6 +2826,7 @@ async def api_mesh_worker_config(request: Request) -> JSONResponse:
     if not isinstance(body, dict):
         return JSONResponse({"error": "object_required"}, status_code=400)
     from localforge.enrollment import worker_registry
+
     ok = worker_registry().update_config(worker_id, body)
     if not ok:
         return JSONResponse({"error": "not_found"}, status_code=404)
@@ -2667,6 +2850,7 @@ def _worker_base_url(worker_id: str) -> str | None:
     # Registry is keyed by `hostname:port`; heartbeats include the same
     # hostname that `worker_registry` stored at enroll time. Match on that.
     from localforge.enrollment import worker_registry
+
     record = worker_registry().get_worker(worker_id)
     if record is None:
         return None
@@ -2686,16 +2870,19 @@ async def api_mesh_models_catalog(request: Request) -> JSONResponse:
     this endpoint is primarily for the UI).
     """
     from localforge.auth import _resolve_user
+
     user = _resolve_user(request)
     if user is None:
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     from localforge.models_catalog import catalog_json
+
     return JSONResponse(catalog_json())
 
 
 async def api_mesh_worker_models(request: Request) -> JSONResponse:
     """Admin: list GGUFs present on a given worker + what it's currently serving."""
     from localforge.auth import require_role
+
     denied = require_role(request, "admin")
     if denied is not None:
         return denied
@@ -2704,6 +2891,7 @@ async def api_mesh_worker_models(request: Request) -> JSONResponse:
     if base is None:
         return JSONResponse({"error": "worker not reachable (no recent heartbeat)"}, status_code=503)
     import httpx
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(f"{base}/models")
@@ -2722,6 +2910,7 @@ async def api_mesh_worker_model_download(request: Request) -> JSONResponse:
     pulls the file.
     """
     from localforge.auth import require_role
+
     denied = require_role(request, "admin")
     if denied is not None:
         return denied
@@ -2735,6 +2924,7 @@ async def api_mesh_worker_model_download(request: Request) -> JSONResponse:
         return JSONResponse({"error": "model_id required"}, status_code=400)
 
     from localforge.models_catalog import by_id
+
     model = by_id(model_id)
     if model is None:
         return JSONResponse({"error": f"unknown model_id: {model_id}"}, status_code=404)
@@ -2744,15 +2934,18 @@ async def api_mesh_worker_model_download(request: Request) -> JSONResponse:
         return JSONResponse({"error": "worker not reachable (no recent heartbeat)"}, status_code=503)
 
     import httpx
+
     # Generous read timeout — downloads can run minutes on slow links.
     # Worker streams 1 MB chunks, so connection stays busy.
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=3600.0,
-                                                           write=10.0, pool=10.0)) as client:
-            resp = await client.post(f"{base}/models/download", json={
-                "url": model["url"],
-                "filename": model["filename"],
-            })
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=3600.0, write=10.0, pool=10.0)) as client:
+            resp = await client.post(
+                f"{base}/models/download",
+                json={
+                    "url": model["url"],
+                    "filename": model["filename"],
+                },
+            )
         return JSONResponse(resp.json(), status_code=resp.status_code)
     except httpx.HTTPError as exc:
         return JSONResponse({"error": f"worker call failed: {exc}"}, status_code=502)
@@ -2767,6 +2960,7 @@ async def api_mesh_worker_model_activate(request: Request) -> JSONResponse:
     new active model name or rollback details.
     """
     from localforge.auth import require_role
+
     denied = require_role(request, "admin")
     if denied is not None:
         return denied
@@ -2784,10 +2978,10 @@ async def api_mesh_worker_model_activate(request: Request) -> JSONResponse:
         return JSONResponse({"error": "worker not reachable (no recent heartbeat)"}, status_code=503)
 
     import httpx
+
     try:
         # Model swap takes ~15-30s for a cold GPU load; allow some headroom.
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=120.0,
-                                                           write=10.0, pool=10.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0)) as client:
             resp = await client.post(f"{base}/models/activate", json={"filename": filename})
         return JSONResponse(resp.json(), status_code=resp.status_code)
     except httpx.HTTPError as exc:
@@ -2809,6 +3003,7 @@ async def api_sync_models(request: Request) -> JSONResponse:
 
     try:
         from localforge.tools.infrastructure import sync_models as _sync_models
+
         result = await _sync_models(body)
         return JSONResponse({"status": "ok", "result": result})
     except ImportError:
@@ -2896,6 +3091,7 @@ def _import_training():
     """Import training tools, returning None if not available (monolith mode)."""
     try:
         from localforge.tools import training
+
         return training
     except ImportError:
         return None
@@ -2911,9 +3107,10 @@ async def api_training_list(request: Request) -> JSONResponse:
     try:
         if fmt == "json" and what == "datasets":
             # Return structured JSON list for the UI dataset picker
-            from localforge.paths import training_dir as _tdir
-            from pathlib import Path
             import json as _json
+
+            from localforge.paths import training_dir as _tdir
+
             datasets_dir = _tdir() / "datasets"
             result = []
             for ds in sorted(datasets_dir.glob("*.jsonl")):
@@ -2927,12 +3124,14 @@ async def api_training_list(request: Request) -> JSONResponse:
                         examples = m.get("examples", 0)
                     except Exception:
                         pass
-                result.append({
-                    "name": ds.name,
-                    "examples": examples,
-                    "size_kb": size_kb,
-                    "source": _json.loads(meta_path.read_text()).get("source", "") if meta_path.exists() else "",
-                })
+                result.append(
+                    {
+                        "name": ds.name,
+                        "examples": examples,
+                        "size_kb": size_kb,
+                        "source": _json.loads(meta_path.read_text()).get("source", "") if meta_path.exists() else "",
+                    }
+                )
             return JSONResponse({"status": "ok", "datasets": result})
         result = await mod.train_list({"what": what})
         return JSONResponse({"status": "ok", "result": result})
@@ -2942,15 +3141,21 @@ async def api_training_list(request: Request) -> JSONResponse:
 
 async def api_training_preflight(request: Request) -> JSONResponse:
     """Return GPU VRAM state and model-loaded state for training pre-flight check."""
-    import subprocess, shutil
+    import shutil
+    import subprocess
 
     gpu = None
     if shutil.which("nvidia-smi"):
         try:
             r = subprocess.run(
-                ["nvidia-smi", "--query-gpu=memory.used,memory.free,memory.total,name",
-                 "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=5,
+                [
+                    "nvidia-smi",
+                    "--query-gpu=memory.used,memory.free,memory.total,name",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if r.returncode == 0:
                 parts = [p.strip() for p in r.stdout.strip().split(",")]
@@ -2967,8 +3172,11 @@ async def api_training_preflight(request: Request) -> JSONResponse:
     model_loaded = None
     try:
         import httpx
+
+        from localforge import config as _cfg
+
         async with httpx.AsyncClient(timeout=3) as client:
-            r2 = await client.get(f"{cfg.BACKEND_URL.rstrip('/v1')}/v1/internal/model/info")
+            r2 = await client.get(f"{_cfg.TGWUI_BASE}/internal/model/info")
             if r2.status_code == 200:
                 info = r2.json()
                 name = info.get("model_name") or info.get("result", {}).get("model_name", "")
@@ -2980,6 +3188,7 @@ async def api_training_preflight(request: Request) -> JSONResponse:
     ram = None
     try:
         import psutil
+
         vm = psutil.virtual_memory()
         ram = {
             "total_gb": round(vm.total / 1024**3, 1),
@@ -3028,8 +3237,8 @@ async def api_training_status(request: Request) -> JSONResponse:
         sep = "── Last"
         sep_idx = result.find(sep)
         if sep_idx >= 0:
-            log_section = result[result.find("\n", sep_idx)+1:]
-            fields["log_lines"] = [l for l in log_section.splitlines() if l.strip()]
+            log_section = result[result.find("\n", sep_idx) + 1 :]
+            fields["log_lines"] = [line for line in log_section.splitlines() if line.strip()]
         else:
             fields["log_lines"] = []
 
@@ -3081,6 +3290,7 @@ async def api_training_loras(request: Request) -> JSONResponse:
     """List LoRA adapters produced by training runs."""
     try:
         from localforge.paths import training_dir as _tdir
+
         runs_dir = _tdir() / "runs"
         loras = []
         if runs_dir.exists():
@@ -3097,15 +3307,17 @@ async def api_training_loras(request: Request) -> JSONResponse:
                     except Exception:
                         pass
                 gguf_files = list(run_dir.glob("*.gguf"))
-                loras.append({
-                    "name": run_dir.name,
-                    "path": str(run_dir),
-                    "base_model": meta.get("base_model", "unknown"),
-                    "dataset": meta.get("dataset", ""),
-                    "created": run_dir.stat().st_mtime,
-                    "has_gguf": bool(gguf_files),
-                    "gguf_files": [f.name for f in gguf_files],
-                })
+                loras.append(
+                    {
+                        "name": run_dir.name,
+                        "path": str(run_dir),
+                        "base_model": meta.get("base_model", "unknown"),
+                        "dataset": meta.get("dataset", ""),
+                        "created": run_dir.stat().st_mtime,
+                        "has_gguf": bool(gguf_files),
+                        "gguf_files": [f.name for f in gguf_files],
+                    }
+                )
         return JSONResponse({"loras": loras})
     except Exception as exc:
         return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
@@ -3114,6 +3326,7 @@ async def api_training_loras(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 # Model config lookup (for dashboard pre-fill)
 # ---------------------------------------------------------------------------
+
 
 async def api_model_config(request: Request) -> JSONResponse:
     """Return config.yaml model overrides for a given model name."""
@@ -3130,6 +3343,7 @@ async def api_model_config(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 # Startup config (which model to auto-load on gateway boot, if any)
 # ---------------------------------------------------------------------------
+
 
 def _startup_config_path() -> Path:
     return DATA_ROOT / "startup_config.json"
@@ -3289,7 +3503,6 @@ dashboard_routes = [
     Route("/sync-models", api_sync_models, methods=["POST"]),
     # Training pipeline
     Route("/training", api_training_list, methods=["GET"]),
-
     Route("/training/preflight", api_training_preflight, methods=["GET"]),
     Route("/training/status", api_training_status, methods=["GET"]),
     Route("/training/prepare", api_training_prepare, methods=["POST"]),
