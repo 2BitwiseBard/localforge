@@ -10,6 +10,7 @@ from localforge.tools import (  # noqa: F401
     config_tools,
     context,
     diff,
+    filesystem,
     generation,
     git,
     infrastructure,
@@ -21,11 +22,16 @@ from localforge.tools import (  # noqa: F401
     rag,
     semantic,
     sessions,
+    shell,
     training,
     web,
 )
 
+<<<<<<< HEAD
 EXPECTED_TOOL_COUNT = 113  # 112 + validate_yaml_template (yaml-schema-validator)
+=======
+EXPECTED_TOOL_COUNT = 121  # 113 prior + 8 fs/shell tools
+>>>>>>> d4a5583 (test: cover fs and shell tools, bump tool registry count)
 
 
 def test_all_tools_registered():
@@ -75,6 +81,8 @@ def test_known_tools_present():
         "auto_context", "train_start", "train_status", "train_prepare",
         "train_list", "train_feedback", "sync_models",
         "compute_test", "kg_rebuild_fts",
+        "fs_read", "fs_list", "fs_glob", "fs_grep",
+        "fs_write", "fs_edit", "fs_delete", "shell_exec",
     }
     missing = expected - names
     assert not missing, f"Missing tools: {missing}"
