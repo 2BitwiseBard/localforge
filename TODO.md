@@ -1,22 +1,10 @@
 # LocalForge — TODO
 
-Last updated: 2026-04-27. Completed items stripped; see git log for history.
+Last updated: 2026-05-04. Completed items stripped; see git log for history.
 
 ---
 
 ## Open Items
-
-- [x] **Add filesystem and shell MCP tools (`fs_*`, `shell_exec`)**
-  - New modules `tools/filesystem.py` and `tools/shell.py`
-  - Sandboxed to `tool_workspaces` (default `~/Development`); paths resolved via `os.path.realpath` so `..` and symlinks can't escape
-  - SAFE trust: `fs_read`, `fs_list`, `fs_glob`, `fs_grep`
-  - FULL trust + approval: `fs_write`, `fs_edit`, `fs_delete`, `shell_exec`
-  - `shell_exec` denylist (sudo, rm -rf /, curl|bash, fork bomb, dd to block device, mkfs) rejects before approval prompt; extend via `shell_deny:` in config
-  - Caveat (tracked separately): the approval gate runs in `BaseAgent.call_tool`; CLIs and external MCP clients still bypass it. A gateway-level approval gate would be the next step.
-
-- [x] **Fix keyboard-shortcuts overlay (`?`) rendering**
-  - HTML at `dashboard/static/index.html` uses `class="modal-overlay"` but the `[hidden]` attribute wasn't honored because no `.modal-overlay[hidden] { display: none }` rule existed
-  - Fixed in PR #10's ruff/format sweep alongside `.modal-box` styling
 
 ---
 
@@ -55,14 +43,9 @@ Last updated: 2026-04-27. Completed items stripped; see git log for history.
   - KG canvas: done (reads `--bg`, `--border`, `--text`, `--text-dim` via getComputedStyle)
   - Remaining: `color: #c9d1d9` / `background: var(--bg)` inline styles in training log, code blocks
 
-- [x] **Respect `prefers-color-scheme` on first load** ✓
-- [x] **`Ctrl+Enter` to send chat message** ✓
-
 - [ ] **Undo toast for more destructive operations**
   - Notes ✓ (done). Still missing: KG entity delete, RAG index delete, research session delete
   - Same pattern: return content in DELETE response, `showUndoToast()` in the handler
-
-- [x] **Export chat history as Markdown** ✓
 
 - [ ] **Export knowledge graph as JSON**
   - `GET /api/kg/export` → `{"entities": [...], "relations": [...]}`
@@ -176,10 +159,10 @@ Last updated: 2026-04-27. Completed items stripped; see git log for history.
 
 ## Architecture Notes
 
-### Codebase Stats (April 2026)
-- **Python:** 20,839 lines, 50+ files, 112 MCP tools, 6 built-in agents
+### Codebase Stats (May 2026)
+- **Python:** 23,538 lines, 71 files, 126 MCP tools, 7 built-in agents
 - **Frontend:** 17 JS modules + CSS + HTML + service worker
-- **Tests:** 162 tests across 19 files
+- **Tests:** 294 tests across 26 files
 
 ### Key Files
 | File | Purpose |
@@ -215,5 +198,8 @@ Last updated: 2026-04-27. Completed items stripped; see git log for history.
 - P4: agent timeouts, croniter scheduling, metrics caching, FTS5 rebuild, structured logging + request IDs, config validation
 - M0-M1: mesh routing wired into chat(), model-aware routing, registry unification, dispatch retry, worker connection test, compute_test tool
 - M5: CPU-only inference fix, memory-pressure rejection, power-aware rejection
-- Tests: 121 → 162
+- Tests: 121 → 294
 - P5 (Apr 27): Ctrl+Enter to send chat, prefers-color-scheme on first load, KG canvas theme-aware colors, export chat as Markdown, TODO condensed 1117→205 lines
+- PR #8: filesystem and shell MCP tools with workspace sandbox
+- PR #10: ruff lint + format sweep, keyboard-shortcuts overlay fix
+- PR #11: strict YAML schema validation tool + workflow template

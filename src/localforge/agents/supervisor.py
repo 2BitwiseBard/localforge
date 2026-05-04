@@ -18,7 +18,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 
@@ -64,7 +64,7 @@ class AgentSupervisor:
         self._tasks: dict[str, asyncio.Task] = {}
         self._configs: dict[str, dict] = {}
         self._running = False
-        self._observer = None  # watchdog Observer
+        self._observer: Optional[Any] = None  # watchdog Observer
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._paused: set[str] = set()
 
@@ -255,7 +255,7 @@ class AgentSupervisor:
         agent_type: str,
         trust: str = "monitor",
         schedule: str = "",
-        config: dict = None,
+        config: Optional[dict] = None,
         persist: bool = True,
     ) -> bool:
         """Create a new agent at runtime, optionally persisting to agents.yaml."""
@@ -395,13 +395,13 @@ class AgentSupervisor:
 
             CronIter(schedule)  # validate expression early
         except ImportError:
-            CronIter = None
+            CronIter = None  # type: ignore[assignment,misc]
             log.warning(
                 "croniter not installed; pip install localforge[agents] for precise cron. "
                 "Falling back to approximate interval scheduling."
             )
         except Exception as exc:
-            CronIter = None
+            CronIter = None  # type: ignore[assignment,misc]
             log.warning("Invalid cron expression %r (%s); defaulting to hourly", schedule, exc)
 
         await self._wait_for_gateway()

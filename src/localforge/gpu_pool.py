@@ -484,7 +484,7 @@ class GPUPool:
             self._worker_port = compute_cfg.get("worker_port", 8200)
             self._task_routing = compute_cfg.get("task_routing", {})
 
-    def register_compute_node(self, name: str, url: str, capabilities: dict = None, tier: str = "lightweight"):
+    def register_compute_node(self, name: str, url: str, capabilities: Optional[dict] = None, tier: str = "lightweight"):
         """Register a compute node on the mesh."""
         self.__init_compute()
         caps = DeviceCapabilities.from_dict(capabilities or {})
@@ -522,7 +522,7 @@ class GPUPool:
         node.last_check = time.time()
         return False
 
-    def route_task(self, task_type: str, requirements: dict = None) -> Optional[str]:
+    def route_task(self, task_type: str, requirements: Optional[dict] = None) -> Optional[str]:
         """Route to the best device for a task type.
 
         task_type: inference, embeddings, tts, stt, reranking, classification

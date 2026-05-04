@@ -13,6 +13,7 @@ import re as _re
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import httpx
 import yaml
@@ -50,7 +51,7 @@ async def _call_tool(name: str, args: dict | None = None) -> str:
 
 
 # Set by gateway.py during lifespan
-_supervisor = None
+_supervisor: Any = None
 
 # Push notification subscriptions (in-memory, persisted to disk)
 _push_subscriptions: dict[str, list[dict]] = {}
@@ -1861,8 +1862,8 @@ async def api_index_refresh(request: Request) -> JSONResponse:
 
 
 # Set by gateway.py during lifespan
-_message_bus = None
-_task_queue = None
+_message_bus: Any = None
+_task_queue: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -2490,7 +2491,7 @@ async def api_set_character(request: Request) -> JSONResponse:
 
 # In-memory registry of worker nodes — delegated to gpu_pool for unified state.
 # The gpu_pool reference is set by gateway.py during lifespan startup.
-_gpu_pool_ref = None  # Set by gateway.py
+_gpu_pool_ref: Any = None  # Set by gateway.py
 
 
 async def api_mesh_heartbeat(request: Request) -> JSONResponse:
