@@ -89,7 +89,7 @@ def _dataset_info(path: Path) -> tuple[int, int]:
         try:
             meta = json.loads(meta_path.read_text())
             return meta.get("examples", 0), int(path.stat().st_size / 1024)
-        except Exception:
+        except (json.JSONDecodeError, OSError, KeyError):
             pass
     # Fallback: count lines (slow for large files, but correct)
     count = _count_lines_fast(path)

@@ -2,7 +2,7 @@
 
 import time
 
-from localforge.config import _load_config, load_config_cached, _config_cache
+from localforge.config import load_config_cached
 
 
 class TestLoadConfigCached:
@@ -49,7 +49,7 @@ class TestAgentTimeout:
 class TestRequestBodyLimitMiddleware:
     def test_large_body_paths_defined(self):
         """Upload routes are in the LARGE_BODY_PATHS set."""
-        from localforge.gateway import LARGE_BODY_PATHS, MAX_BODY_BYTES, LARGE_BODY_LIMIT
+        from localforge.gateway import LARGE_BODY_LIMIT, LARGE_BODY_PATHS, MAX_BODY_BYTES
         assert "/api/photos/upload" in LARGE_BODY_PATHS
         assert "/api/videos/upload" in LARGE_BODY_PATHS
         assert MAX_BODY_BYTES == 1 * 1024 * 1024

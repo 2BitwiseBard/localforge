@@ -264,7 +264,7 @@ def _detect_project(directory: str) -> dict:
             data = json.loads(pkg.read_text(errors="replace"))
             if data.get("name"):
                 result["project_name"] = data["name"]
-        except Exception:
+        except (json.JSONDecodeError, OSError, KeyError):
             pass
 
     pyproj = d / "pyproject.toml"
@@ -298,7 +298,7 @@ def _detect_project(directory: str) -> dict:
                         result["project_name"] = ctx_data["project"]
                     if ctx_data.get("rules"):
                         result["rules"] = ctx_data["rules"]
-            except Exception:
+            except (yaml.YAMLError, OSError):
                 pass
 
     # Fallback: use directory name as project name

@@ -28,6 +28,16 @@ SHELL_DENY_DEFAULTS: tuple[str, ...] = (
     r"\bdd\s+[^&|;]*\bof=/dev/(sd|nvme|hd)",  # dd to a block device
     r">\s*/dev/(sd|nvme|hd)",  # redirect to a block device
     r"\bmkfs(\.\w+)?\b",  # filesystem creation
+    r"\bchmod\s+777\b",  # world-writable permissions
+    r"\bchown\s+-R\s+root\b",  # recursive chown to root
+    r"\biptables\b",  # firewall manipulation
+    r"\bnft\b",  # nftables manipulation
+    r"\bsystemctl\s+(start|stop|enable|disable|mask)\b",  # service management
+    r"\bshutdown\b",  # system shutdown
+    r"\breboot\b",  # system reboot
+    r"\bpasswd\b",  # password changes
+    r"\buseradd\b",  # user creation
+    r"\buserdel\b",  # user deletion
 )
 
 

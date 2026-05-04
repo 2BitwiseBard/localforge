@@ -377,8 +377,8 @@ class BaseAgent:
                     "content": f"[{level.upper()}] {title}\n{body}\n— {self.agent_id} at {time.strftime('%H:%M:%S')}",
                 },
             )
-        except Exception:
-            pass  # Don't fail the agent if note-saving fails
+        except (KeyError, OSError, httpx.HTTPError) as exc:
+            self.state.log(f"Note save failed (non-fatal): {exc}")
 
     # --- Lifecycle ---
 

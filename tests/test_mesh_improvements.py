@@ -1,8 +1,7 @@
 """Tests for mesh improvements: routing logging, compute_test tool, dispatch retry."""
 
-import pytest
 
-from localforge.gpu_pool import GPUPool, Backend, CircuitBreaker, CircuitState
+from localforge.gpu_pool import Backend, CircuitState, GPUPool
 
 
 class TestGPUPoolRecordMethods:

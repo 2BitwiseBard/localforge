@@ -78,7 +78,7 @@ async def health(request: Request) -> JSONResponse:
                     "model_name": data.get("model_name", "unknown"),
                     "lora_names": data.get("lora_names", []),
                 }
-    except Exception:
+    except (httpx.HTTPError, OSError, KeyError):
         model_info = {"status": "unreachable"}
 
     result = {
@@ -178,10 +178,10 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
             )
             _aq.start_warning_loop()
             _routes._approval_queue = _aq
-        except Exception as exc:
+        except (ImportError, RuntimeError, OSError) as exc:
             log.warning(f"Approval queue warning loop failed: {exc}")
         log.info("Agent supervisor started")
-    except Exception as e:
+    except (ImportError, RuntimeError, OSError) as e:
         log.warning(f"Agent supervisor failed to start: {e}")
 
     # Auto-load startup model if configured (off by default)
@@ -215,9 +215,9 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
                         log.info("Startup model loaded: %s", startup_model)
                     else:
                         log.warning("Startup model load returned %s: %s", r.status_code, r.text[:200])
-                except Exception as exc:
+                except (_httpx.HTTPError, OSError) as exc:
                     log.warning("Startup model load failed: %s", exc)
-        except Exception as exc:
+        except (OSError, _json.JSONDecodeError, KeyError) as exc:
             log.warning("Could not read startup_config.json: %s", exc)
 
     async with session_manager.run():
@@ -229,15 +229,15 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
         await agent_supervisor.stop()
     await gpu_pool.stop()
     # Checkpoint SQLite WAL files for clean shutdown
-    try:
-        import sqlite3
+    import sqlite3
 
-        for db_file in Path(os.environ.get("LOCALFORGE_DATA_DIR", ".")).glob("*.db"):
+    for db_file in Path(os.environ.get("LOCALFORGE_DATA_DIR", ".")).glob("*.db"):
+        try:
             conn = sqlite3.connect(str(db_file))
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             conn.close()
-    except Exception as e:
-        log.debug(f"WAL checkpoint: {e}")
+        except (sqlite3.Error, OSError) as e:
+            log.debug(f"WAL checkpoint for {db_file.name}: {e}")
     log.info("MCP HTTP gateway stopped")
 
 

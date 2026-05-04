@@ -1,6 +1,5 @@
 """Tests for authentication and rate limiting."""
 
-import time
 
 from localforge.auth import _check_key, _check_rate_limit, _rate_buckets
 

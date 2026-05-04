@@ -48,9 +48,28 @@ PUBLIC_PATHS = {
 # Rate limiter — token bucket per IP
 # ---------------------------------------------------------------------------
 _rate_buckets: dict[str, tuple[float, float]] = {}  # ip -> (tokens, last_refill_time)
+
+# Defaults — overridden by config.yaml gateway.rate_limit section
 RATE_LIMIT = 60  # requests per window
 RATE_WINDOW = 60.0  # window in seconds
 RATE_BURST = 20  # max burst above steady rate
+
+
+def _load_rate_config() -> None:
+    """Load rate limit settings from config.yaml if available."""
+    global RATE_LIMIT, RATE_WINDOW, RATE_BURST
+    try:
+        cfg = _load_config()
+        rl = cfg.get("gateway", {}).get("rate_limit", {})
+        if rl:
+            RATE_LIMIT = rl.get("requests", RATE_LIMIT)
+            RATE_WINDOW = float(rl.get("window_seconds", RATE_WINDOW))
+            RATE_BURST = rl.get("burst", RATE_BURST)
+    except Exception:
+        pass
+
+
+_load_rate_config()
 
 
 def _check_rate_limit(ip: str) -> bool:
@@ -67,9 +86,9 @@ def _check_rate_limit(ip: str) -> bool:
 
     _rate_buckets[ip] = (tokens - 1, now)
 
-    # Periodic cleanup: remove stale entries (threshold lowered to prevent memory leak)
-    if len(_rate_buckets) > 100:
-        cutoff = now - RATE_WINDOW * 2
+    # Periodic cleanup: remove stale entries every 50 requests or when bucket count is high
+    if len(_rate_buckets) > 50:
+        cutoff = now - RATE_WINDOW * 5
         stale = [k for k, (_, t) in _rate_buckets.items() if t < cutoff]
         for k in stale:
             del _rate_buckets[k]

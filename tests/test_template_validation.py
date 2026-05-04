@@ -7,9 +7,10 @@ errors.  This catches silent config-key drift between schema.py and the
 template files whenever models are updated.
 """
 
+from pathlib import Path
+
 import pytest
 import yaml
-from pathlib import Path
 
 from localforge.workflows.schema import WorkflowDef
 

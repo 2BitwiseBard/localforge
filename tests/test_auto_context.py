@@ -1,8 +1,5 @@
 """Tests for auto_context project detection."""
 
-import os
-import tempfile
-from pathlib import Path
 
 from localforge.tools.context import _detect_project
 

@@ -1,7 +1,5 @@
 """Tests for tools/utils.py shared utilities."""
 
-import os
-from pathlib import Path
 
 from localforge.tools.utils import (
     error_response,

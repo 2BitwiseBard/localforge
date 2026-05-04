@@ -1,8 +1,6 @@
 """Tests for the message bus backpressure and stats."""
 
 import asyncio
-import tempfile
-from pathlib import Path
 
 import pytest
 

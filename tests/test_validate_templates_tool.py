@@ -7,7 +7,6 @@ import pytest
 
 from localforge.tools.validation import validate_templates
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -175,6 +174,7 @@ async def test_multiple_errors_all_shown(tmp_path):
 async def test_strict_schema_validate_template_is_valid():
     """The new workflow template must pass its own schema validation."""
     from pathlib import Path
+
     from localforge.workflows.schema import WorkflowDef
 
     tmpl = (

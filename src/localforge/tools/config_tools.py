@@ -1,7 +1,10 @@
 """Config and generation parameter tools."""
 
+import httpx
+
 from localforge import config as cfg
 from localforge.client import reload_webui_params_from_api, resolve_model
+from localforge.exceptions import ModelNotLoadedError
 from localforge.tools import tool_handler
 
 
@@ -18,7 +21,7 @@ async def get_generation_params_tool(args: dict) -> str:
     if cfg.MODEL is None:
         try:
             cfg.MODEL = await resolve_model()
-        except Exception:
+        except (httpx.HTTPError, ModelNotLoadedError):
             pass
 
     await reload_webui_params_from_api()

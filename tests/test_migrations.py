@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from localforge.migrations import register, run_migrations, _MIGRATIONS
+from localforge.migrations import _MIGRATIONS, register, run_migrations
 
 
 @pytest.fixture

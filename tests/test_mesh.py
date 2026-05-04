@@ -70,7 +70,7 @@ class TestMeshWorkerRegistry:
 
 class TestDetectHardware:
     def test_detect_returns_hardware_info(self):
-        from localforge.workers.detect import detect, HardwareInfo
+        from localforge.workers.detect import HardwareInfo, detect
         hw = detect()
         assert isinstance(hw, HardwareInfo)
         assert hw.cpu_cores > 0

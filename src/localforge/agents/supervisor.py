@@ -190,8 +190,12 @@ class AgentSupervisor:
                 agent.state.data = saved.get("data", {})
                 agent.state.run_count = saved.get("run_count", 0)
                 agent.state.total_duration = saved.get("total_duration", 0)
-            except Exception:
-                pass
+                agent.state.last_run = saved.get("last_run", 0)
+                agent.state.last_error = saved.get("last_error", "")
+                agent.state.last_duration = saved.get("last_duration", 0)
+                agent.state.logs = saved.get("logs", [])
+            except (OSError, json.JSONDecodeError, TypeError) as exc:
+                log.warning("Failed to load state for %s: %s", agent_id, exc)
 
         # Schedule
         schedule = config.get("schedule", "")
@@ -318,7 +322,7 @@ class AgentSupervisor:
                         if i > 0:
                             log.info(f"Gateway ready after {i}s")
                         return True
-            except Exception:
+            except (httpx.HTTPError, OSError):
                 pass
             await asyncio.sleep(1)
         log.warning(f"Gateway not reachable after {max_wait}s, proceeding anyway")
@@ -400,7 +404,7 @@ class AgentSupervisor:
                 "croniter not installed; pip install localforge[agents] for precise cron. "
                 "Falling back to approximate interval scheduling."
             )
-        except Exception as exc:
+        except (KeyError, ValueError, TypeError) as exc:
             CronIter = None  # type: ignore[assignment,misc]
             log.warning("Invalid cron expression %r (%s); defaulting to hourly", schedule, exc)
 

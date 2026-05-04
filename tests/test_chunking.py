@@ -1,6 +1,6 @@
 """Tests for BM25 search and chunking utilities."""
 
-from localforge.chunking import BM25, tokenize_bm25, TEXT_EXTENSIONS
+from localforge.chunking import BM25, TEXT_EXTENSIONS, tokenize_bm25
 
 
 class TestTokenize:
