@@ -24,10 +24,11 @@ from localforge.tools import (  # noqa: F401
     sessions,
     shell,
     training,
+    validation,
     web,
 )
 
-EXPECTED_TOOL_COUNT = 121  # 113 prior + 8 fs/shell tools
+EXPECTED_TOOL_COUNT = 122  # 121 prior + 1 validate_templates
 
 
 def test_all_tools_registered():
@@ -79,6 +80,7 @@ def test_known_tools_present():
         "compute_test", "kg_rebuild_fts",
         "fs_read", "fs_list", "fs_glob", "fs_grep",
         "fs_write", "fs_edit", "fs_delete", "shell_exec",
+        "validate_templates",
     }
     missing = expected - names
     assert not missing, f"Missing tools: {missing}"
