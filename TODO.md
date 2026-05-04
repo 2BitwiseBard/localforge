@@ -167,6 +167,21 @@ Last updated: 2026-05-04. Completed items stripped; see git log for history.
 
 ---
 
+### P7 — Ideas & Future Work
+
+- [ ] **Chat search UI** — add search box to Chat tab, wire to existing `/api/chats/search` endpoint
+- [ ] **Swap history UI** — show last 5 swaps on Config tab "currently loaded" section (backend done)
+- [ ] **Agent observability dashboard** — real-time agent logs, error budgets, task queue depth in Agents tab
+- [x] **Cache invalidation on model swap** — response cache cleared when swap_model completes successfully
+- [x] **FTS5 query sanitization** — semantic search wraps each word in quotes to prevent FTS5 syntax errors
+- [ ] **Per-API-key rate limiting** — support `X-Forwarded-For` and per-key buckets for reverse proxy deployments
+- [x] **Agent error budget reset on resume** — error history cleared when manually resuming an error-paused agent
+- [ ] **WebSocket mesh status** — replace 15s polling with real-time push for mesh worker status
+- [ ] **Model preloading hints** — if hub knows a swap is coming, pre-warm the model on idle workers
+- [ ] **Distributed KG sync** — replicate knowledge graph entities across mesh nodes for shared context
+
+---
+
 ## Architecture Notes
 
 ### Codebase Stats (May 2026)

@@ -383,11 +383,16 @@ class KnowledgeGraph:
         # Phase 1: FTS5 pre-filter — get candidate IDs ranked by text relevance
         candidate_limit = max(max_results * 20, 200)
         candidate_ids: set[int] = set()
+
+        # Sanitize query for FTS5: wrap each word in quotes to prevent syntax errors
+        # from special characters (AND, OR, NOT, *, etc.)
+        fts_query = " ".join(f'"{w}"' for w in text.split() if w.strip())
+
         try:
             fts_rows = conn.execute(
                 "SELECT e.id FROM entities_fts f JOIN entities e ON f.rowid = e.id "
                 "WHERE entities_fts MATCH ? ORDER BY rank LIMIT ?",
-                (text, candidate_limit),
+                (fts_query or text, candidate_limit),
             ).fetchall()
             candidate_ids = {r[0] for r in fts_rows}
         except Exception:

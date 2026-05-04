@@ -342,6 +342,11 @@ async def swap_model(args: dict) -> str:
         cfg.MODEL = previous_model
         return f"Model load request sent but verification failed (still using {cfg.MODEL or 'none'}): {e}"
 
+    # Clear response cache — old model's responses are no longer relevant
+    from localforge.client import _cache
+
+    _cache.clear()
+
     try:
         Path("/tmp/claude-local-ctx-state").write_text(f"{cfg.MODEL}:{ctx_size}")
     except OSError:

@@ -243,13 +243,15 @@ class AgentSupervisor:
         return False
 
     def resume_agent(self, agent_id: str) -> bool:
-        """Resume a paused agent."""
+        """Resume a paused agent and reset its error budget."""
         if agent_id in self._paused:
             self._paused.discard(agent_id)
+            # Reset error budget so the agent doesn't immediately re-pause
+            self._error_counts.pop(agent_id, None)
             agent = self._agents.get(agent_id)
             if agent:
                 agent.state.status = "idle"
-                agent.state.log("Resumed")
+                agent.state.log("Resumed (error budget reset)")
             return True
         return False
 
