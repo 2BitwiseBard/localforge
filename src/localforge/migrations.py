@@ -95,3 +95,26 @@ def _tq_v1(conn: sqlite3.Connection):
 @register("approval_queue", 1, "Initial schema (baseline)")
 def _aq_v1(conn: sqlite3.Connection):
     pass
+
+
+# --- Mesh Registry Migrations ---
+
+
+@register("mesh", 1, "Create mesh_nodes table for heartbeat persistence")
+def _mesh_v1(conn: sqlite3.Connection):
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS mesh_nodes (
+            key TEXT PRIMARY KEY,
+            hostname TEXT NOT NULL,
+            port INTEGER NOT NULL DEFAULT 8200,
+            tier TEXT DEFAULT 'unknown',
+            capabilities_json TEXT DEFAULT '{}',
+            model_name TEXT DEFAULT '',
+            active_tasks INTEGER DEFAULT 0,
+            stats_json TEXT DEFAULT '{}',
+            uptime_s INTEGER DEFAULT 0,
+            last_heartbeat REAL NOT NULL,
+            healthy INTEGER DEFAULT 1
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mesh_nodes_heartbeat ON mesh_nodes(last_heartbeat)")

@@ -1,0 +1,71 @@
+id: strict-schema-validate
+name: Strict YAML Schema Validation
+description: >
+  Scans every YAML workflow template in the repository and deterministically
+  validates each one against the Python WorkflowDef models (NodeDef, EdgeDef,
+  placeholder references, required config keys). If any templates fail, the
+  local model triages each error and suggests the exact YAML fix needed.
+  Results are saved as a note for later review.
+variables:
+  repo_root: "auto"
+
+nodes:
+  - id: run-validator
+    type: tool
+    config:
+      tool_name: validate_templates
+      arguments:
+        repo_root: "{variables.repo_root}"
+
+  - id: triage
+    type: prompt
+    config:
+      template: |
+        You are a workflow schema expert. Below is the output of a deterministic
+        validator that checked every YAML workflow template in this repository
+        against the Python WorkflowDef models (schema.py).
+
+        The validator enforces:
+        - Required config keys per node type (e.g. "template" for prompt nodes,
+          "tool_name" for tool nodes, "node_ids" for parallel/loop nodes).
+        - Placeholder references: "node.<id>" must refer to a declared node;
+          "variables.<name>" must refer to a declared workflow variable.
+        - Edge endpoints must both be declared node IDs.
+        - The DAG must have at least one root node (no pure cycles).
+
+        ## Validation Report
+        {node.run-validator}
+
+        Instructions:
+        - If all templates passed, confirm the result in one sentence and state
+          the codebase is clean.
+        - If any templates failed, for **each failure** provide:
+          1. The template filename and the specific error message.
+          2. Root cause in one sentence (e.g. "required key missing", "stale node
+             reference after a rename", "undeclared variable").
+          3. The exact YAML snippet that must be added or changed to fix it.
+        - End with a one-line verdict: **All templates PASSED** or
+          **ACTION REQUIRED: N template(s) failed**.
+
+  - id: save-report
+    type: tool
+    config:
+      tool_name: save_note
+      arguments:
+        topic: "strict-schema-validation"
+        content: |
+          ## Validation Results
+
+          {node.run-validator}
+
+          ---
+
+          ## Analysis & Fix Suggestions
+
+          {node.triage}
+
+edges:
+  - from_id: run-validator
+    to_id: triage
+  - from_id: triage
+    to_id: save-report

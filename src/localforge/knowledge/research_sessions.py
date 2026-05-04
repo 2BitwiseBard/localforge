@@ -240,3 +240,12 @@ class ResearchSession:
             (time.time(), session_id),
         )
         conn.commit()
+
+    def restore(self, session_id: str, status: str = "active"):
+        """Restore an abandoned session to its previous status."""
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE research_sessions SET status = ?, updated_at = ? WHERE id = ?",
+            (status, time.time(), session_id),
+        )
+        conn.commit()

@@ -1,6 +1,7 @@
 """Tests for the workflow engine safe expression evaluator."""
 
 import ast
+
 import pytest
 
 from localforge.workflows.engine import _safe_eval

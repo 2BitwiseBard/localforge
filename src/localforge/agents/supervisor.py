@@ -18,7 +18,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 
@@ -64,7 +64,7 @@ class AgentSupervisor:
         self._tasks: dict[str, asyncio.Task] = {}
         self._configs: dict[str, dict] = {}
         self._running = False
-        self._observer = None  # watchdog Observer
+        self._observer: Optional[Any] = None  # watchdog Observer
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._paused: set[str] = set()
 
@@ -190,8 +190,12 @@ class AgentSupervisor:
                 agent.state.data = saved.get("data", {})
                 agent.state.run_count = saved.get("run_count", 0)
                 agent.state.total_duration = saved.get("total_duration", 0)
-            except Exception:
-                pass
+                agent.state.last_run = saved.get("last_run", 0)
+                agent.state.last_error = saved.get("last_error", "")
+                agent.state.last_duration = saved.get("last_duration", 0)
+                agent.state.logs = saved.get("logs", [])
+            except (OSError, json.JSONDecodeError, TypeError) as exc:
+                log.warning("Failed to load state for %s: %s", agent_id, exc)
 
         # Schedule
         schedule = config.get("schedule", "")
@@ -239,13 +243,15 @@ class AgentSupervisor:
         return False
 
     def resume_agent(self, agent_id: str) -> bool:
-        """Resume a paused agent."""
+        """Resume a paused agent and reset its error budget."""
         if agent_id in self._paused:
             self._paused.discard(agent_id)
+            # Reset error budget so the agent doesn't immediately re-pause
+            self._error_counts.pop(agent_id, None)
             agent = self._agents.get(agent_id)
             if agent:
                 agent.state.status = "idle"
-                agent.state.log("Resumed")
+                agent.state.log("Resumed (error budget reset)")
             return True
         return False
 
@@ -255,7 +261,7 @@ class AgentSupervisor:
         agent_type: str,
         trust: str = "monitor",
         schedule: str = "",
-        config: dict = None,
+        config: Optional[dict] = None,
         persist: bool = True,
     ) -> bool:
         """Create a new agent at runtime, optionally persisting to agents.yaml."""
@@ -318,7 +324,7 @@ class AgentSupervisor:
                         if i > 0:
                             log.info(f"Gateway ready after {i}s")
                         return True
-            except Exception:
+            except (httpx.HTTPError, OSError):
                 pass
             await asyncio.sleep(1)
         log.warning(f"Gateway not reachable after {max_wait}s, proceeding anyway")
@@ -395,13 +401,13 @@ class AgentSupervisor:
 
             CronIter(schedule)  # validate expression early
         except ImportError:
-            CronIter = None
+            CronIter = None  # type: ignore[assignment,misc]
             log.warning(
                 "croniter not installed; pip install localforge[agents] for precise cron. "
                 "Falling back to approximate interval scheduling."
             )
-        except Exception as exc:
-            CronIter = None
+        except (KeyError, ValueError, TypeError) as exc:
+            CronIter = None  # type: ignore[assignment,misc]
             log.warning("Invalid cron expression %r (%s); defaulting to hourly", schedule, exc)
 
         await self._wait_for_gateway()

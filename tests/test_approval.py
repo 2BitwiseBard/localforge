@@ -1,8 +1,7 @@
 """Tests for the agent approval queue."""
 
-import asyncio
 
-from localforge.agents.approval import ApprovalQueue, APPROVAL_REQUIRED
+from localforge.agents.approval import APPROVAL_REQUIRED, ApprovalQueue
 
 
 class TestApprovalQueue:
@@ -69,8 +68,8 @@ class TestApprovalQueue:
         assert pending[0]["id"] == id2
 
     def test_priority_levels(self):
-        id_normal = self.aq.request_approval("agent-1", "swap_model", {}, priority="normal")
-        id_urgent = self.aq.request_approval("agent-2", "unload_model", {}, priority="urgent")
+        self.aq.request_approval("agent-1", "swap_model", {}, priority="normal")
+        self.aq.request_approval("agent-2", "unload_model", {}, priority="urgent")
         pending = self.aq.list_pending()
         assert len(pending) == 2
         # Urgent should come first
@@ -78,7 +77,7 @@ class TestApprovalQueue:
         assert pending[1]["priority"] == "normal"
 
     def test_urgent_default_ttl(self):
-        req_id = self.aq.request_approval("agent-1", "swap_model", {}, priority="urgent")
+        self.aq.request_approval("agent-1", "swap_model", {}, priority="urgent")
         pending = self.aq.list_pending()
         assert pending[0]["ttl_seconds"] == 120  # urgent default
 

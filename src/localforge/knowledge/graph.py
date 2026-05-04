@@ -168,7 +168,7 @@ class KnowledgeGraph:
 
                 model = TextEmbedding("jinaai/jina-embeddings-v2-base-code")
                 self._embed_fn = lambda text: list(model.embed([text]))[0].tolist()
-            except Exception as e:
+            except (ImportError, OSError, RuntimeError) as e:
                 log.warning(f"Embedding not available: {e}")
                 self._embed_fn = lambda text: None
         return self._embed_fn
@@ -367,16 +367,51 @@ class KnowledgeGraph:
         ]
 
     def semantic_search(self, text: str, max_results: int = 10) -> list[dict]:
-        """Semantic search using embeddings (numpy-accelerated cosine similarity)."""
+        """Semantic search using embeddings with FTS5 pre-filtering.
+
+        Strategy: use FTS5 to find the top ~200 candidate entities by keyword
+        relevance, then re-rank those candidates by cosine similarity against
+        the query embedding.  Falls back to brute-force over all embeddings
+        only when FTS5 returns fewer than max_results candidates.
+        """
         query_embedding = self._get_embed_fn()(text)
         if query_embedding is None:
             return self.query(text, max_results)  # fallback to FTS
 
         conn = self._get_conn()
-        rows = conn.execute(
-            "SELECT id, name, type, content, embedding, updated_at FROM entities "
-            "WHERE embedding IS NOT NULL LIMIT 10000"
-        ).fetchall()
+
+        # Phase 1: FTS5 pre-filter — get candidate IDs ranked by text relevance
+        candidate_limit = max(max_results * 20, 200)
+        candidate_ids: set[int] = set()
+
+        # Sanitize query for FTS5: wrap each word in quotes to prevent syntax errors
+        # from special characters (AND, OR, NOT, *, etc.)
+        fts_query = " ".join(f'"{w}"' for w in text.split() if w.strip())
+
+        try:
+            fts_rows = conn.execute(
+                "SELECT e.id FROM entities_fts f JOIN entities e ON f.rowid = e.id "
+                "WHERE entities_fts MATCH ? ORDER BY rank LIMIT ?",
+                (fts_query or text, candidate_limit),
+            ).fetchall()
+            candidate_ids = {r[0] for r in fts_rows}
+        except Exception:
+            pass  # FTS match syntax error — fall through to brute force
+
+        # Phase 2: Load embeddings for candidates (or all if FTS returned too few)
+        if len(candidate_ids) >= max_results:
+            placeholders = ",".join("?" * len(candidate_ids))
+            rows = conn.execute(
+                f"SELECT id, name, type, content, embedding, updated_at FROM entities "
+                f"WHERE id IN ({placeholders}) AND embedding IS NOT NULL",
+                list(candidate_ids),
+            ).fetchall()
+        else:
+            # FTS returned too few — fall back to scanning all embeddings
+            rows = conn.execute(
+                "SELECT id, name, type, content, embedding, updated_at FROM entities "
+                "WHERE embedding IS NOT NULL LIMIT 10000"
+            ).fetchall()
 
         if not rows:
             return []
@@ -393,7 +428,7 @@ class KnowledgeGraph:
                     ids.append(row[0])
                     embeddings.append(vec)
                     meta.append((row[1], row[2], row[3], row[5]))
-                except Exception:
+                except (json.JSONDecodeError, TypeError, KeyError):
                     continue
 
             if not embeddings:
@@ -443,7 +478,7 @@ class KnowledgeGraph:
                             "score": sim,
                         }
                     )
-                except Exception:
+                except (json.JSONDecodeError, TypeError, ZeroDivisionError):
                     continue
             scored.sort(key=lambda x: x["score"], reverse=True)
             return scored[:max_results]
@@ -644,3 +679,126 @@ class KnowledgeGraph:
         count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
         log.info("FTS5 index rebuilt: %d entities re-indexed", count)
         return count
+
+    # --- Export / Import ---
+
+    def export_all(self) -> dict:
+        """Export the entire knowledge graph as a JSON-serializable dict.
+
+        Returns ``{"entities": [...], "relations": [...]}``.
+        Embeddings are excluded (they can be regenerated).
+        """
+        conn = self._get_conn()
+        entities = []
+        for row in conn.execute(
+            "SELECT id, name, type, content, created_at, updated_at, metadata FROM entities ORDER BY id"
+        ):
+            entities.append(
+                {
+                    "id": row[0],
+                    "name": row[1],
+                    "type": row[2],
+                    "content": row[3],
+                    "created_at": row[4],
+                    "updated_at": row[5],
+                    "metadata": json.loads(row[6] or "{}"),
+                }
+            )
+
+        relations = []
+        for row in conn.execute(
+            "SELECT id, from_id, to_id, relation_type, metadata, created_at FROM relations ORDER BY id"
+        ):
+            relations.append(
+                {
+                    "id": row[0],
+                    "from_id": row[1],
+                    "to_id": row[2],
+                    "relation_type": row[3],
+                    "metadata": json.loads(row[4] or "{}"),
+                    "created_at": row[5],
+                }
+            )
+
+        return {"entities": entities, "relations": relations}
+
+    def import_all(self, data: dict, *, merge: bool = True) -> dict:
+        """Import entities and relations from an export dict.
+
+        When *merge* is True (default), existing entities with the same
+        name+type are updated; new ones are inserted.  When False, the
+        graph is cleared first.
+
+        Returns ``{"entities_added": int, "entities_updated": int,
+                    "relations_added": int}``.
+        """
+        conn = self._get_conn()
+        entities = data.get("entities", [])
+        relations = data.get("relations", [])
+
+        if not merge:
+            conn.execute("DELETE FROM relations")
+            conn.execute("DELETE FROM entities")
+            conn.commit()
+
+        added = 0
+        updated = 0
+        # Map old IDs → new IDs (needed for relation re-linking)
+        id_map: dict[int, int] = {}
+
+        for ent in entities:
+            name = ent.get("name", "")
+            etype = ent.get("type", "concept")
+            content = ent.get("content", "")
+            meta = ent.get("metadata", {})
+            created = ent.get("created_at", time.time())
+            updated_at = ent.get("updated_at", time.time())
+            old_id = ent.get("id", 0)
+
+            row = conn.execute(
+                "SELECT id FROM entities WHERE name = ? AND type = ?", (name, etype)
+            ).fetchone()
+
+            embedding = self._embed(f"{name} {content}")
+
+            if row:
+                new_id = row[0]
+                conn.execute(
+                    "UPDATE entities SET content = ?, embedding = ?, updated_at = ?, metadata = ? WHERE id = ?",
+                    (content, embedding, updated_at, json.dumps(meta), new_id),
+                )
+                updated += 1
+            else:
+                cursor = conn.execute(
+                    "INSERT INTO entities (name, type, content, embedding, created_at, updated_at, metadata) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (name, etype, content, embedding, created, updated_at, json.dumps(meta)),
+                )
+                new_id = cursor.lastrowid
+                added += 1
+
+            id_map[old_id] = new_id
+
+        rel_added = 0
+        for rel in relations:
+            from_id = id_map.get(rel.get("from_id", 0))
+            to_id = id_map.get(rel.get("to_id", 0))
+            if from_id is None or to_id is None:
+                continue
+            rtype = rel.get("relation_type", "RELATED_TO")
+            meta = rel.get("metadata", {})
+            created = rel.get("created_at", time.time())
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO relations (from_id, to_id, relation_type, metadata, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (from_id, to_id, rtype, json.dumps(meta), created),
+                )
+                rel_added += 1
+            except sqlite3.IntegrityError:
+                pass
+
+        conn.commit()
+        self.rebuild_fts_index()
+        log.info("KG import: +%d entities, ~%d updated, +%d relations", added, updated, rel_added)
+        return {"entities_added": added, "entities_updated": updated, "relations_added": rel_added}

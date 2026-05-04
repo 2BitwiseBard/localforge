@@ -2,7 +2,7 @@
 
 import pytest
 
-from localforge.client import _extract_content, task_type_context, _task_type_ctx
+from localforge.client import _extract_content, _task_type_ctx, task_type_context
 
 
 def test_extract_content_valid():

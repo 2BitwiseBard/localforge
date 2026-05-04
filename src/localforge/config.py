@@ -203,7 +203,7 @@ def _load_config() -> dict[str, Any]:
         try:
             with open(path) as f:
                 return yaml.safe_load(f) or {}
-        except Exception as e:
+        except (OSError, yaml.YAMLError) as e:
             log.warning("Failed to load config.yaml: %s", e)
     return {}
 
@@ -241,7 +241,7 @@ def _load_webui_settings_from_disk(config: dict[str, Any]) -> tuple[dict[str, An
     try:
         with open(path) as f:
             raw = yaml.safe_load(f) or {}
-    except Exception as e:
+    except (OSError, yaml.YAMLError) as e:
         log.warning("Failed to load webui settings: %s", e)
         return {}, None
 
@@ -265,7 +265,7 @@ def _load_webui_settings_from_disk(config: dict[str, Any]) -> tuple[dict[str, An
                     if k in WEBUI_GEN_KEYS:
                         params[k] = v
                 log.info("Loaded preset '%s' from disk: %s", preset_name, list(preset_data.keys()))
-            except Exception as e:
+            except (OSError, yaml.YAMLError) as e:
                 log.warning("Failed to load preset '%s' from disk: %s", preset_name, e)
         else:
             log.info("Preset file not found: %s", preset_path)
@@ -348,7 +348,7 @@ def reload_config() -> None:
                 with open(path) as f:
                     raw = yaml.safe_load(f) or {}
                 _webui_preset_name = raw.get("preset")
-            except Exception:
+            except (OSError, yaml.YAMLError):
                 pass
 
     _load_backends(_config)

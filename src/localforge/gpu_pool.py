@@ -188,10 +188,11 @@ class GPUPool:
 
     async def start(self):
         """Start background health and discovery loops."""
+        self._load_persisted_nodes()
         self._health_task = asyncio.create_task(self._health_loop())
         if self._auto_discover:
             self._discovery_task = asyncio.create_task(self._discovery_loop())
-        log.info("GPU pool started")
+        log.info("GPU pool started (%d persisted mesh nodes loaded)", len(self._heartbeat_nodes))
 
     async def stop(self):
         for task in [self._health_task, self._discovery_task]:
@@ -484,7 +485,7 @@ class GPUPool:
             self._worker_port = compute_cfg.get("worker_port", 8200)
             self._task_routing = compute_cfg.get("task_routing", {})
 
-    def register_compute_node(self, name: str, url: str, capabilities: dict = None, tier: str = "lightweight"):
+    def register_compute_node(self, name: str, url: str, capabilities: Optional[dict] = None, tier: str = "lightweight"):
         """Register a compute node on the mesh."""
         self.__init_compute()
         caps = DeviceCapabilities.from_dict(capabilities or {})
@@ -522,7 +523,7 @@ class GPUPool:
         node.last_check = time.time()
         return False
 
-    def route_task(self, task_type: str, requirements: dict = None) -> Optional[str]:
+    def route_task(self, task_type: str, requirements: Optional[dict] = None) -> Optional[str]:
         """Route to the best device for a task type.
 
         task_type: inference, embeddings, tts, stt, reranking, classification
@@ -648,6 +649,7 @@ class GPUPool:
         """Register or update a worker from heartbeat data.
 
         Returns (key, accepted). accepted=False if at capacity for new workers.
+        Automatically cleans up stale entries (>10 min) on each registration.
         """
         hostname = data.get("hostname", "")
         port = data.get("port", 8200)
@@ -655,6 +657,12 @@ class GPUPool:
             return "", False
 
         key = f"{hostname}:{port}"
+
+        # Periodic cleanup: remove stale entries on every registration
+        now = time.time()
+        stale = [k for k, w in self._heartbeat_nodes.items() if now - w.get("last_heartbeat", 0) > 600]
+        for k in stale:
+            del self._heartbeat_nodes[k]
 
         # Reject new registrations if at capacity (existing workers can still update)
         if key not in self._heartbeat_nodes and len(self._heartbeat_nodes) >= self._max_heartbeat_nodes:
@@ -669,9 +677,87 @@ class GPUPool:
             "active_tasks": data.get("active_tasks", 0),
             "stats": data.get("stats", {}),
             "uptime_s": data.get("uptime_s", 0),
-            "last_heartbeat": time.time(),
+            "last_heartbeat": now,
         }
+
+        # Persist to SQLite (fire-and-forget, don't block heartbeat response)
+        self._persist_node(key, self._heartbeat_nodes[key])
+
         return key, True
+
+    # --- Mesh persistence (SQLite) ---
+
+    def _mesh_db_path(self):
+        try:
+            from localforge.paths import data_dir
+            return data_dir() / "mesh.db"
+        except ImportError:
+            from pathlib import Path
+            return Path("mesh.db")
+
+    def _get_mesh_conn(self):
+        import sqlite3
+
+        from localforge.migrations import run_migrations
+
+        conn = sqlite3.connect(str(self._mesh_db_path()))
+        conn.execute("PRAGMA journal_mode=WAL")
+        run_migrations(conn, "mesh")
+        return conn
+
+    def _load_persisted_nodes(self):
+        """Load mesh nodes from SQLite on startup. Nodes older than 10 min are skipped."""
+        try:
+            conn = self._get_mesh_conn()
+            cutoff = time.time() - 600  # 10 min
+            rows = conn.execute(
+                "SELECT key, hostname, port, tier, capabilities_json, model_name, "
+                "active_tasks, stats_json, uptime_s, last_heartbeat FROM mesh_nodes "
+                "WHERE last_heartbeat > ?",
+                (cutoff,),
+            ).fetchall()
+            for row in rows:
+                self._heartbeat_nodes[row[0]] = {
+                    "hostname": row[1],
+                    "port": row[2],
+                    "tier": row[3],
+                    "capabilities": json.loads(row[4] or "{}"),
+                    "model_name": row[5] or "",
+                    "active_tasks": row[6] or 0,
+                    "stats": json.loads(row[7] or "{}"),
+                    "uptime_s": row[8] or 0,
+                    "last_heartbeat": row[9],
+                }
+            conn.close()
+        except Exception as e:
+            log.warning("Failed to load persisted mesh nodes: %s", e)
+
+    def _persist_node(self, key: str, data: dict):
+        """Upsert a mesh node to SQLite."""
+        try:
+            conn = self._get_mesh_conn()
+            conn.execute(
+                "INSERT OR REPLACE INTO mesh_nodes "
+                "(key, hostname, port, tier, capabilities_json, model_name, "
+                "active_tasks, stats_json, uptime_s, last_heartbeat) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    key,
+                    data.get("hostname", ""),
+                    data.get("port", 8200),
+                    data.get("tier", "unknown"),
+                    json.dumps(data.get("capabilities", {})),
+                    data.get("model_name", ""),
+                    data.get("active_tasks", 0),
+                    json.dumps(data.get("stats", {})),
+                    data.get("uptime_s", 0),
+                    data.get("last_heartbeat", time.time()),
+                ),
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            log.debug("Failed to persist mesh node %s: %s", key, e)
 
     def get_mesh_workers(self) -> list[dict]:
         """Return all heartbeat-registered workers with health status.

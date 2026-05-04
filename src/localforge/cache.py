@@ -42,8 +42,8 @@ class ResponseCache:
         self._max_entries = max_entries if max_entries is not None else ccfg.get("max_entries", 200)
         self._max_bytes = max_bytes if max_bytes is not None else ccfg.get("max_bytes", 50_000_000)  # 50MB
 
-        # store: key -> (response, timestamp, byte_size)
-        self._store: dict[str, tuple[str, float, int]] = {}
+        # store: key -> (response, insert_time, byte_size, last_access)
+        self._store: dict[str, tuple[str, float, int, float]] = {}
         self._total_bytes = 0
         self.hits = 0
         self.misses = 0
@@ -59,9 +59,11 @@ class ResponseCache:
     def get(self, key: str) -> str | None:
         """Get cached response, or None if missing/expired."""
         if key in self._store:
-            response, ts, size = self._store[key]
+            response, ts, size, _ = self._store[key]
             if time.time() - ts < self._ttl:
                 self.hits += 1
+                # Update last_access for LRU tracking
+                self._store[key] = (response, ts, size, time.time())
                 return response
             else:
                 self._total_bytes -= size
@@ -82,7 +84,8 @@ class ResponseCache:
         if key in self._store:
             self._total_bytes -= self._store[key][2]
 
-        self._store[key] = (response, time.time(), size)
+        now = time.time()
+        self._store[key] = (response, now, size, now)
         self._total_bytes += size
 
         # Evict expired entries first
@@ -99,18 +102,18 @@ class ResponseCache:
     def _evict_expired(self) -> None:
         """Remove all expired entries."""
         now = time.time()
-        expired = [k for k, (_, ts, _) in self._store.items() if now - ts >= self._ttl]
+        expired = [k for k, (_, ts, _, _) in self._store.items() if now - ts >= self._ttl]
         for k in expired:
             self._total_bytes -= self._store[k][2]
             del self._store[k]
 
     def _evict_oldest(self) -> None:
-        """Remove the oldest entry."""
+        """Remove the least-recently-used entry (LRU)."""
         if not self._store:
             return
-        oldest = min(self._store, key=lambda k: self._store[k][1])
-        self._total_bytes -= self._store[oldest][2]
-        del self._store[oldest]
+        lru_key = min(self._store, key=lambda k: self._store[k][3])  # sort by last_access
+        self._total_bytes -= self._store[lru_key][2]
+        del self._store[lru_key]
 
     def _evict_largest(self) -> None:
         """Remove the largest entry (by response byte size)."""

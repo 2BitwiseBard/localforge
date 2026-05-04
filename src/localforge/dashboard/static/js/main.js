@@ -146,6 +146,47 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener('resize', _adjustChat);
 }
 
+// Mobile sidebar swipe gesture: swipe right from left edge to open, left to close
+(function initSidebarSwipe() {
+  const sidebar = document.getElementById('sidebar');
+  const backdrop = document.getElementById('sidebar-backdrop');
+  if (!sidebar) return;
+
+  let startX = 0, startY = 0, tracking = false;
+  const EDGE_ZONE = 24;   // px from left edge to start tracking
+  const THRESHOLD = 60;   // px swipe distance to trigger
+
+  document.addEventListener('touchstart', e => {
+    const t = e.touches[0];
+    // Open gesture: start from left edge when sidebar is closed
+    if (t.clientX < EDGE_ZONE && !sidebar.classList.contains('open')) {
+      startX = t.clientX; startY = t.clientY; tracking = 'open';
+    }
+    // Close gesture: start anywhere when sidebar is open
+    else if (sidebar.classList.contains('open')) {
+      startX = t.clientX; startY = t.clientY; tracking = 'close';
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchend', e => {
+    if (!tracking) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - startX;
+    const dy = Math.abs(t.clientY - startY);
+    // Ignore vertical swipes
+    if (dy > Math.abs(dx)) { tracking = false; return; }
+
+    if (tracking === 'open' && dx > THRESHOLD) {
+      sidebar.classList.add('open');
+      if (backdrop) backdrop.hidden = false;
+    } else if (tracking === 'close' && dx < -THRESHOLD) {
+      sidebar.classList.remove('open');
+      if (backdrop) backdrop.hidden = true;
+    }
+    tracking = false;
+  }, { passive: true });
+})();
+
 // Notification permission + Web Push subscription
 if ('Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window) {
   function _urlBase64ToUint8Array(b64) {
@@ -197,6 +238,33 @@ if ('Notification' in window && 'serviceWorker' in navigator && 'PushManager' in
     }, { once: true });
   }
 }
+
+// PWA install prompt — show a dismissible banner after 30s on mobile
+let _deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  _deferredInstallPrompt = e;
+  // Only show on mobile-ish screens after 30s of use
+  if (!window.matchMedia('(max-width: 768px)').matches) return;
+  setTimeout(() => {
+    if (!_deferredInstallPrompt) return;
+    // Don't show if already dismissed this session
+    try { if (sessionStorage.getItem('pwa-dismissed')) return; } catch {}
+    const banner = document.createElement('div');
+    banner.id = 'pwa-install-banner';
+    banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:2000;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface);border-top:1px solid var(--border);font-size:0.9rem;color:var(--text)';
+    banner.innerHTML = '<span>Install AI Hub for quick access</span><div style="display:flex;gap:8px;flex-shrink:0"><button id="pwa-install-btn" style="padding:6px 14px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:0.85rem">Install</button><button id="pwa-dismiss-btn" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text-dim);cursor:pointer;font-size:0.85rem">Later</button></div>';
+    document.body.appendChild(banner);
+    document.getElementById('pwa-install-btn').addEventListener('click', async () => {
+      banner.remove();
+      if (_deferredInstallPrompt) { _deferredInstallPrompt.prompt(); _deferredInstallPrompt = null; }
+    });
+    document.getElementById('pwa-dismiss-btn').addEventListener('click', () => {
+      banner.remove();
+      try { sessionStorage.setItem('pwa-dismissed', '1'); } catch {}
+    });
+  }, 30000);
+});
 
 // =====================================================================
 // Init

@@ -4,7 +4,7 @@ import io
 import json
 import logging
 
-from localforge.log import setup_logging, JSONFormatter
+from localforge.log import setup_logging
 
 
 def test_human_format():

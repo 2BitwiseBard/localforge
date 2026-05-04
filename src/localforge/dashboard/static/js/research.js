@@ -1,4 +1,4 @@
-import { API, authFetch, authHeaders, escapeHtml, escapeAttr, showToast, timeAgo } from './api.js';
+import { API, authFetch, authHeaders, escapeHtml, escapeAttr, showToast, showUndoToast, timeAgo } from './api.js';
 
 let _pollTimer = null;
 
@@ -31,12 +31,24 @@ export async function loadResearchSessions() {
       btn.addEventListener('click', async e => {
         e.stopPropagation();
         if (!confirm('Remove this research session?')) return;
+        const sid = btn.dataset.id;
         try {
-          await authFetch(API + '/research/sessions/' + btn.dataset.id, { method: 'DELETE', headers: authHeaders() });
-          showToast('Session removed');
+          const resp = await authFetch(API + '/research/sessions/' + sid, { method: 'DELETE', headers: authHeaders() });
+          const d = await resp.json();
+          if (d.error) { showToast(d.error, 'error'); return; }
           loadResearchSessions();
           const detail = document.getElementById('research-detail-card');
           if (detail.style.display !== 'none') detail.style.display = 'none';
+          showUndoToast('Session removed', async () => {
+            try {
+              await authFetch(API + '/research/sessions/' + sid + '/restore', {
+                method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: d.previous_status || 'active' }),
+              });
+              showToast('Session restored');
+              loadResearchSessions();
+            } catch (err) { showToast('Undo failed: ' + err.message, 'error'); }
+          });
         } catch (err) { showToast('Failed: ' + err.message, 'error'); }
       });
     });

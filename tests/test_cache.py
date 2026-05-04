@@ -70,3 +70,32 @@ def test_make_key_varies_with_input():
     k1 = cache.make_key("prompt-a", "system", "model")
     k2 = cache.make_key("prompt-b", "system", "model")
     assert k1 != k2
+
+
+def test_lru_eviction_order():
+    """LRU eviction should remove least-recently-accessed entries first."""
+    cache = ResponseCache(ttl=60, max_entries=3)
+    cache.put("a", "alpha")
+    cache.put("b", "beta")
+    cache.put("c", "gamma")
+
+    # Access 'a' to make it recently used
+    assert cache.get("a") == "alpha"
+
+    # Adding 'd' should evict 'b' (least recently accessed), not 'a'
+    cache.put("d", "delta")
+    assert cache.size == 3
+    assert cache.get("a") == "alpha"  # still there (recently accessed)
+    assert cache.get("b") is None  # evicted (LRU)
+    assert cache.get("c") is not None or cache.get("d") is not None  # one of these exists
+
+
+def test_stats_include_hit_rate():
+    cache = ResponseCache(ttl=60, max_entries=10)
+    cache.put("k", "v")
+    cache.get("k")  # hit
+    cache.get("miss")  # miss
+    stats = cache.stats()
+    assert stats["hits"] == 1
+    assert stats["misses"] == 1
+    assert "50" in stats["hit_rate"]

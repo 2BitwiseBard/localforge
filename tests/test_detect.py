@@ -5,10 +5,7 @@ exercise the Windows/macOS/Android code paths.
 """
 from __future__ import annotations
 
-import sys
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from localforge.workers import detect
 

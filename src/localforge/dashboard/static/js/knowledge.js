@@ -1,4 +1,4 @@
-import { API, authFetch, authHeaders, escapeHtml, escapeAttr, showToast, statusRow, timeAgo } from './api.js';
+import { API, authFetch, authHeaders, escapeHtml, escapeAttr, showToast, showUndoToast, statusRow, timeAgo } from './api.js';
 
 export async function loadKGStats() {
   try {
@@ -110,9 +110,27 @@ async function doKGSearch() {
           });
           const d = await resp.json();
           if (d.error) { showToast(d.error, 'error'); return; }
-          showToast('Deleted: ' + card.dataset.name);
           card.remove();
           loadKGStats();
+          showUndoToast('Deleted: ' + card.dataset.name, async () => {
+            try {
+              const ent = d.entity;
+              await authFetch(API + '/kg/add', {
+                method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: ent.name, type: ent.type, content: ent.content }),
+              });
+              // Re-add relations
+              for (const rel of (d.relations || [])) {
+                await authFetch(API + '/kg/relate', {
+                  method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ from_name: rel.direction === 'outgoing' ? ent.name : rel.entity_name, to_name: rel.direction === 'outgoing' ? rel.entity_name : ent.name, relation_type: rel.relation }),
+                });
+              }
+              showToast('Restored: ' + ent.name);
+              loadKGEntities();
+              loadKGStats();
+            } catch (err) { showToast('Undo failed: ' + err.message, 'error'); }
+          });
         } catch (err) { showToast('Delete failed: ' + err.message, 'error'); }
       });
     });

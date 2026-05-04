@@ -52,6 +52,7 @@ from localforge.tools import (  # noqa: F401
     sessions,
     shell,
     training,
+    validation,
     web,
 )
 

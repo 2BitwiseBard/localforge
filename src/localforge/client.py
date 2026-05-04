@@ -25,7 +25,7 @@ log = logging.getLogger("localforge")
 _task_type_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("_task_type_ctx", default="default")
 
 # GPU pool reference — set by gateway.py during lifespan startup
-_gpu_pool = None
+_gpu_pool: Any = None
 
 
 def set_gpu_pool(pool) -> None:

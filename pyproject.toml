@@ -93,6 +93,8 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "ruff>=0.4.0",
     "mypy>=1.10.0",
+    "types-PyYAML>=6.0",
+    "types-croniter>=1.4",
 ]
 
 [project.scripts]
@@ -122,5 +124,8 @@ asyncio_mode = "auto"
 
 [tool.mypy]
 python_version = "3.11"
-warn_return_any = true
+# warn_return_any = true is too noisy for this codebase: sqlite, json,
+# and dict.get all return Any, and most of our wrapper functions just
+# pass that through. Re-enable once we're ready to add casts everywhere.
+warn_return_any = false
 warn_unused_configs = true

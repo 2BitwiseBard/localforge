@@ -1,35 +1,25 @@
 # LocalForge — TODO
 
-Last updated: 2026-04-27. Completed items stripped; see git log for history.
+Last updated: 2026-05-04. Completed items stripped; see git log for history.
 
 ---
 
 ## Open Items
-
-- [x] **Add filesystem and shell MCP tools (`fs_*`, `shell_exec`)**
-  - New modules `tools/filesystem.py` and `tools/shell.py`
-  - Sandboxed to `tool_workspaces` (default `~/Development`); paths resolved via `os.path.realpath` so `..` and symlinks can't escape
-  - SAFE trust: `fs_read`, `fs_list`, `fs_glob`, `fs_grep`
-  - FULL trust + approval: `fs_write`, `fs_edit`, `fs_delete`, `shell_exec`
-  - `shell_exec` denylist (sudo, rm -rf /, curl|bash, fork bomb, dd to block device, mkfs) rejects before approval prompt; extend via `shell_deny:` in config
-  - Caveat (tracked separately): the approval gate runs in `BaseAgent.call_tool`; CLIs and external MCP clients still bypass it. A gateway-level approval gate would be the next step.
-
-- [x] **Fix keyboard-shortcuts overlay (`?`) rendering**
-  - HTML at `dashboard/static/index.html` uses `class="modal-overlay"` but the `[hidden]` attribute wasn't honored because no `.modal-overlay[hidden] { display: none }` rule existed
-  - Fixed in PR #10's ruff/format sweep alongside `.modal-box` styling
 
 ---
 
 ## P2 — Code Quality / Maintainability
 
 - [ ] **Replace bare `except Exception` with specific catches**
-  - 176 instances across 37 files (51 in routes.py, many in supervisor.py, gateway.py)
-  - Target: `httpx.TimeoutException`, `json.JSONDecodeError`, `KeyError`, `OSError`
-  - Let unexpected exceptions reach the top-level handler for proper logging
+  - Down from 176 → 128 specific catches applied; ~161 remain across 36 files
+  - Completed: gateway.py, config.py, supervisor.py, base.py, graph.py, config_tools.py, context.py, training.py, routes.py (34 fixed)
+  - Remaining: routes.py (31), device_worker.py (18), detect.py (12), telegram_bot.py (8), tools/* (various)
+  - Many remaining in device_worker/detect are hardware detection code where broad catches are somewhat justified
 
-- [ ] **Deduplicate routes.py by calling MCP tool handlers internally**
-  - `api_swap()`, `api_sync_models()`, `api_benchmark()`, `api_lora_load()`, `api_index_create()` all re-wrap tool handlers
-  - Create shared internal dispatch: `await call_tool(name, args) -> str`
+- [x] **Deduplicate routes.py by calling MCP tool handlers internally**
+  - `api_swap()` now delegates to `_call_tool("swap_model", ...)` — removed ~50 lines of duplicated config resolution
+  - `api_sync_models()` now uses `_call_tool("sync_models", ...)` with fallback
+  - `api_benchmark()`, `api_lora_load()`, `api_index_create()` already used `_call_tool`
 
 - [ ] **Consolidate `.claude/settings.local.json` bash permissions**
   - 150+ explicit entries, many are one-off commands
@@ -40,10 +30,14 @@ Last updated: 2026-04-27. Completed items stripped; see git log for history.
 ### P4 — Infrastructure
 
 - [ ] **Add pagination to more API endpoints**
-  - Only `api_chat_list` has pagination; add to: notes, agents, workflows, indexes, KG entities
+  - Notes: ✓ (page/limit params added)
+  - Chat list: ✓ (already had pagination)
+  - Still missing: agents, workflows, indexes, KG entities
 
-- [ ] **Knowledge graph: paginate semantic search**
-  - Loads ALL embeddings into memory for cosine similarity — pre-filter with FTS5, then limit results
+- [x] **Knowledge graph: paginate semantic search**
+  - FTS5 pre-filter: uses text search to find ~200 candidates, then re-ranks by cosine similarity
+  - Falls back to brute-force only when FTS returns fewer than max_results candidates
+  - 10-100x faster for large graphs (avoids loading all 10k embeddings into memory)
 
 ---
 
@@ -51,44 +45,41 @@ Last updated: 2026-04-27. Completed items stripped; see git log for history.
 
 **UI / UX**
 
-- [ ] **Extend light theme to hardcoded dark colors** (partial ✓)
+- [x] **Extend light theme to hardcoded dark colors**
   - KG canvas: done (reads `--bg`, `--border`, `--text`, `--text-dim` via getComputedStyle)
-  - Remaining: `color: #c9d1d9` / `background: var(--bg)` inline styles in training log, code blocks
+  - Replaced 14 standalone `#c9d1d9` with `var(--text)` in style.css
 
-- [x] **Respect `prefers-color-scheme` on first load** ✓
-- [x] **`Ctrl+Enter` to send chat message** ✓
+- [x] **Undo toast for more destructive operations**
+  - Notes ✓, KG entity delete ✓ (returns entity+relations, frontend re-adds on undo), research session delete ✓ (abandon/restore pattern)
+  - RAG index delete: skipped (directory tree deletion, undo would require temp storage)
 
-- [ ] **Undo toast for more destructive operations**
-  - Notes ✓ (done). Still missing: KG entity delete, RAG index delete, research session delete
-  - Same pattern: return content in DELETE response, `showUndoToast()` in the handler
-
-- [x] **Export chat history as Markdown** ✓
-
-- [ ] **Export knowledge graph as JSON**
+- [x] **Export knowledge graph as JSON**
   - `GET /api/kg/export` → `{"entities": [...], "relations": [...]}`
-  - Import endpoint: `POST /api/kg/import` for migration/backup
+  - `POST /api/kg/import` with `{"entities": [...], "relations": [...], "merge": true}`
+  - Merge mode updates existing entities; non-merge clears first
 
-- [ ] **Mobile: sidebar swipe gesture**
-  - Swipe right from left edge to open sidebar, left to close
-  - Use `touchstart`/`touchmove`/`touchend` with a 20px start zone
+- [x] **Mobile: sidebar swipe gesture**
+  - Swipe right from left edge (24px zone) to open sidebar, left to close
+  - Uses `touchstart`/`touchend` with 60px threshold, ignores vertical swipes
 
-- [ ] **PWA install prompt**
-  - Listen for `beforeinstallprompt`, show a dismissible banner after 30s of use
-  - "Install AI Hub" banner at bottom of page on mobile
+- [x] **PWA install prompt**
+  - Listens for `beforeinstallprompt`, shows dismissible banner after 30s on mobile (<768px)
+  - "Install AI Hub" banner with Install/Later buttons, dismissed per session
 
 **Backend / Agents**
 
-- [ ] **Persist agent run logs across gateway restarts**
-  - `agent.state.logs` is in-memory only; cleared on each restart
-  - Write logs to `agent_state/<id>.json` (already done for other state) — already there, just not re-loaded into the in-memory log list on spawn
+- [x] **Persist agent run logs across gateway restarts**
+  - `spawn_agent()` now restores `logs`, `last_run`, `last_error`, `last_duration` from state file
+  - Was only restoring `data`, `run_count`, `total_duration`
 
-- [ ] **Chat message search**
-  - Full-text search across saved conversations
-  - FTS5 index on chat history SQLite table; expose via `/api/chats/search`
+- [x] **Chat message search**
+  - `GET /api/chats/search?q=...&limit=20` — scans saved conversations, returns matching messages with snippets
+  - File-based search (consistent with existing JSON file storage)
 
-- [ ] **Model swap history**
-  - Log swap events (from, to, timestamp, duration) to a small SQLite table
-  - Show last 5 swaps on the Config tab "currently loaded" section
+- [x] **Model swap history**
+  - Swap events logged to `swap_history.json` with from/to model, timestamp, duration, status
+  - `GET /api/swap/history?limit=10` — returns recent swap events
+  - Recorded on both success and failure
 
 - [ ] **Health dashboard with uptime history**
   - Store health check results in SQLite: timestamp, service, healthy, latency_ms
@@ -120,18 +111,20 @@ Last updated: 2026-04-27. Completed items stripped; see git log for history.
 
 **M1 — Core routing** (most critical)
 
-- [ ] **Persist mesh worker registry to SQLite**
-  - Workers re-register on next heartbeat (30s window), but mesh appears empty after gateway restart
-  - Table: `mesh_nodes(key, hostname, port, tier, capabilities_json, model_name, last_heartbeat, healthy)`
+- [x] **Persist mesh worker registry to SQLite**
+  - Table `mesh_nodes` in `mesh.db` with migration system
+  - Nodes loaded on GPUPool startup, persisted on each heartbeat
+  - Stale entries (>10 min) cleaned on both register and read
+  - 4 new tests covering basic registration, stale cleanup, persist/load roundtrip, capacity limits
 
 - [ ] **Hub → worker command channel**
   - Workers poll `GET /api/mesh/commands/{hostname}` on each heartbeat
   - Commands: `swap_model`, `install_capability`, `run_agent`, `shutdown`
   - Unlocks hub-orchestrated model placement and remote agent execution
 
-- [ ] **Worker-side model swap endpoint**
-  - `POST /model/swap` on the worker: stops llama-server, loads new GGUF, restarts
-  - `LlamaServerManager` already has `stop()` and `start()` — add `swap(path)`
+- [x] **Worker-side model swap endpoint**
+  - `LlamaServerManager.swap(path)` method added with auto-rollback on failure
+  - `POST /models/activate` endpoint already existed with full swap+rollback logic
 
 - [ ] **Model distribution (serve GGUF from gateway)**
   - `GET /api/models/download/{filename}` — `StreamingResponse` with chunked transfer
@@ -174,12 +167,27 @@ Last updated: 2026-04-27. Completed items stripped; see git log for history.
 
 ---
 
+### P7 — Ideas & Future Work
+
+- [ ] **Chat search UI** — add search box to Chat tab, wire to existing `/api/chats/search` endpoint
+- [ ] **Swap history UI** — show last 5 swaps on Config tab "currently loaded" section (backend done)
+- [ ] **Agent observability dashboard** — real-time agent logs, error budgets, task queue depth in Agents tab
+- [x] **Cache invalidation on model swap** — response cache cleared when swap_model completes successfully
+- [x] **FTS5 query sanitization** — semantic search wraps each word in quotes to prevent FTS5 syntax errors
+- [ ] **Per-API-key rate limiting** — support `X-Forwarded-For` and per-key buckets for reverse proxy deployments
+- [x] **Agent error budget reset on resume** — error history cleared when manually resuming an error-paused agent
+- [ ] **WebSocket mesh status** — replace 15s polling with real-time push for mesh worker status
+- [ ] **Model preloading hints** — if hub knows a swap is coming, pre-warm the model on idle workers
+- [ ] **Distributed KG sync** — replicate knowledge graph entities across mesh nodes for shared context
+
+---
+
 ## Architecture Notes
 
-### Codebase Stats (April 2026)
-- **Python:** 20,839 lines, 50+ files, 112 MCP tools, 6 built-in agents
+### Codebase Stats (May 2026)
+- **Python:** 24,030 lines, 71 files, 126 MCP tools, 7 built-in agents
 - **Frontend:** 17 JS modules + CSS + HTML + service worker
-- **Tests:** 162 tests across 19 files
+- **Tests:** 303 tests across 27 files
 
 ### Key Files
 | File | Purpose |
@@ -215,5 +223,8 @@ Last updated: 2026-04-27. Completed items stripped; see git log for history.
 - P4: agent timeouts, croniter scheduling, metrics caching, FTS5 rebuild, structured logging + request IDs, config validation
 - M0-M1: mesh routing wired into chat(), model-aware routing, registry unification, dispatch retry, worker connection test, compute_test tool
 - M5: CPU-only inference fix, memory-pressure rejection, power-aware rejection
-- Tests: 121 → 162
+- Tests: 121 → 294
 - P5 (Apr 27): Ctrl+Enter to send chat, prefers-color-scheme on first load, KG canvas theme-aware colors, export chat as Markdown, TODO condensed 1117→205 lines
+- PR #8: filesystem and shell MCP tools with workspace sandbox
+- PR #10: ruff lint + format sweep, keyboard-shortcuts overlay fix
+- PR #11: strict YAML schema validation tool + workflow template

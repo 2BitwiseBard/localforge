@@ -1,11 +1,12 @@
 """Compute mesh tools — status, routing, and task dispatch."""
 
 import json
+from typing import Any
 
 from localforge.tools import tool_handler
 
 # Set by gateway.py after startup
-_gpu_pool = None
+_gpu_pool: Any = None
 
 
 @tool_handler(

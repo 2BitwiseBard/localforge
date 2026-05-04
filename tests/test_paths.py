@@ -6,13 +6,13 @@ from unittest.mock import patch
 
 import localforge.paths as _paths_mod
 from localforge.paths import (
-    data_dir,
-    notes_dir,
-    indexes_dir,
-    sessions_dir,
-    pipelines_dir,
     agent_state_dir,
+    data_dir,
     fastembed_cache_dir,
+    indexes_dir,
+    notes_dir,
+    pipelines_dir,
+    sessions_dir,
 )
 
 

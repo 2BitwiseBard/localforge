@@ -241,6 +241,46 @@ class LlamaServerManager:
                 self._proc.kill()
             log.info("llama-server stopped")
 
+    async def swap(self, model_path: str, gpu_layers: int | None = None, ctx_size: int | None = None) -> bool:
+        """Stop the current model, load a new one, and restart.
+
+        Returns True if the new model started successfully.
+        If the new model fails to start, attempts to restore the previous model.
+        """
+        if not os.path.exists(model_path):
+            log.error("Swap failed: model not found: %s", model_path)
+            return False
+
+        previous_path = self.model_path
+        previous_gpu = self.gpu_layers
+        previous_ctx = self.ctx_size
+
+        log.info("Swapping model: %s → %s", self.model_name, os.path.basename(model_path))
+        await self.stop()
+
+        self.model_path = model_path
+        if gpu_layers is not None:
+            self.gpu_layers = gpu_layers
+        if ctx_size is not None:
+            self.ctx_size = ctx_size
+        else:
+            self.ctx_size = self._auto_ctx_size()
+
+        if await self.start():
+            log.info("Swap complete: now serving %s", self.model_name)
+            return True
+
+        # Rollback to previous model
+        log.warning("New model failed to start, rolling back to %s", os.path.basename(previous_path))
+        self.model_path = previous_path
+        self.gpu_layers = previous_gpu
+        self.ctx_size = previous_ctx
+        if await self.start():
+            log.info("Rollback successful: restored %s", self.model_name)
+        else:
+            log.error("Rollback also failed — no model serving")
+        return False
+
 
 def get_hardware() -> HardwareInfo:
     global _hw

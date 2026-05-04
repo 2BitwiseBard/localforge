@@ -3,14 +3,14 @@
 import pytest
 
 from localforge.exceptions import (
-    LocalForgeError,
+    AgentError,
+    AuthError,
     BackendError,
     BackendUnreachableError,
-    ModelNotLoadedError,
     ConfigError,
-    AuthError,
+    LocalForgeError,
+    ModelNotLoadedError,
     WorkflowError,
-    AgentError,
 )
 
 

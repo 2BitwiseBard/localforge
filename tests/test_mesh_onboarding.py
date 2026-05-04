@@ -6,8 +6,6 @@ full admin-mints-token → worker-registers → worker-heartbeats flow.
 """
 from __future__ import annotations
 
-import os
-
 import pytest
 from starlette.applications import Starlette
 from starlette.routing import Mount

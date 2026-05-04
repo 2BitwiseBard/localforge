@@ -13,6 +13,7 @@ import re as _re
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import httpx
 import yaml
@@ -50,7 +51,7 @@ async def _call_tool(name: str, args: dict | None = None) -> str:
 
 
 # Set by gateway.py during lifespan
-_supervisor = None
+_supervisor: Any = None
 
 # Push notification subscriptions (in-memory, persisted to disk)
 _push_subscriptions: dict[str, list[dict]] = {}
@@ -245,7 +246,7 @@ async def api_push_subscribe(request: Request) -> JSONResponse:
     user_id = user.get("id", "admin")
     try:
         body = await request.json()
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         return JSONResponse({"error": "Invalid JSON"}, status_code=400)
     if "endpoint" not in body:
         return JSONResponse({"error": "Missing endpoint in subscription"}, status_code=400)
@@ -274,7 +275,16 @@ async def api_me(request: Request) -> JSONResponse:
 
 async def api_status(request: Request) -> JSONResponse:
     backend_url = _backend_url()
-    status = {"gateway": "ok", "timestamp": time.time()}
+
+    # Cache the full status response for 5s to avoid hammering the backend
+    global _status_cache
+    now = time.time()
+    if now - _status_cache[0] < 5.0 and _status_cache[1] is not None:
+        # Return cached but update timestamp
+        cached = {**_status_cache[1], "timestamp": now}
+        return JSONResponse(cached)
+
+    status = {"gateway": "ok", "timestamp": now}
 
     try:
         async with httpx.AsyncClient(timeout=5) as client:
@@ -288,7 +298,6 @@ async def api_status(request: Request) -> JSONResponse:
                 }
 
             # Query llama-server directly for slot/context info
-            # text-gen-webui runs llama-server on api_port + 5
             for llama_port in [5005, 5006, 5007]:
                 try:
                     slot_resp = await client.get(f"http://127.0.0.1:{llama_port}/slots", timeout=3)
@@ -307,19 +316,17 @@ async def api_status(request: Request) -> JSONResponse:
                 except Exception:
                     continue
 
-            # Get llama-server process flags for gpu_layers, batch_size, etc.
-            # Cached for 15s since process flags don't change between model swaps
-            global _status_cache
-            now = time.time()
-            if now - _status_cache[0] < _METRICS_CACHE_TTL and _status_cache[1] is not None:
-                status["server_config"] = _status_cache[1]
+            # Get llama-server process flags (cached separately for 15s since they rarely change)
+            if now - getattr(api_status, "_proc_cache_ts", 0) < _METRICS_CACHE_TTL:
+                proc_cfg = getattr(api_status, "_proc_cache_data", None)
+                if proc_cfg:
+                    status["server_config"] = proc_cfg
             else:
                 try:
                     import re
 
                     proc = await asyncio.create_subprocess_exec(
-                        "ps",
-                        "aux",
+                        "ps", "aux",
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                     )
@@ -339,7 +346,8 @@ async def api_status(request: Request) -> JSONResponse:
                                     server_config[key] = m.group(1)
                             if server_config:
                                 status["server_config"] = server_config
-                                _status_cache = (now, server_config)
+                                api_status._proc_cache_data = server_config
+                                api_status._proc_cache_ts = now
                             break
                 except Exception:
                     pass
@@ -347,6 +355,7 @@ async def api_status(request: Request) -> JSONResponse:
     except Exception:
         status["model"] = {"status": "unreachable"}
 
+    _status_cache = (now, status)
     return JSONResponse(status)
 
 
@@ -527,6 +536,56 @@ async def api_chat_delete(request: Request) -> JSONResponse:
     return JSONResponse({"deleted": chat_id})
 
 
+async def api_chat_search(request: Request) -> JSONResponse:
+    """Search across saved chat messages for the current user.
+
+    Query params: q (search text), limit (max results, default 20).
+    Returns matching messages with their chat context.
+    """
+    user = _get_user(request)
+    query = request.query_params.get("q", "").strip().lower()
+    if not query or len(query) < 2:
+        return JSONResponse({"error": "query 'q' must be at least 2 characters"}, status_code=400)
+
+    limit = min(int(request.query_params.get("limit", "20")), 50)
+    chat_dir = _user_dir("chats", user["id"])
+    results: list[dict] = []
+
+    for f in sorted(chat_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        if len(results) >= limit:
+            break
+        try:
+            data = json.loads(f.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        chat_id = data.get("id", f.stem)
+        title = data.get("title", "Untitled")
+
+        for i, msg in enumerate(data.get("messages", [])):
+            if len(results) >= limit:
+                break
+            content = msg.get("content", "")
+            if query in content.lower():
+                # Extract a snippet around the match
+                idx = content.lower().index(query)
+                start = max(0, idx - 60)
+                end = min(len(content), idx + len(query) + 60)
+                snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
+                results.append(
+                    {
+                        "chat_id": chat_id,
+                        "title": title,
+                        "message_index": i,
+                        "role": msg.get("role", ""),
+                        "snippet": snippet,
+                        "updated": data.get("updated", 0),
+                    }
+                )
+
+    return JSONResponse({"results": results, "query": query, "total": len(results)})
+
+
 # ---------------------------------------------------------------------------
 # Model management
 # ---------------------------------------------------------------------------
@@ -544,7 +603,7 @@ async def api_models(request: Request) -> JSONResponse:
             if list_resp.status_code == 200:
                 data = list_resp.json()
                 result["models"] = data.get("model_names", data) if isinstance(data, dict) else data
-    except Exception as e:
+    except (httpx.HTTPError, OSError) as e:
         result["error"] = str(e)
     return JSONResponse(result)
 
@@ -555,78 +614,83 @@ async def api_swap(request: Request) -> JSONResponse:
     if not model_name:
         return JSONResponse({"error": "model_name required"}, status_code=400)
 
-    backend_url = _backend_url()
-
-    # Resolve config.yaml model overrides (ctx_size, gpu_layers, etc.)
-    cfg = _load_config()
-    model_config: dict = {}
-    for pattern, overrides in cfg.get("models", {}).items():
-        if pattern in model_name:
-            model_config = overrides
-            break
-
-    def _resolve(key: str, default=None):
-        """Explicit request param > config.yaml model override > default."""
-        if key in body:
-            return body[key]
-        if key in model_config:
-            return model_config[key]
-        return default
-
-    # Build loading args — resolve each param through the config chain
-    load_args: dict = {}
-    LOAD_PARAM_KEYS = [
-        "ctx_size",
-        "gpu_layers",
-        "threads",
-        "threads_batch",
-        "batch_size",
-        "ubatch_size",
-        "cache_type",
-        "flash_attn",
-        "rope_freq_base",
-        "tensor_split",
-        "parallel",
-        "model_draft",
-        "draft_max",
-        "gpu_layers_draft",
-        "ctx_size_draft",
-        "spec_type",
-        "spec_ngram_size_n",
-        "spec_ngram_size_m",
-        "spec_ngram_min_hits",
-        "mmproj",
-    ]
-    for key in LOAD_PARAM_KEYS:
-        val = _resolve(key)
-        if val is not None:
-            load_args[key] = val
-
-    # Ensure ctx_size and gpu_layers always have safe defaults
-    ctx_size = load_args.get("ctx_size", 8192)
-    load_args.setdefault("ctx_size", ctx_size)
-    load_args.setdefault("gpu_layers", -1)
-
-    payload: dict = {
-        "model_name": model_name,
-        "args": load_args,
-        "settings": {"truncation_length": ctx_size},
-    }
-
-    applied = {k: v for k, v in load_args.items() if v is not None}
-
+    # Capture the previous model for history
+    previous_model = None
     try:
-        async with httpx.AsyncClient(timeout=180) as client:
-            resp = await client.post(f"{backend_url}/internal/model/load", json=payload)
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{_backend_url()}/internal/model/info")
             if resp.status_code == 200:
-                await notify_all("Model Swapped", f"Now running: {model_name}", "model-swap")
-                return JSONResponse({"status": "ok", "model": model_name, "applied": applied})
-            err_text = resp.text[:300]
-            await notify_all("Model swap failed", f"{model_name}: {err_text}", "model-swap-error")
-            return JSONResponse({"error": err_text, "model": model_name}, status_code=resp.status_code)
+                previous_model = resp.json().get("model_name", "")
+    except (httpx.HTTPError, OSError):
+        pass
+
+    start_time = time.time()
+
+    # Delegate to the swap_model MCP tool handler — it already resolves
+    # config.yaml model overrides, builds load_args, and calls the backend.
+    try:
+        result = await _call_tool("swap_model", body)
+        duration = round(time.time() - start_time, 1)
+        _record_swap(previous_model or "", model_name, duration, "ok")
+        await notify_all("Model Swapped", f"Now running: {model_name}", "model-swap")
+        return JSONResponse({"status": "ok", "model": model_name, "result": result})
+    except KeyError:
+        return JSONResponse({"error": "swap_model tool not available"}, status_code=500)
+    except (httpx.HTTPStatusError, httpx.ConnectError, httpx.ReadTimeout) as e:
+        duration = round(time.time() - start_time, 1)
+        _record_swap(previous_model or "", model_name, duration, f"error: {e}")
+        await notify_all("Model swap failed", f"{model_name}: {e}", "model-swap-error")
+        return JSONResponse({"error": str(e), "model": model_name}, status_code=502)
     except Exception as e:
+        duration = round(time.time() - start_time, 1)
+        _record_swap(previous_model or "", model_name, duration, f"error: {e}")
         await notify_all("Model swap failed", f"{model_name}: {e}", "model-swap-error")
         return JSONResponse({"error": str(e), "model": model_name}, status_code=500)
+
+
+# --- Swap history ---
+
+_SWAP_HISTORY_FILE = DATA_ROOT / "swap_history.json"
+_SWAP_HISTORY_MAX = 50
+
+
+def _record_swap(from_model: str, to_model: str, duration_s: float, status: str) -> None:
+    """Append a swap event to the history file."""
+    history = []
+    try:
+        if _SWAP_HISTORY_FILE.exists():
+            history = json.loads(_SWAP_HISTORY_FILE.read_text())
+    except (json.JSONDecodeError, OSError):
+        history = []
+
+    history.insert(
+        0,
+        {
+            "from": from_model,
+            "to": to_model,
+            "timestamp": time.time(),
+            "duration_s": duration_s,
+            "status": status,
+        },
+    )
+    history = history[:_SWAP_HISTORY_MAX]
+
+    try:
+        _SWAP_HISTORY_FILE.write_text(json.dumps(history, indent=2))
+    except OSError:
+        pass
+
+
+async def api_swap_history(request: Request) -> JSONResponse:
+    """Return recent model swap events."""
+    limit = min(int(request.query_params.get("limit", "10")), _SWAP_HISTORY_MAX)
+    try:
+        if _SWAP_HISTORY_FILE.exists():
+            history = json.loads(_SWAP_HISTORY_FILE.read_text())
+            return JSONResponse({"swaps": history[:limit]})
+    except (json.JSONDecodeError, OSError):
+        pass
+    return JSONResponse({"swaps": []})
 
 
 # ---------------------------------------------------------------------------
@@ -711,7 +775,20 @@ async def api_metrics(request: Request) -> JSONResponse:
             "used_pct": vm.percent,
         }
         metrics["cpu"] = {"utilization_pct": round(psutil.cpu_percent(interval=None), 1)}
-    except Exception:
+    except (ImportError, OSError):
+        pass
+
+    # Include MCP session stats (tool call counts, token estimates)
+    from localforge.client import _session_stats
+
+    metrics["session"] = _session_stats
+
+    # Include response cache stats
+    try:
+        from localforge.client import _cache
+
+        metrics["cache"] = _cache.stats()
+    except (ImportError, AttributeError):
         pass
 
     _gpu_metrics_cache = (now, metrics)
@@ -758,7 +835,7 @@ async def api_models_scan(request: Request) -> JSONResponse:
             if resp.status_code == 200:
                 data = resp.json()
                 webui_models = data.get("model_names", [])
-    except Exception:
+    except (httpx.HTTPError, OSError):
         pass
 
     return JSONResponse({"scanned": found, "webui_models": webui_models, "dirs_checked": [str(d) for d in scan_dirs]})
@@ -782,7 +859,7 @@ async def api_photos_list(request: Request) -> JSONResponse:
             if meta_file.exists():
                 try:
                     meta = json.loads(meta_file.read_text())
-                except Exception:
+                except (json.JSONDecodeError, OSError):
                     pass
             photos.append(
                 {
@@ -935,7 +1012,7 @@ async def api_photos_analyze(request: Request) -> JSONResponse:
                 is_vision = any(
                     kw in model_name for kw in ["vl", "vision", "gemma", "qwen", "image", "vlm", "multimodal"]
                 )
-    except Exception:
+    except (httpx.HTTPError, OSError):
         pass
 
     if not is_vision:
@@ -994,7 +1071,7 @@ async def api_photos_analyze(request: Request) -> JSONResponse:
     if meta_path.exists():
         try:
             meta = json.loads(meta_path.read_text())
-        except Exception:
+        except (json.JSONDecodeError, OSError):
             pass
     meta["description"] = description
     meta["tags"] = tags
@@ -1050,7 +1127,7 @@ async def api_photos_search(request: Request) -> JSONResponse:
                             }
                         )
                         break
-        except Exception:
+        except (OSError, ValueError):
             continue
 
     return JSONResponse({"results": results})
@@ -1101,7 +1178,7 @@ async def api_upload_image(request: Request) -> StreamingResponse:
             if resp.status_code == 200:
                 model_name = resp.json().get("model_name", "").lower()
                 is_vision = any(kw in model_name for kw in _VISION_KW)
-    except Exception:
+    except (httpx.HTTPError, OSError):
         pass
 
     if not is_vision:
@@ -1170,7 +1247,7 @@ def _get_kg():
 async def api_kg_stats(request: Request) -> JSONResponse:
     try:
         return JSONResponse(_get_kg().stats())
-    except Exception as e:
+    except (ValueError, OSError) as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -1182,7 +1259,7 @@ async def api_kg_search(request: Request) -> JSONResponse:
         return JSONResponse({"error": "query required"}, status_code=400)
     try:
         return JSONResponse({"results": _get_kg().query(query, max_results=20, entity_type=entity_type)})
-    except Exception as e:
+    except (ValueError, OSError) as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -1193,7 +1270,7 @@ async def api_kg_context(request: Request) -> JSONResponse:
         return JSONResponse({"error": "name required"}, status_code=400)
     try:
         return JSONResponse(_get_kg().context(name))
-    except Exception as e:
+    except (ValueError, OSError) as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -1207,7 +1284,7 @@ async def api_kg_add(request: Request) -> JSONResponse:
             name=name, type=body.get("entity_type", "concept"), content=body.get("content", "")
         )
         return JSONResponse({"id": entity_id, "name": name})
-    except Exception as e:
+    except (ValueError, OSError) as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -1230,11 +1307,12 @@ async def api_kg_relate(request: Request) -> JSONResponse:
         return JSONResponse({"id": rel_id})
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
-    except Exception as e:
+    except (ValueError, OSError) as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
 async def api_kg_entity_delete(request: Request) -> JSONResponse:
+    """Delete a KG entity; returns its data so the client can offer undo."""
     name = request.path_params.get("name", "")
     if not name:
         return JSONResponse({"error": "name required"}, status_code=400)
@@ -1242,15 +1320,50 @@ async def api_kg_entity_delete(request: Request) -> JSONResponse:
     entity = kg.find_entity(name)
     if not entity:
         return JSONResponse({"error": f"Entity not found: {name}"}, status_code=404)
+    # Capture relations before deleting (CASCADE will remove them)
+    relations = kg.get_relations(entity.id)
+    entity_data = entity.to_dict()
     kg.delete_entity(entity.id)
-    return JSONResponse({"deleted": name})
+    return JSONResponse({"deleted": name, "entity": entity_data, "relations": relations})
 
 
 async def api_kg_timeline(request: Request) -> JSONResponse:
     limit = int(request.query_params.get("limit", "30"))
     try:
         return JSONResponse({"entries": _get_kg().timeline(limit=min(limit, 100))})
-    except Exception as e:
+    except (OSError, ValueError) as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_kg_export(request: Request) -> JSONResponse:
+    """Export the entire knowledge graph as JSON."""
+    try:
+        data = _get_kg().export_all()
+        return JSONResponse(data)
+    except (OSError, ValueError) as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_kg_import(request: Request) -> JSONResponse:
+    """Import entities and relations into the knowledge graph.
+
+    Body: ``{"entities": [...], "relations": [...], "merge": true}``
+    When merge is true (default), existing entities are updated.
+    When false, the graph is cleared first.
+    """
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
+    if not isinstance(body, dict) or "entities" not in body:
+        return JSONResponse({"error": "body must contain 'entities' array"}, status_code=400)
+
+    merge = body.get("merge", True)
+    try:
+        result = _get_kg().import_all(body, merge=merge)
+        return JSONResponse({"status": "ok", **result})
+    except (OSError, KeyError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -1298,7 +1411,7 @@ async def api_webhook(request: Request) -> JSONResponse:
         return JSONResponse({"error": "Agent supervisor not running"}, status_code=503)
     try:
         payload = await request.json()
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         payload = {}
     result = await _supervisor.trigger_agent(agent_id, "webhook", payload)
     return JSONResponse({"message": result})
@@ -1411,7 +1524,7 @@ async def api_agent_logs(request: Request) -> JSONResponse:
                 logs = state.get("logs", [])
                 last_run = state.get("last_run")
                 run_count = state.get("run_count", 0)
-            except Exception:
+            except (json.JSONDecodeError, OSError):
                 pass
 
     return JSONResponse(
@@ -1430,18 +1543,25 @@ async def api_agent_logs(request: Request) -> JSONResponse:
 
 
 async def api_notes(request: Request) -> JSONResponse:
-    notes = []
+    page = int(request.query_params.get("page", "1"))
+    limit = min(int(request.query_params.get("limit", "50")), 200)
+    offset = (page - 1) * limit
+
+    all_notes = []
     if NOTES_DIR.exists():
-        for f in sorted(NOTES_DIR.iterdir()):
+        for f in sorted(NOTES_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
             if f.is_file() and f.suffix in (".txt", ".md", ""):
-                notes.append(
+                all_notes.append(
                     {
                         "topic": f.stem,
                         "size": f.stat().st_size,
                         "modified": f.stat().st_mtime,
                     }
                 )
-    return JSONResponse({"notes": notes})
+
+    total = len(all_notes)
+    notes = all_notes[offset : offset + limit]
+    return JSONResponse({"notes": notes, "total": total, "page": page, "has_more": offset + limit < total})
 
 
 async def api_note_content(request: Request) -> JSONResponse:
@@ -1582,7 +1702,7 @@ async def api_generation_params(request: Request) -> JSONResponse:
                 resp = await client.get(f"{backend_url}/internal/generation-params")
                 if resp.status_code == 200:
                     params["backend"] = resp.json()
-        except Exception:
+        except (httpx.HTTPError, OSError):
             pass
         return JSONResponse(params)
 
@@ -1702,7 +1822,7 @@ async def api_model_unload(request: Request) -> JSONResponse:
         _cfg.MODEL = None
         await notify_all("Model Unloaded", "VRAM freed", "model-swap")
         return JSONResponse({"status": "unloaded"})
-    except Exception as e:
+    except (httpx.HTTPError, OSError) as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -1740,7 +1860,7 @@ async def api_loras(request: Request) -> JSONResponse:
             resp = await client.get(f"{backend_url}/internal/model/info")
             if resp.status_code == 200:
                 loaded = resp.json().get("lora_names", [])
-    except Exception:
+    except (httpx.HTTPError, OSError):
         pass
     return JSONResponse({"available": available, "loaded": loaded})
 
@@ -1861,8 +1981,8 @@ async def api_index_refresh(request: Request) -> JSONResponse:
 
 
 # Set by gateway.py during lifespan
-_message_bus = None
-_task_queue = None
+_message_bus: Any = None
+_task_queue: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -1881,7 +2001,7 @@ async def api_videos_list(request: Request) -> JSONResponse:
             if meta_file.exists():
                 try:
                     meta = json.loads(meta_file.read_text())
-                except Exception:
+                except (json.JSONDecodeError, OSError):
                     pass
             thumb_name = f.stem + ".jpg"
             videos.append(
@@ -1930,7 +2050,7 @@ async def api_videos_upload(request: Request) -> JSONResponse:
         # Generate thumbnail
         thumb_path = thumbs_dir / f"{video_path.stem}.jpg"
         await create_video_thumbnail(video_path, thumb_path)
-    except Exception as e:
+    except (OSError, ValueError) as e:
         meta["processing_error"] = str(e)
 
     # Auto-tag with vision model if requested
@@ -2128,13 +2248,33 @@ async def api_research_start(request: Request) -> JSONResponse:
 
 
 async def api_research_session_delete(request: Request) -> JSONResponse:
+    """Abandon a research session; returns its data so the client can offer undo."""
     session_id = request.path_params.get("session_id", "")
     rs = _get_research()
     data = rs.get(session_id)
     if not data:
         return JSONResponse({"error": "Session not found"}, status_code=404)
+    previous_status = data.get("status", "active")
     rs.abandon(session_id)
-    return JSONResponse({"status": "abandoned"})
+    return JSONResponse({"status": "abandoned", "previous_status": previous_status, "session": data})
+
+
+async def api_research_session_restore(request: Request) -> JSONResponse:
+    """Restore an abandoned research session (undo delete)."""
+    session_id = request.path_params.get("session_id", "")
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        body = {}
+    status = body.get("status", "active")
+    if status not in ("active", "complete"):
+        return JSONResponse({"error": "status must be 'active' or 'complete'"}, status_code=400)
+    rs = _get_research()
+    data = rs.get(session_id)
+    if not data:
+        return JSONResponse({"error": "Session not found"}, status_code=404)
+    rs.restore(session_id, status)
+    return JSONResponse({"status": "restored", "session_id": session_id})
 
 
 async def api_research_queue(request: Request) -> JSONResponse:
@@ -2266,7 +2406,7 @@ async def api_workflow_create(request: Request) -> JSONResponse:
     """POST /api/workflows — create or upsert. Auto-generates id if absent."""
     try:
         body = await request.json()
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         return JSONResponse({"error": "invalid_json"}, status_code=400)
     if not isinstance(body, dict):
         return JSONResponse({"error": "object_required"}, status_code=400)
@@ -2490,7 +2630,7 @@ async def api_set_character(request: Request) -> JSONResponse:
 
 # In-memory registry of worker nodes — delegated to gpu_pool for unified state.
 # The gpu_pool reference is set by gateway.py during lifespan startup.
-_gpu_pool_ref = None  # Set by gateway.py
+_gpu_pool_ref: Any = None  # Set by gateway.py
 
 
 async def api_mesh_heartbeat(request: Request) -> JSONResponse:
@@ -2625,7 +2765,7 @@ async def api_mesh_enrollment_token(request: Request) -> JSONResponse:
     body: dict = {}
     try:
         body = await request.json()
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         pass
     note = (body.get("note") or "")[:200]
     model_id = (body.get("model_id") or "")[:64]
@@ -2721,7 +2861,7 @@ async def api_mesh_register(request: Request) -> JSONResponse:
 
     try:
         body = await request.json()
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
 
     enrollment_token = body.get("enrollment_token", "")
@@ -2821,7 +2961,7 @@ async def api_mesh_worker_config(request: Request) -> JSONResponse:
     worker_id = request.path_params.get("worker_id", "")
     try:
         body = await request.json()
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         return JSONResponse({"error": "invalid_json"}, status_code=400)
     if not isinstance(body, dict):
         return JSONResponse({"error": "object_required"}, status_code=400)
@@ -2917,7 +3057,7 @@ async def api_mesh_worker_model_download(request: Request) -> JSONResponse:
     worker_id = request.path_params.get("worker_id", "")
     try:
         body = await request.json()
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         return JSONResponse({"error": "invalid_json"}, status_code=400)
     model_id = (body.get("model_id") or "").strip()
     if not model_id:
@@ -2967,7 +3107,7 @@ async def api_mesh_worker_model_activate(request: Request) -> JSONResponse:
     worker_id = request.path_params.get("worker_id", "")
     try:
         body = await request.json()
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         return JSONResponse({"error": "invalid_json"}, status_code=400)
     filename = (body.get("filename") or "").strip()
     if not filename:
@@ -2998,19 +3138,17 @@ async def api_sync_models(request: Request) -> JSONResponse:
     body = {}
     try:
         body = await request.json()
-    except Exception:
-        pass
+    except (json.JSONDecodeError, ValueError):
+        pass  # No body is fine — sync uses defaults
 
     try:
-        from localforge.tools.infrastructure import sync_models as _sync_models
-
-        result = await _sync_models(body)
+        result = await _call_tool("sync_models", body)
         return JSONResponse({"status": "ok", "result": result})
-    except ImportError:
-        # Fallback for monolith mode — run sync inline
+    except KeyError:
+        # Tool not registered — fall back to inline implementation
         result = await _sync_models_fallback(body)
         return JSONResponse({"status": "ok", "result": result})
-    except Exception as exc:
+    except (OSError, httpx.HTTPError) as exc:
         return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
 
 
@@ -3122,7 +3260,7 @@ async def api_training_list(request: Request) -> JSONResponse:
                     try:
                         m = _json.loads(meta_path.read_text())
                         examples = m.get("examples", 0)
-                    except Exception:
+                    except (json.JSONDecodeError, OSError):
                         pass
                 result.append(
                     {
@@ -3182,7 +3320,7 @@ async def api_training_preflight(request: Request) -> JSONResponse:
                 name = info.get("model_name") or info.get("result", {}).get("model_name", "")
                 if name and name not in ("None", "none", ""):
                     model_loaded = name
-    except Exception:
+    except (httpx.HTTPError, OSError):
         pass
 
     ram = None
@@ -3256,7 +3394,7 @@ async def api_training_prepare(request: Request) -> JSONResponse:
     try:
         result = await mod.train_prepare(body)
         return JSONResponse({"status": "ok", "result": result})
-    except Exception as exc:
+    except (json.JSONDecodeError, ValueError) as exc:
         return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
 
 
@@ -3269,7 +3407,7 @@ async def api_training_start(request: Request) -> JSONResponse:
     try:
         result = await mod.train_start(body)
         return JSONResponse({"status": "ok", "result": result})
-    except Exception as exc:
+    except (json.JSONDecodeError, ValueError) as exc:
         return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
 
 
@@ -3282,7 +3420,7 @@ async def api_training_feedback(request: Request) -> JSONResponse:
     try:
         result = await mod.train_feedback(body)
         return JSONResponse({"status": "ok", "result": result})
-    except Exception as exc:
+    except (json.JSONDecodeError, ValueError) as exc:
         return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
 
 
@@ -3304,7 +3442,7 @@ async def api_training_loras(request: Request) -> JSONResponse:
                 if meta_path.exists():
                     try:
                         meta = json.loads(meta_path.read_text())
-                    except Exception:
+                    except (json.JSONDecodeError, OSError):
                         pass
                 gguf_files = list(run_dir.glob("*.gguf"))
                 loras.append(
@@ -3354,7 +3492,7 @@ def _read_startup_config() -> dict:
     if p.exists():
         try:
             return json.loads(p.read_text())
-        except Exception:
+        except (json.JSONDecodeError, OSError):
             pass
     return {"startup_model": ""}
 
@@ -3388,6 +3526,7 @@ dashboard_routes = [
     # Chat
     Route("/chat", api_chat, methods=["POST"]),
     Route("/chats", api_chat_list, methods=["GET"]),
+    Route("/chats/search", api_chat_search, methods=["GET"]),
     Route("/chats/save", api_chat_save, methods=["POST"]),
     Route("/chats/{chat_id}", api_chat_load, methods=["GET"]),
     Route("/chats/{chat_id}", api_chat_delete, methods=["DELETE"]),
@@ -3395,6 +3534,7 @@ dashboard_routes = [
     Route("/models", api_models, methods=["GET"]),
     Route("/models/scan", api_models_scan, methods=["GET"]),
     Route("/swap", api_swap, methods=["POST"]),
+    Route("/swap/history", api_swap_history, methods=["GET"]),
     Route("/models/config", api_model_config, methods=["GET"]),
     # Generation params
     Route("/generation-params", api_generation_params, methods=["GET", "POST"]),
@@ -3431,6 +3571,8 @@ dashboard_routes = [
     Route("/kg/add", api_kg_add, methods=["POST"]),
     Route("/kg/relate", api_kg_relate, methods=["POST"]),
     Route("/kg/timeline", api_kg_timeline, methods=["GET"]),
+    Route("/kg/export", api_kg_export, methods=["GET"]),
+    Route("/kg/import", api_kg_import, methods=["POST"]),
     Route("/kg/entity/{name}", api_kg_entity_delete, methods=["DELETE"]),
     # Agents (static paths first, then parameterized)
     Route("/agents", api_agents, methods=["GET"]),
@@ -3463,6 +3605,7 @@ dashboard_routes = [
     Route("/research/sessions", api_research_sessions, methods=["GET"]),
     Route("/research/sessions/{session_id}", api_research_session_get, methods=["GET"]),
     Route("/research/sessions/{session_id}", api_research_session_delete, methods=["DELETE"]),
+    Route("/research/sessions/{session_id}/restore", api_research_session_restore, methods=["POST"]),
     Route("/research/start", api_research_start, methods=["POST"]),
     Route("/research/queue", api_research_queue, methods=["GET", "POST"]),
     # Workflows
