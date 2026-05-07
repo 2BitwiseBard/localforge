@@ -130,6 +130,10 @@
         <div id="status-model-actions" style="display:none;margin-top:10px;">
           <button id="status-unload-btn" class="btn-danger" style="font-size:0.8em;padding:4px 10px;">Unload Model</button>
         </div>
+        <div id="status-load-default-actions" style="display:none;margin-top:10px;">
+          <button id="status-load-default-btn" class="btn-primary" style="font-size:0.8em;padding:4px 10px;">Reload Default Model</button>
+          <span class="param-hint" id="status-load-default-hint">No model loaded</span>
+        </div>
       </div>
       <div class="card status-gpu-card">
         <h2>GPU</h2>
@@ -235,6 +239,9 @@
         </div>
       </div>
       <div id="chat-history-panel" class="chat-history-panel" style="display:none">
+        <input id="chat-search-input" type="search" placeholder="Search across saved chats..." class="chat-search-input" aria-label="Search chats" />
+        <div id="chat-search-status" class="chat-search-status" style="display:none"></div>
+        <div id="chat-search-results" class="chat-search-results" style="display:none"></div>
         <div id="chat-history-list"></div>
       </div>
       <div id="sys-prompt-panel" class="sys-prompt-panel" style="display:none">
@@ -443,6 +450,11 @@
         <button id="load-params-clear" class="btn-secondary">Clear</button>
         <span id="model-load-status" class="config-status"></span>
       </div>
+
+      <details class="param-section" style="margin-top:12px;">
+        <summary>Recent swaps</summary>
+        <div id="swap-history-list" class="swap-history-list">Loading...</div>
+      </details>
     </div>
 
     <!-- Generation Parameters -->

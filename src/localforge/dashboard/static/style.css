@@ -329,13 +329,65 @@ details.card[open] > summary::before { transform: rotate(90deg); }
 
 /* Chat history panel */
 .chat-history-panel {
-  max-height: 200px;
+  max-height: 280px;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   margin-bottom: 8px;
   background: var(--bg);
 }
+
+.chat-search-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+  box-sizing: border-box;
+  outline: none;
+}
+.chat-search-input:focus { background: var(--surface); }
+.chat-search-status {
+  padding: 6px 12px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+.chat-search-results .history-item.search-result { padding: 8px 12px; }
+.history-snippet {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.role-tag {
+  font-size: 0.65rem;
+  background: var(--surface);
+  color: var(--text-dim);
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 4px;
+  border: 1px solid var(--border);
+}
+
+/* Recent swap history (Config tab) */
+.swap-history-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.swap-history-row {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.swap-history-row.fail { border-color: #b42318; }
+.swap-history-pair { font-size: 0.85rem; }
+.swap-history-meta { font-size: 0.72rem; color: var(--text-dim); margin-top: 2px; }
+.swap-history-status { font-weight: 500; }
+.swap-history-row.ok .swap-history-status { color: #16a34a; }
+.swap-history-row.fail .swap-history-status { color: #b42318; }
 
 .history-item {
   padding: 8px 12px;

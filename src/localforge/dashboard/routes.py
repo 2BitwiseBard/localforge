@@ -18,7 +18,7 @@ from typing import Any
 import httpx
 import yaml
 from starlette.requests import Request
-from starlette.responses import JSONResponse, StreamingResponse
+from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 try:
@@ -2665,10 +2665,158 @@ async def api_mesh_heartbeat(request: Request) -> JSONResponse:
         key, accepted = _gpu_pool_ref.register_heartbeat(body)
         if not accepted:
             return JSONResponse({"error": "Mesh worker limit reached"}, status_code=503)
-        return JSONResponse({"status": "ok", "registered": key})
+        # Piggyback any pending commands so workers don't need a separate poll.
+        commands = _gpu_pool_ref.pop_pending_commands(hostname)
+        return JSONResponse({"status": "ok", "registered": key, "commands": commands})
 
     # Fallback if gpu_pool not yet initialized (shouldn't happen in practice)
     return JSONResponse({"error": "GPU pool not initialized"}, status_code=503)
+
+
+# ---------------------------------------------------------------------------
+# Hub -> worker command channel
+# ---------------------------------------------------------------------------
+
+
+async def api_mesh_commands_get(request: Request) -> JSONResponse:
+    """Worker poll endpoint — returns and clears any queued commands for {hostname}.
+
+    Workers can either call this directly or rely on the heartbeat response,
+    which already includes the same payload under the `commands` key.
+    """
+    from localforge.auth import require_scope
+
+    denied = require_scope(request, "mesh")
+    if denied is not None:
+        return denied
+    hostname = request.path_params.get("hostname", "")
+    if not hostname or _gpu_pool_ref is None:
+        return JSONResponse({"commands": []})
+    commands = _gpu_pool_ref.pop_pending_commands(hostname)
+    return JSONResponse({"commands": commands})
+
+
+async def api_mesh_commands_enqueue(request: Request) -> JSONResponse:
+    """Admin endpoint — enqueue a command for a worker.
+
+    Body: {type: "swap_model"|"shutdown"|"run_agent"|"ping", ...payload}
+    """
+    user = _get_user(request)
+    if user.get("role") not in ("owner", "admin"):
+        return JSONResponse({"error": "admin role required"}, status_code=403)
+    if _gpu_pool_ref is None:
+        return JSONResponse({"error": "GPU pool not initialized"}, status_code=503)
+    hostname = request.path_params.get("hostname", "")
+    if not hostname:
+        return JSONResponse({"error": "hostname required"}, status_code=400)
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    try:
+        cmd_id = _gpu_pool_ref.enqueue_command(hostname, body)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse({"command_id": cmd_id, "queued_for": hostname})
+
+
+async def api_mesh_commands_result(request: Request) -> JSONResponse:
+    """Worker reports back the result of a previously-issued command."""
+    from localforge.auth import require_scope
+
+    denied = require_scope(request, "mesh")
+    if denied is not None:
+        return denied
+    if _gpu_pool_ref is None:
+        return JSONResponse({"error": "GPU pool not initialized"}, status_code=503)
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    cmd_id = body.get("command_id", "")
+    result = body.get("result", {})
+    if not cmd_id:
+        return JSONResponse({"error": "command_id required"}, status_code=400)
+    _gpu_pool_ref.record_command_result(cmd_id, result)
+    return JSONResponse({"status": "ok"})
+
+
+async def api_mesh_commands_peek(request: Request) -> JSONResponse:
+    """Admin: inspect what's queued for a host without dequeueing."""
+    user = _get_user(request)
+    if user.get("role") not in ("owner", "admin"):
+        return JSONResponse({"error": "admin role required"}, status_code=403)
+    if _gpu_pool_ref is None:
+        return JSONResponse({"commands": []})
+    hostname = request.path_params.get("hostname", "")
+    return JSONResponse({"commands": _gpu_pool_ref.peek_pending_commands(hostname)})
+
+
+# ---------------------------------------------------------------------------
+# Model distribution (hub serves GGUFs to mesh workers)
+# ---------------------------------------------------------------------------
+
+
+def _models_root() -> Path:
+    """Resolve the canonical models directory the hub serves from."""
+    cfg = _load_config()
+    cfg_dir = cfg.get("backends", {}).get("local", {}).get("models_dir", "")
+    if cfg_dir and Path(cfg_dir).is_dir():
+        return Path(cfg_dir).resolve()
+    return Path("/mnt/models").resolve()
+
+
+async def api_models_inventory(request: Request) -> JSONResponse:
+    """List GGUF files available for download from the hub."""
+    from localforge.auth import require_scope
+
+    denied = require_scope(request, "mesh")
+    if denied is not None:
+        return denied
+    root = _models_root()
+    files: list[dict] = []
+    if root.exists():
+        for f in sorted(root.glob("*.gguf")):
+            try:
+                stat = f.stat()
+            except OSError:
+                continue
+            files.append({
+                "name": f.name,
+                "size_bytes": stat.st_size,
+                "size_gb": round(stat.st_size / (1024 ** 3), 2),
+                "modified": stat.st_mtime,
+            })
+    return JSONResponse({"root": str(root), "models": files, "total": len(files)})
+
+
+async def api_models_download(request: Request) -> FileResponse | JSONResponse:
+    """Stream a GGUF file from the hub. Path-traversal-safe."""
+    from localforge.auth import require_scope
+
+    denied = require_scope(request, "mesh")
+    if denied is not None:
+        return denied
+    filename = request.path_params.get("filename", "")
+    # Sanitize: no path components, must end in .gguf
+    if not filename or "/" in filename or ".." in filename or "\\" in filename:
+        return JSONResponse({"error": "invalid filename"}, status_code=400)
+    if not filename.endswith(".gguf"):
+        return JSONResponse({"error": "only .gguf files served"}, status_code=400)
+    root = _models_root()
+    target = (root / filename).resolve()
+    # Defense-in-depth: ensure resolved path is still inside root.
+    try:
+        target.relative_to(root)
+    except ValueError:
+        return JSONResponse({"error": "path escapes models root"}, status_code=400)
+    if not target.is_file():
+        return JSONResponse({"error": "model not found"}, status_code=404)
+    return FileResponse(
+        path=str(target),
+        media_type="application/octet-stream",
+        filename=target.name,
+    )
 
 
 async def api_mesh_status(request: Request) -> JSONResponse:
@@ -3514,6 +3662,38 @@ async def api_startup_config_set(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok", "startup_model": model})
 
 
+async def api_model_load_default(request: Request) -> JSONResponse:
+    """Load whatever model is configured as the startup default.
+
+    Useful when you've manually unloaded and want to recover with one click —
+    no need to remember the model filename.
+    """
+    cfg = _read_startup_config()
+    model = cfg.get("startup_model", "")
+    if not model:
+        return JSONResponse(
+            {"error": "No startup model configured. Set one via Config tab → Startup."},
+            status_code=400,
+        )
+    # Reuse the existing swap path so config.yaml overrides + load_args apply.
+    start_time = time.time()
+    try:
+        result = await _call_tool("swap_model", {"model": model})
+        duration = round(time.time() - start_time, 1)
+        _record_swap("", model, duration, "ok")
+        return JSONResponse({"status": "ok", "model": model, "result": result})
+    except KeyError:
+        return JSONResponse({"error": "swap_model tool not available"}, status_code=500)
+    except (httpx.HTTPStatusError, httpx.ConnectError, httpx.ReadTimeout) as e:
+        duration = round(time.time() - start_time, 1)
+        _record_swap("", model, duration, f"error: {e}")
+        return JSONResponse({"error": str(e), "model": model}, status_code=502)
+    except Exception as e:
+        duration = round(time.time() - start_time, 1)
+        _record_swap("", model, duration, f"error: {e}")
+        return JSONResponse({"error": str(e), "model": model}, status_code=500)
+
+
 # ---------------------------------------------------------------------------
 # Route list for mounting in the gateway
 # ---------------------------------------------------------------------------
@@ -3642,6 +3822,14 @@ dashboard_routes = [
     Route("/mesh/workers/{worker_id}/models", api_mesh_worker_models, methods=["GET"]),
     Route("/mesh/workers/{worker_id}/models/download", api_mesh_worker_model_download, methods=["POST"]),
     Route("/mesh/workers/{worker_id}/models/activate", api_mesh_worker_model_activate, methods=["POST"]),
+    # Hub -> worker command channel
+    Route("/mesh/commands/{hostname}", api_mesh_commands_get, methods=["GET"]),
+    Route("/mesh/commands/{hostname}", api_mesh_commands_enqueue, methods=["POST"]),
+    Route("/mesh/commands/{hostname}/peek", api_mesh_commands_peek, methods=["GET"]),
+    Route("/mesh/commands/result", api_mesh_commands_result, methods=["POST"]),
+    # Model distribution to mesh workers
+    Route("/models/inventory", api_models_inventory, methods=["GET"]),
+    Route("/models/download/{filename}", api_models_download, methods=["GET"]),
     # Model sync
     Route("/sync-models", api_sync_models, methods=["POST"]),
     # Training pipeline
@@ -3655,4 +3843,5 @@ dashboard_routes = [
     # Startup config
     Route("/config/startup", api_startup_config_get, methods=["GET"]),
     Route("/config/startup", api_startup_config_set, methods=["POST"]),
+    Route("/model/load_default", api_model_load_default, methods=["POST"]),
 ]

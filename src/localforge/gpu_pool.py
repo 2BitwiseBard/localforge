@@ -183,6 +183,12 @@ class GPUPool:
         # Unified heartbeat registry (moved from routes.py)
         self._heartbeat_nodes: dict[str, dict] = {}  # key = "hostname:port" -> raw heartbeat data
         self._max_heartbeat_nodes = 100  # Prevent unbounded growth
+        # Hub -> worker command queue (in-memory; survives gateway restart only via re-enqueue)
+        # key = hostname (not host:port — worker may move ports across reboots)
+        self._pending_commands: dict[str, list[dict]] = {}
+        self._command_results: dict[str, dict] = {}  # command_id -> result dict
+        self._max_pending_per_host = 32
+        self._command_seq = 0
 
     # --- Lifecycle ---
 
@@ -684,6 +690,60 @@ class GPUPool:
         self._persist_node(key, self._heartbeat_nodes[key])
 
         return key, True
+
+    # --- Hub -> worker command channel ---
+
+    def enqueue_command(self, hostname: str, command: dict) -> str:
+        """Queue a command for a worker. Returns the command id."""
+        if not hostname or not isinstance(command, dict):
+            raise ValueError("hostname and command (dict) required")
+        valid_types = {"swap_model", "shutdown", "run_agent", "ping"}
+        ctype = command.get("type")
+        if ctype not in valid_types:
+            raise ValueError(f"unknown command type {ctype!r}; valid: {sorted(valid_types)}")
+        self._command_seq += 1
+        cmd_id = f"cmd-{int(time.time())}-{self._command_seq}"
+        entry = dict(command)
+        entry["id"] = cmd_id
+        entry["enqueued_at"] = time.time()
+        queue = self._pending_commands.setdefault(hostname, [])
+        if len(queue) >= self._max_pending_per_host:
+            # Drop oldest to keep queue bounded.
+            queue.pop(0)
+        queue.append(entry)
+        log.info("Enqueued command %s for %s: %s", cmd_id, hostname, ctype)
+        return cmd_id
+
+    def pop_pending_commands(self, hostname: str) -> list[dict]:
+        """Return and clear pending commands for a worker."""
+        if hostname not in self._pending_commands:
+            return []
+        queue = self._pending_commands.pop(hostname)
+        return queue
+
+    def peek_pending_commands(self, hostname: str) -> list[dict]:
+        """Return pending commands without clearing them."""
+        return list(self._pending_commands.get(hostname, []))
+
+    def record_command_result(self, command_id: str, result: dict) -> None:
+        """Store a command's result reported back by a worker."""
+        if not command_id:
+            return
+        self._command_results[command_id] = {
+            "result": result,
+            "received_at": time.time(),
+        }
+        # Cap the result history at 200 entries — drop oldest.
+        if len(self._command_results) > 200:
+            oldest = sorted(
+                self._command_results.items(),
+                key=lambda kv: kv[1].get("received_at", 0),
+            )[:50]
+            for cid, _ in oldest:
+                self._command_results.pop(cid, None)
+
+    def get_command_result(self, command_id: str) -> dict | None:
+        return self._command_results.get(command_id)
 
     # --- Mesh persistence (SQLite) ---
 

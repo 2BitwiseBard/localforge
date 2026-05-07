@@ -139,7 +139,7 @@ document.getElementById('model-load-btn')?.addEventListener('click', async () =>
       const hint = data.applied ? `ctx=${data.applied.ctx_size}, gpu=${data.applied.gpu_layers}` : '';
       if (st) { st.textContent = hint ? `Loaded (${hint})` : 'Loaded'; st.className = 'config-status config-status-ok'; }
       showToast(`Loaded: ${model.replace('.gguf', '')}`, 'success');
-      updateModelBadge(model); loadModels(); loadStatus();
+      updateModelBadge(model); loadModels(); loadStatus(); loadSwapHistory();
     }
   } catch (e) {
     if (st) { st.textContent = 'Error: ' + e.message; st.className = 'config-status config-status-error'; }
@@ -493,3 +493,29 @@ document.getElementById('startup-save-btn')?.addEventListener('click', async () 
     if (st) st.textContent = 'Error: ' + e.message;
   }
 });
+
+// ---- Recent swap history ----
+export async function loadSwapHistory() {
+  const el = document.getElementById('swap-history-list');
+  if (!el) return;
+  try {
+    const data = await authFetch(API + '/swap/history?limit=5').then(r => r.json());
+    if (!data.swaps || !data.swaps.length) {
+      el.innerHTML = '<div class="empty-state" style="font-size:0.78rem;">No swaps recorded yet.</div>';
+      return;
+    }
+    el.innerHTML = data.swaps.map(s => {
+      const when = s.timestamp ? new Date(s.timestamp * 1000).toLocaleString() : '';
+      const dur = s.duration ? `${Math.round(s.duration)}s` : '';
+      const ok = s.status === 'success' || s.status === 'ok';
+      const fromTo = `${escapeHtml(s.from_model || '?')} → ${escapeHtml(s.to_model || '?')}`;
+      return `<div class="swap-history-row ${ok ? 'ok' : 'fail'}">
+        <div class="swap-history-pair">${fromTo}</div>
+        <div class="swap-history-meta">${escapeHtml(when)} ${dur ? `· ${dur}` : ''} · <span class="swap-history-status">${escapeHtml(s.status || '?')}</span></div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="empty-state" style="font-size:0.78rem;">Error: ${escapeHtml(e.message)}</div>`;
+  }
+}
+loadSwapHistory();

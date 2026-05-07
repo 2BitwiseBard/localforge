@@ -231,6 +231,58 @@ document.getElementById('chat-history-btn').addEventListener('click', async () =
   } catch (e) { historyList.innerHTML = 'Error loading history'; }
 });
 
+// ---- Chat search (uses GET /api/chats/search) ----
+const searchInput = document.getElementById('chat-search-input');
+const searchResults = document.getElementById('chat-search-results');
+const searchStatus = document.getElementById('chat-search-status');
+let _searchDebounce = null;
+async function runChatSearch(q) {
+  if (q.length < 2) {
+    searchResults.style.display = 'none';
+    searchStatus.style.display = 'none';
+    historyList.style.display = '';
+    return;
+  }
+  searchStatus.textContent = 'Searching...';
+  searchStatus.style.display = '';
+  historyList.style.display = 'none';
+  try {
+    const data = await authFetch(API + `/chats/search?q=${encodeURIComponent(q)}&limit=30`).then(r => r.json());
+    if (data.error) { searchStatus.textContent = data.error; searchResults.style.display = 'none'; return; }
+    searchStatus.textContent = `${data.total} match${data.total === 1 ? '' : 'es'}`;
+    if (!data.results.length) {
+      searchResults.innerHTML = '<div class="empty-state">No matches</div>';
+      searchResults.style.display = '';
+      return;
+    }
+    searchResults.innerHTML = data.results.map(r => `
+      <div class="history-item search-result" data-id="${r.chat_id}" data-msg="${r.message_index}">
+        <div class="history-title">${escapeHtml(r.title)} <span class="role-tag">${escapeHtml(r.role)}</span></div>
+        <div class="history-snippet">${escapeHtml(r.snippet)}</div>
+      </div>
+    `).join('');
+    searchResults.style.display = '';
+    searchResults.querySelectorAll('.history-item').forEach(el => {
+      el.addEventListener('click', async () => {
+        const data = await authFetch(API + '/chats/' + el.dataset.id).then(r => r.json());
+        chatHistory = data.messages || []; currentChatId = data.id; chatMessages.innerHTML = '';
+        chatHistory.forEach(m => addMessage(m.content, m.role));
+        historyPanel.style.display = 'none';
+      });
+    });
+  } catch (e) {
+    searchStatus.textContent = 'Error: ' + e.message;
+    searchResults.style.display = 'none';
+  }
+}
+if (searchInput) {
+  searchInput.addEventListener('input', e => {
+    clearTimeout(_searchDebounce);
+    const q = e.target.value.trim();
+    _searchDebounce = setTimeout(() => runChatSearch(q), 250);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Voice: STT (microphone)
 // ---------------------------------------------------------------------------

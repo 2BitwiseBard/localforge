@@ -94,6 +94,28 @@ export async function loadStatus() {
     const hasModel = health.model?.status === 'loaded' && modelName !== '--' && modelName !== 'None';
     if (modelActions) modelActions.style.display = hasModel ? '' : 'none';
 
+    // When NOTHING is loaded, surface a one-click "Reload Default" button if a default is configured.
+    const loadDefaultActions = document.getElementById('status-load-default-actions');
+    const loadDefaultHint = document.getElementById('status-load-default-hint');
+    if (loadDefaultActions) {
+      if (!hasModel) {
+        try {
+          const cfg = await authFetch(API + '/config/startup').then(r => r.json());
+          if (cfg.startup_model) {
+            loadDefaultActions.style.display = '';
+            if (loadDefaultHint) loadDefaultHint.textContent = `default: ${cfg.startup_model.replace('.gguf', '')}`;
+          } else {
+            loadDefaultActions.style.display = '';
+            if (loadDefaultHint) loadDefaultHint.textContent = 'No default set — configure one on the Config tab.';
+            const btn = document.getElementById('status-load-default-btn');
+            if (btn) btn.disabled = true;
+          }
+        } catch { loadDefaultActions.style.display = 'none'; }
+      } else {
+        loadDefaultActions.style.display = 'none';
+      }
+    }
+
     renderGPUGauges(metrics);
     loadStatusModels();
 
@@ -216,6 +238,24 @@ document.getElementById('status-unload-btn')?.addEventListener('click', async ()
     showToast('Unload failed: ' + e.message, 'error');
     btn.disabled = false;
     btn.textContent = 'Unload Model';
+  }
+});
+
+document.getElementById('status-load-default-btn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('status-load-default-btn');
+  btn.disabled = true;
+  btn.textContent = 'Loading…';
+  try {
+    const r = await authFetch(API + '/model/load_default', { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
+    showToast(`Loaded: ${(data.model || '').replace('.gguf', '')}`, 'success');
+    await loadStatus();
+  } catch (e) {
+    showToast('Load failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Reload Default Model';
   }
 });
 
