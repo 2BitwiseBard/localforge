@@ -1,5 +1,65 @@
 # LocalForge Development Log
 
+## 2026-05-12 — Skeleton trim (branch `cleanup-trim-2026-05-12`)
+
+Aggressive scope reduction toward the post-OS-reinstall target (see
+`~/Development/NEW-OS-PLAN.md`).
+
+### Deleted
+
+**Subsystems:**
+- `knowledge/` — knowledge graph (graph.py, research_sessions.py) + `tools/knowledge.py`
+- `workflows/` — workflow engine, schema, templates, scanner, node specs
+- `media/` — photo processor
+- `tools/{validation,orchestration,training}.py`
+- `telegram_bot.py`
+
+**Agents:**
+- `news_agent`, `daily_digest`, `research_agent`, `code_watcher`, `yaml_schema_validator`
+
+**Dashboard tabs:** Chat, Search, Media, Research, Workflows, Training, Knowledge
+
+**Dashboard JS:** chat.js, knowledge.js, kg-worker.js, media.js, research.js,
+search.js, training.js, workflows.js, workflow_editor.js
+
+**Routes:** ~1,700 lines of handler bodies + 30+ Route() entries pruned from
+`dashboard/routes.py`. File went 3,847 → 2,180 lines.
+
+**Outside the repo:** `~/Development/hub-tray/` directory (was halfway scaffold).
+
+### Retained
+
+- **Dashboard tabs:** Status, Mesh (skeleton), Config (model swap), Agents, Notes — 5 total (was 12)
+- **Agents:** health-monitor (enabled), index-maintainer (disabled)
+- **Tools:** chat, rag, semantic, web, infrastructure, analysis, compute,
+  config_tools, context, diff, filesystem, generation, git, memory, parallel,
+  presets, sessions, shell, agents_tools, utils
+
+### Net impact
+
+- Python: 24,298 → 17,122 LOC (−7,176, −30%)
+- Files: 71 → 51 (−20, −28%)
+- index.html: 1,136 → 502 LOC (−56%)
+- Two commits on branch `cleanup-trim-2026-05-12`: `c6034c8` (file deletes),
+  `2b1939e` (reference cleanup).
+
+### Companion model curation (2026-05-12, on disk, not in repo)
+
+- `/` partition: 50G free → 145G free (orphan GGUFs + uv + HF cache cleared)
+- `/mnt/models`: 356G free → 419G free (lineup reduced to 5 GGUFs)
+- Active fleet: Qwen3.6-35B-A3B-IQ3, Qwen3.6-27B-Q4, gemma-4-26B-A4B-Q5,
+  gemma-4-E4B-Q8, Qwen3.5-2B-Q8.
+
+### Still on the post-reinstall todo
+
+- text-generation-webui → llama-swap migration
+- LiteLLM → in-gateway Anthropic→OpenAI proxy
+- Streaming added to the chat path
+- restic backup setup (blocked on external SSD)
+- mesh code: keep as skeleton, rip the dead `:5001` remote-backend placeholder
+
+---
+
 ## 2026-05-04 — Comprehensive Audit & Quality Sprint
 
 ### Session Summary
