@@ -20,53 +20,20 @@ supervisor:
 agents:
 
   # ---------------------------------------------------------------------------
-  # YAML Schema Validator
-  # Watches schema.py and the templates directory; validates every workflow
-  # YAML against WorkflowDef on each change and on a nightly sweep.
-  # Trust level MONITOR means it can only read data — no writes to tools.
+  # Health Monitor — pings services every 5 min, alerts on failure.
   # ---------------------------------------------------------------------------
-  yaml-schema-validator:
-    type: yaml-schema-validator
+  health-monitor:
+    type: health-monitor
     enabled: true
     trust: monitor
-    schedule: "0 3 * * *"       # nightly sweep at 03:00
-    triggers:
-      - type: file_watch
-        paths:
-          - src/localforge/workflows/schema.py
-          - src/localforge/workflows/templates
-        patterns:
-          - "*.py"
-          - "*.yaml"
-          - "*.yml"
-        debounce: 15             # seconds — avoids thrash during rapid edits
-    config:
-      repo_root: "auto"          # scan entire git repo; matches CI behaviour
-      watch_dirs:
-        - src/localforge/workflows/templates
+    schedule: "*/5 * * * *"
 
   # ---------------------------------------------------------------------------
-  # Code Watcher
-  # Monitors git changes and saves a review note on each commit to the repo.
+  # Index Maintainer — refreshes RAG indexes when on-disk content changes.
+  # Disabled by default; enable manually once RAG is in active use.
   # ---------------------------------------------------------------------------
-  code-watcher:
-    type: code-watcher
-    enabled: false               # enable once a local LLM backend is configured
-    trust: safe
-    schedule: "*/15 * * * *"
-    config:
-      watch_dirs:
-        - src/
-      max_diff_lines: 500
-
-  # ---------------------------------------------------------------------------
-  # Research Agent
-  # Processes queued research tasks and saves findings to the knowledge graph.
-  # ---------------------------------------------------------------------------
-  research-agent:
-    type: research-agent
-    enabled: false               # enable once a local LLM backend is configured
+  index-maintainer:
+    type: index-maintainer
+    enabled: false
     trust: safe
     schedule: "*/30 * * * *"
-    config:
-      max_sources: 5

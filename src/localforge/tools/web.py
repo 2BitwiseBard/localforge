@@ -88,15 +88,13 @@ async def web_fetch(args: dict) -> str:
     name="deep_research",
     description=(
         "Multi-step research pipeline: web search -> fetch top pages -> "
-        "synthesize with local model -> optionally save to knowledge graph. "
-        "Returns a cited summary."
+        "synthesize with local model. Returns a cited summary."
     ),
     schema={
         "type": "object",
         "properties": {
             "question": {"type": "string", "description": "Research question"},
             "max_sources": {"type": "integer", "description": "Max pages to fetch and read (default 3)"},
-            "save_to_kg": {"type": "boolean", "description": "Save findings to knowledge graph (default true)"},
         },
         "required": ["question"],
     },
@@ -104,7 +102,6 @@ async def web_fetch(args: dict) -> str:
 async def deep_research(args: dict) -> str:
     question = args["question"]
     max_sources = min(args.get("max_sources", 3), 5)
-    save_to_kg = args.get("save_to_kg", True)
 
     try:
         # Step 1: Web search
@@ -150,31 +147,6 @@ async def deep_research(args: dict) -> str:
             synthesis = await chat(synthesis_prompt)
 
         citation_lines = [f"[{i + 1}] {url}" for i, url in enumerate(sources)]
-        result = f"{synthesis}\n\n---\nSources:\n" + "\n".join(citation_lines)
-
-        # Step 5: Save to knowledge graph
-        if save_to_kg:
-            try:
-                from localforge.tools.knowledge import _get_kg
-
-                kg = _get_kg()
-                topic_slug = re.sub(r"[^a-z0-9]+", "-", question.lower())[:50]
-                topic_id = kg.add_entity(
-                    name=topic_slug,
-                    type="concept",
-                    content=f"Research: {question}\n\n{synthesis[:500]}",
-                )
-                for url in sources:
-                    source_id = kg.add_entity(
-                        name=url[:100],
-                        type="tool",
-                        content=f"Source URL for research on: {question}",
-                    )
-                    if topic_id and source_id:
-                        kg.add_relation(source_id, topic_id, "RELATED_TO")
-            except Exception as kg_err:
-                result += f"\n\n(KG save warning: {kg_err})"
-
-        return result
+        return f"{synthesis}\n\n---\nSources:\n" + "\n".join(citation_lines)
     except Exception as e:
         return f"Research error: {e}"
