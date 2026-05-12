@@ -255,31 +255,37 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
             request.state.user = {"id": "anonymous", "name": "Guest", "role": "guest"}
             return await call_next(request)
 
-        # Rate limiting
-        client_ip = request.client.host if request.client else "unknown"
-        if not _check_rate_limit(client_ip):
+        # Extract Bearer token first so we can rate-limit per-key when present.
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            token_param = request.query_params.get("token", "")
+            if token_param:
+                auth_header = f"Bearer {token_param}"
+        token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+
+        # Rate-limit bucket key — prefer per-API-key, fall back to X-Forwarded-For,
+        # then to direct client IP. Behind a reverse proxy on Tailscale, all clients
+        # share one IP, so per-key buckets are essential.
+        if token:
+            bucket_key = f"key:{token[:12]}"
+        else:
+            xff = request.headers.get("x-forwarded-for", "").strip()
+            if xff:
+                bucket_key = f"xff:{xff.split(',')[0].strip()}"
+            elif request.client:
+                bucket_key = f"ip:{request.client.host}"
+            else:
+                bucket_key = "ip:unknown"
+
+        if not _check_rate_limit(bucket_key):
             return JSONResponse(
                 {"error": "Rate limit exceeded. Try again shortly."},
                 status_code=429,
             )
 
-        # Extract Bearer token (header or query param for SSE/EventSource)
-        auth_header = request.headers.get("authorization", "")
-        if not auth_header.startswith("Bearer "):
-            # Fallback: check query param (for EventSource which can't set headers)
-            token_param = request.query_params.get("token", "")
-            if token_param:
-                auth_header = f"Bearer {token_param}"
-            else:
-                return JSONResponse(
-                    {"error": "Missing or malformed Authorization header. Use: Bearer <key>"},
-                    status_code=401,
-                )
-
-        token = auth_header[7:]  # strip "Bearer "
         if not token:
             return JSONResponse(
-                {"error": "Empty bearer token"},
+                {"error": "Missing or malformed Authorization header. Use: Bearer <key>"},
                 status_code=401,
             )
 
@@ -297,6 +303,7 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
                     {"error": "No API keys configured. Set LOCAL_AI_KEY or config.yaml gateway.api_keys"},
                     status_code=500,
                 )
+            client_ip = request.client.host if request.client else "unknown"
             log.warning("Failed auth attempt from %s (path: %s)", client_ip, path)
             return JSONResponse({"error": "Invalid API key"}, status_code=401)
 

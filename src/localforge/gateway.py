@@ -139,15 +139,11 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
     port = gateway_cfg.get("port", 8100)
 
     try:
-        import localforge.agents.code_watcher  # noqa: F401
-        import localforge.agents.daily_digest  # noqa: F401
-
-        # Import all agent modules to register them
+        # Import remaining agent modules to register them.
+        # Deleted in 2026-05-12 cleanup: code_watcher, daily_digest, news_agent,
+        # research_agent, yaml_schema_validator.
         import localforge.agents.health_monitor  # noqa: F401
         import localforge.agents.index_maintainer  # noqa: F401
-        import localforge.agents.news_agent  # noqa: F401
-        import localforge.agents.research_agent  # noqa: F401
-        import localforge.agents.yaml_schema_validator  # noqa: F401
         from localforge.agents.supervisor import AgentSupervisor
 
         gateway_url = os.environ.get(
