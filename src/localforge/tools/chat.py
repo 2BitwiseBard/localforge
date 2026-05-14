@@ -4,7 +4,6 @@ import json
 from typing import Any
 
 from localforge import config as cfg
-from localforge.chunking import BUILTIN_GRAMMARS
 from localforge.client import _client, chat
 from localforge.tools import tool_handler
 
@@ -18,28 +17,20 @@ MAX_CONVERSATIONS = 50  # LRU eviction when exceeded
     name="local_chat",
     description=(
         "Freeform prompt to the local model — brainstorming, explanations, Q&A, anything. "
-        "Uses the current context if set. Supports optional GBNF grammar constraints."
+        "Uses the current context if set."
     ),
     schema={
         "type": "object",
         "properties": {
             "prompt": {"type": "string", "description": "Your prompt or question"},
             "system": {"type": "string", "description": "Optional system message override (replaces context preamble)"},
-            "grammar": {
-                "type": "string",
-                "description": "Optional GBNF grammar constraint. Built-in: 'json', 'json_array', 'boolean'. Or provide a custom GBNF string.",
-            },
         },
         "required": ["prompt"],
     },
 )
 async def local_chat(args: dict) -> str:
     system = args.get("system") or cfg.get_system_preamble()
-    kwargs: dict[str, Any] = {}
-    grammar = args.get("grammar")
-    if grammar:
-        kwargs["grammar_string"] = BUILTIN_GRAMMARS.get(grammar, grammar)
-    return await chat(args["prompt"], system=system, **kwargs)
+    return await chat(args["prompt"], system=system)
 
 
 @tool_handler(

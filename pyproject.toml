@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 authors = [
     { name = "BitwiseBard" },
 ]
-keywords = ["mcp", "llm", "local-ai", "agents", "rag", "code-review"]
+keywords = ["mcp", "llm", "local-ai", "agents"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -40,17 +40,6 @@ gateway = [
     "starlette~=0.38",
 ]
 
-# Semantic search (dense + sparse + ColBERT + reranker)
-embeddings = [
-    "fastembed~=0.3",
-    "numpy~=1.24",
-]
-
-# Code-aware chunking for RAG indexing
-search = [
-    "tree-sitter-languages~=1.10",
-]
-
 # Bcrypt key hashing for production auth
 auth = [
     "bcrypt~=4.0",
@@ -62,15 +51,10 @@ agents = [
     "croniter>=1.4",
 ]
 
-# Web search and research tools
+# Web search tools
 web = [
     "ddgs~=9.0",
     "trafilatura~=2.0",
-]
-
-# Media processing (photo/video)
-media = [
-    "Pillow~=10.0",
 ]
 
 # Device worker (mesh compute node) — standalone HTTP server, so it
@@ -84,7 +68,7 @@ worker = [
 
 # All optional features
 all = [
-    "localforge[gateway,embeddings,search,agents,web,media,auth,worker]",
+    "localforge[gateway,agents,web,auth,worker]",
 ]
 
 # Development tools
