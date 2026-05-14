@@ -2,7 +2,15 @@
 
 ## Overview
 
-LocalForge is a modular Python application that bridges local LLM inference with the Model Context Protocol (MCP). It exposes 112 tools for code analysis, RAG search, knowledge management, compute mesh routing, and autonomous agents.
+LocalForge is a modular Python application that bridges local LLM
+inference with the Model Context Protocol (MCP). It exposes a focused
+tool surface for code analysis, web search, model management, and
+compute mesh routing.
+
+The 2026-05-12 cleanup retired the knowledge graph, workflow engine,
+RAG/semantic stack, training subsystem, media handling, and several
+agents. The system is being trimmed toward a skeleton-minimal target —
+see `~/Development/NEW-OS-PLAN.md`.
 
 ```
 Claude Code / IDE / CLI
@@ -13,7 +21,7 @@ Claude Code / IDE / CLI
         |                       |
         +-------+-------+------+
                 |
-          Tool Registry (112 tools)
+          Tool Registry
           tools/__init__.py
                 |
     +-----------+-----------+
@@ -34,62 +42,44 @@ Claude Code / IDE / CLI
 
 | Module | Purpose |
 |--------|---------|
-| `server.py` | MCP server entry point. Imports tool modules, registers handlers, runs stdio loop. ~100 lines. |
+| `server.py` | MCP server entry point. Imports tool modules, registers handlers, runs stdio loop. |
 | `config.py` | Configuration state: backends, generation params, model profiles, modes. Loaded from `config.yaml`. |
 | `client.py` | HTTP client pool, `chat()` function with retry/caching/failover/mesh routing, model resolution, session stats. |
 | `cache.py` | Hash-based response cache with TTL and LRU eviction. |
 | `paths.py` | Resolves all data directories from `LOCALFORGE_DATA_DIR` env var. |
 | `exceptions.py` | Exception hierarchy: `LocalForgeError` -> `BackendError`, `ConfigError`, etc. |
 | `log.py` | Logging config: human-readable or JSON structured output. |
+| `migrations.py` | SQLite migration runner for mesh/agent state. |
 
-### Tools (21 modules, 107 handlers)
+### Tools
 
-Each module uses the `@tool_handler` decorator to register tools at import time. No central tool list — the decorator populates a shared registry in `tools/__init__.py`.
+Each module uses the `@tool_handler` decorator to register tools at
+import time. No central tool list — the decorator populates a shared
+registry in `tools/__init__.py`.
 
-| Module | Tools | Purpose |
-|--------|-------|---------|
-| `context.py` | 8 | set_context, auto_context, check_model, modes, characters |
-| `config_tools.py` | 3 | get/set generation params, reload config |
-| `chat.py` | 4 | local_chat, multi_turn, text_complete, validated_chat |
-| `analysis.py` | 7 | analyze_code, batch_review, file_qa, classify_task |
-| `generation.py` | 7 | test stubs, refactor, docs, translate, regex, SQL, structured output |
-| `diff.py` | 3 | review_diff, draft_commit_message, diff_explain |
-| `infrastructure.py` | 16 | health, swap_model (20 params), benchmark, slot_info, tokens, LoRA, stats, sync_models |
-| `parallel.py` | 3 | fan_out, parallel_file_review, quality_sweep |
-| `memory.py` | 5 | scratchpad, save/recall/list/delete notes |
-| `sessions.py` | 4 | save/load/list/delete conversation sessions |
-| `rag.py` | 8 | index_directory, search, rag_query, incremental_index, diff_rag |
-| `semantic.py` | 4 | embed_text, semantic_search, hybrid_search, rerank |
-| `presets.py` | 7 | logits, preview_prompt, sampling, presets, grammars |
-| `orchestration.py` | 5 | auto_route, workflow, pipeline, save/list pipelines |
-| `knowledge.py` | 9 | knowledge_base, doc_lookup, KG CRUD + search + timeline |
-| `git.py` | 1 | git_context |
-| `web.py` | 3 | web_search, web_fetch, deep_research |
-| `compute.py` | 3 | compute_status, compute_route, mesh_dispatch |
-| `agents_tools.py` | 2 | agent_list, agent_logs |
-| `training.py` | 5 | train_prepare, train_start, train_status, train_list, train_feedback |
-
-### Search & Retrieval
-
-Four-signal retrieval with reciprocal rank fusion:
-
-1. **BM25** (built-in, `chunking.py`) — term-frequency keyword search
-2. **Dense** (fastembed, `embeddings.py`) — jinaai/jina-embeddings-v2-base-code, 768-dim
-3. **SPLADE** (fastembed, `embeddings.py`) — learned sparse vectors for keyword importance
-4. **ColBERT** (fastembed, `embeddings.py`) — late-interaction per-token matching
-
-Cross-encoder reranking (Xenova/ms-marco-MiniLM-L-6-v2) re-orders the fused results.
-
-All embedding models run on CPU to avoid competing with GPU inference.
+| Module | Purpose |
+|--------|---------|
+| `context.py` | set_context, auto_context, check_model, modes, characters |
+| `config_tools.py` | get/set generation params, reload config |
+| `chat.py` | local_chat, multi_turn, text_complete, validated_chat |
+| `infrastructure.py` | health, swap_model, benchmark, slot_info, tokens, LoRA, stats, sync_models |
+| `memory.py` | scratchpad, save/recall/list/delete notes |
+| `sessions.py` | save/load/list/delete conversation sessions |
+| `git.py` | git_context |
+| `web.py` | web_search, web_fetch, deep_research |
+| `filesystem.py` | sandboxed fs_read/write/edit/list/glob/grep |
+| `shell.py` | sandboxed shell_exec |
+| `agents_tools.py` | agent_list, agent_logs |
 
 ### Gateway (optional, for HTTP/remote access)
 
 | Module | Purpose |
 |--------|---------|
-| `gateway.py` | Starlette HTTP server wrapping the MCP app. Serves /health, /mcp/, /api/*, /dashboard. |
+| `gateway.py` | Starlette HTTP server wrapping the MCP app. Serves `/health`, `/mcp/`, `/api/*`, `/dashboard`. |
 | `auth.py` | Bearer token middleware with multi-user profile support. |
-| `gpu_pool.py` | Auto-discovers backends on Tailscale mesh, health-checks, routes by model type/task type, circuit breakers. Wired into client.py for transparent mesh routing. |
-| `dashboard/` | PWA web interface: status, chat, search, photos, agents, notes, knowledge graph. |
+| `gpu_pool.py` | Auto-discovers backends on Tailscale mesh, health-checks, routes by model type/task type, circuit breakers. Wired into `client.py` for transparent mesh routing. |
+| `enrollment.py` | Worker enrollment tokens + install-script generation. |
+| `dashboard/` | PWA web interface (5 tabs: Status, Mesh, Config, Agents, Notes). |
 
 ### Agents (optional)
 
@@ -99,14 +89,16 @@ All embedding models run on CPU to avoid competing with GPU inference.
 | `agents/base.py` | Base agent class with trust levels (monitor/safe/full), mesh dispatch, approval gating. |
 | `agents/message_bus.py` | In-process pub/sub for agent communication. |
 | `agents/task_queue.py` | SQLite-backed priority task queue with retry and batching. |
-| `agents/approval.py` | Approval queue for FULL-trust destructive actions. Dashboard approve/deny UI. |
-| `agents/*.py` | 6 built-in agents: health, index, code-watcher, research, news, daily-digest. |
+| `agents/approval.py` | Approval queue for FULL-trust destructive actions. |
+| `agents/health_monitor.py` | Pings services on schedule, alerts on failure. |
+| `agents/index_maintainer.py` | Reserved for future RAG re-integration (disabled). |
 
-### Knowledge Graph
+### Workers (mesh)
 
 | Module | Purpose |
 |--------|---------|
-| `knowledge/graph.py` | SQLite + FTS5 full-text search + embedding-based semantic search. Entity types, relations, timeline queries. |
+| `workers/device_worker.py` | Standalone HTTP server that runs on secondary machines. Handles enrollment, heartbeats, inference, model management. |
+| `workers/detect.py` | Hardware/capability detection. |
 
 ## Data Flow: Tool Call
 
@@ -114,9 +106,6 @@ All embedding models run on CPU to avoid competing with GPU inference.
 1. Claude Code sends MCP call_tool("local_chat", {prompt: "..."})
 2. server.py call_tool() looks up handler in _tool_handlers registry
 3. Handler in tools/chat.py calls client.chat()
-   - Code-aware tools set task_type context first:
-     async with task_type_context("code"):
-         result = await chat(prompt)
 4. client.chat():
    a. Check response cache → return if hit
    b. Resolve model name if not cached
@@ -133,27 +122,28 @@ All embedding models run on CPU to avoid competing with GPU inference.
 6. server.py wraps in TextContent, returns to MCP transport
 ```
 
-### Task Type Routing
+### Task type routing
 
-Tools set a task type hint via `task_type_context()` before calling `chat()`.
-The GPU pool uses this to route to the best backend:
+Tools set a task type hint via `task_type_context()` before calling
+`chat()`. The GPU pool uses this to route to the best backend.
 
-| Task Type | Tools | Preferred Model |
-|-----------|-------|-----------------|
-| `code` | analyze_code, review_diff, generate_test_stubs, suggest_refactor, translate_code, file_qa, explain_error, summarize_file | Code-specialized (Qwen3-Coder, Devstral) |
-| `vision` | analyze_image | Vision model (Qwen3-VL) |
-| `reasoning` | deep_research synthesis | Dense reasoning model (Qwen3.5-27B) |
-| `default` | local_chat, all others | Primary model (any) |
+| Task type | Preferred model |
+|---|---|
+| `code` | Code-specialized (Qwen3-Coder, Devstral) |
+| `vision` | Vision model (Gemma 4 26B) |
+| `reasoning` | Dense reasoning model (Qwen3.6-27B) |
+| `default` | Primary model (any) |
 
 Routing is transparent — tools don't need to know about backends. The
 `contextvars`-based approach means no signature changes were needed.
 
-## Configuration Resolution
+## Configuration resolution
 
 Generation parameters are resolved in layers (later overrides earlier):
 
 ```
-webui settings.yaml (source of truth for the running model)
+webui settings.yaml (source of truth for the running model — to be
+                     replaced by llama-swap config post-reinstall)
   ↓
 config.yaml defaults (MCP-specific overrides)
   ↓

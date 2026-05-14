@@ -2,16 +2,9 @@ import { loadStatus, startStatusRefresh, loadModes, initModeControls, scanDiskMo
 import { loadMeshStatus, loadMeshTab, initMeshClickDelegation, initAddNodeModal } from './mesh.js';
 import { initUser, connectSSE } from './auth.js';
 import { loadModels, loadGenParams, loadPresets, loadLoras, initLoadParams, loadStartupConfig } from './config.js';
-import { loadPhotos } from './media.js';
-import { loadIndexes, loadIndexMgmt, initIndexCreate } from './search.js';
 import { loadAgents, loadApprovals, initAgentToolbar } from './agents.js';
 import { loadNotes } from './notes.js';
-import { loadKGStats } from './knowledge.js';
-import { loadResearchSessions, loadResearchQueue, initResearch } from './research.js';
-import { loadTrainingOverview, loadTrainingDatasets, loadTrainingStatus, loadTrainingLoras, initTraining } from './training.js';
 import { authFetch } from './api.js';
-import './chat.js';
-import './knowledge.js';
 
 // =====================================================================
 // Connection status indicator
@@ -44,14 +37,8 @@ function activateTab(tabName) {
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
   const panel = document.getElementById('tab-' + tabName);
   if (panel) panel.classList.add('active');
-  if (tabName === 'search') { loadIndexes(); loadIndexMgmt(); }
-  if (tabName === 'knowledge') loadKGStats();
-  if (tabName === 'media') loadPhotos();
   if (tabName === 'config') { loadGenParams(); loadPresets(); loadLoras(); loadStartupConfig(); }
-  if (tabName === 'research') { loadResearchSessions(); loadResearchQueue(); }
-  if (tabName === 'workflows') window.__wfEditor?.onTabOpen();
   if (tabName === 'mesh') loadMeshTab();
-  if (tabName === 'training') { loadTrainingOverview(); loadTrainingStatus(); }
   document.getElementById('sidebar')?.classList.remove('open');
   document.getElementById('sidebar-backdrop')?.setAttribute('hidden', '');
   const sheet = document.getElementById('mobile-more-sheet');
@@ -92,7 +79,7 @@ document.addEventListener('click', (e) => {
 });
 
 // Keyboard shortcuts
-const _TAB_ORDER = ['status', 'chat', 'search', 'mesh', 'media', 'config', 'agents', 'research', 'workflows', 'training', 'notes', 'knowledge'];
+const _TAB_ORDER = ['status', 'mesh', 'config', 'agents', 'notes'];
 const _shortcutsOverlay = document.getElementById('shortcuts-overlay');
 document.getElementById('shortcuts-close-btn')?.addEventListener('click', () => { _shortcutsOverlay.hidden = true; });
 
@@ -101,17 +88,8 @@ document.addEventListener('keydown', (e) => {
   if (e.target.matches('input, textarea, select, [contenteditable]')) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === '?') { _shortcutsOverlay.hidden = !_shortcutsOverlay.hidden; e.preventDefault(); return; }
-  if (e.key === '/') {
-    activateTab('search');
-    const inp = document.getElementById('search-query');
-    if (inp) { inp.focus(); inp.select(); }
-    e.preventDefault(); return;
-  }
-  const idx = '123456789'.indexOf(e.key);
+  const idx = '12345'.indexOf(e.key);
   if (idx >= 0 && idx < _TAB_ORDER.length) { activateTab(_TAB_ORDER[idx]); e.preventDefault(); }
-  else if (e.key === '0' && _TAB_ORDER[9]) { activateTab(_TAB_ORDER[9]); e.preventDefault(); }
-  else if (e.key === '-' && _TAB_ORDER[10]) { activateTab(_TAB_ORDER[10]); e.preventDefault(); }
-  else if (e.key === '=' && _TAB_ORDER[11]) { activateTab(_TAB_ORDER[11]); e.preventDefault(); }
 });
 
 // Restore sidebar collapsed state
@@ -132,19 +110,6 @@ document.getElementById('theme-toggle')?.addEventListener('click', () => {
   const light = document.body.classList.toggle('light-theme');
   try { localStorage.setItem('theme', light ? 'light' : 'dark'); } catch {}
 });
-
-// Virtual keyboard: adjust chat container height when software keyboard opens
-if (window.visualViewport) {
-  const _adjustChat = () => {
-    if (!window.matchMedia('(max-width: 480px)').matches) return;
-    const el = document.querySelector('#tab-chat .chat-container');
-    if (!el) return;
-    const hdr = document.querySelector('header')?.offsetHeight ?? 49;
-    const nav = document.querySelector('.mobile-nav')?.offsetHeight ?? 56;
-    el.style.maxHeight = `${window.visualViewport.height - hdr - nav - 16}px`;
-  };
-  window.visualViewport.addEventListener('resize', _adjustChat);
-}
 
 // Mobile sidebar swipe gesture: swipe right from left edge to open, left to close
 (function initSidebarSwipe() {
@@ -273,9 +238,6 @@ initModeControls();
 document.getElementById('scan-models-btn')?.addEventListener('click', scanDiskModels);
 initMeshClickDelegation();
 initAgentToolbar();
-initIndexCreate();
-initResearch();
-initTraining();
 initLoadParams();
 
 (async () => {
@@ -288,10 +250,7 @@ initLoadParams();
   initAddNodeModal();
   loadModes();
   loadApprovals();
-  loadTrainingOverview();
-  loadTrainingStatus();
   connectSSE();
   startStatusRefresh();
   setInterval(loadApprovals, 15000);
-  setInterval(loadTrainingStatus, 30000);
 })();
