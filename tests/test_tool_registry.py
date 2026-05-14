@@ -4,41 +4,22 @@ from localforge.tools import (  # noqa: F401
     _tool_definitions,
     _tool_handlers,
     agents_tools,
-    analysis,
     chat,
-    compute,
     config_tools,
     context,
-    diff,
     filesystem,
-    generation,
     git,
     infrastructure,
-    knowledge,
     memory,
-    orchestration,
-    parallel,
-    presets,
-    rag,
-    semantic,
     sessions,
     shell,
-    training,
-    validation,
     web,
 )
 
-EXPECTED_TOOL_COUNT = 122  # 121 prior + 1 validate_templates
 
-
-def test_all_tools_registered():
-    """All 101 tools must be registered."""
-    assert len(_tool_definitions) == EXPECTED_TOOL_COUNT
-
-
-def test_all_handlers_registered():
-    """Every tool definition has a matching handler."""
-    assert len(_tool_handlers) == EXPECTED_TOOL_COUNT
+def test_definitions_match_handlers():
+    """Every tool definition has a matching handler — counts must agree."""
+    assert len(_tool_definitions) == len(_tool_handlers)
 
 
 def test_no_duplicate_names():
@@ -56,6 +37,7 @@ def test_every_definition_has_handler():
 def test_handlers_are_async():
     """All handlers must be async (coroutine functions)."""
     import asyncio
+
     for name, handler in _tool_handlers.items():
         assert asyncio.iscoroutinefunction(handler), f"{name} is not async"
 
@@ -68,19 +50,35 @@ def test_tool_schemas_have_type():
 
 
 def test_known_tools_present():
-    """Spot-check that key tools are registered."""
+    """Spot-check that the core skeleton tools are registered."""
     names = {t.name for t in _tool_definitions}
     expected = {
-        "local_chat", "health_check", "swap_model", "rag_query",
-        "index_directory", "set_context", "review_diff", "fan_out",
-        "kg_query", "web_search", "compute_status", "agent_list",
-        "hybrid_search", "workflow", "benchmark", "mesh_dispatch",
-        "auto_context", "train_start", "train_status", "train_prepare",
-        "train_list", "train_feedback", "sync_models",
-        "compute_test", "kg_rebuild_fts",
-        "fs_read", "fs_list", "fs_glob", "fs_grep",
-        "fs_write", "fs_edit", "fs_delete", "shell_exec",
-        "validate_templates",
+        # Chat
+        "local_chat",
+        "multi_turn_chat",
+        # Infrastructure
+        "health_check",
+        "swap_model",
+        "benchmark",
+        "sync_models",
+        # Filesystem + shell
+        "fs_read",
+        "fs_list",
+        "fs_glob",
+        "fs_grep",
+        "fs_write",
+        "fs_edit",
+        "fs_delete",
+        "shell_exec",
+        # Web
+        "web_search",
+        "web_fetch",
+        # Git + context
+        "git_context",
+        "set_context",
+        "auto_context",
+        # Agents
+        "agent_list",
     }
     missing = expected - names
     assert not missing, f"Missing tools: {missing}"
