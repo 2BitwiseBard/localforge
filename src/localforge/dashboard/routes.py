@@ -5,13 +5,10 @@ model management, search/RAG, knowledge graph, voice transcription.
 """
 
 import asyncio
-import base64
-import io
 import json
 import os
 import re as _re
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +49,8 @@ async def _call_tool(name: str, args: dict | None = None) -> str:
 
 # Set by gateway.py during lifespan
 _supervisor: Any = None
+_task_queue: Any = None
+_message_bus: Any = None
 
 # Push notification subscriptions (in-memory, persisted to disk)
 _push_subscriptions: dict[str, list[dict]] = {}
