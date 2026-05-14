@@ -1,4 +1,4 @@
-"""Tests for mesh improvements: routing logging, compute_test tool, dispatch retry."""
+"""Tests for mesh improvements: routing logging, dispatch retry."""
 
 
 from localforge.gpu_pool import Backend, CircuitState, GPUPool
@@ -68,8 +68,3 @@ class TestRouteRequestLogging:
         assert result is None
 
 
-class TestComputeTestToolRegistered:
-    def test_compute_test_in_registry(self):
-        """compute_test tool is registered."""
-        from localforge.tools import _tool_handlers
-        assert "compute_test" in _tool_handlers
